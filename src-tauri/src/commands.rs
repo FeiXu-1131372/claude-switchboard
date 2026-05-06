@@ -548,6 +548,24 @@ pub async fn swap_to_account(
     // empty LoadingShell because state.snapshot() has nothing to return.
     state.backoff_by_slot.write().clear();
 
+    // Re-seed per-slot schedules so the new active slot polls first
+    // (next_poll_at = now), with previously-active and other inactive
+    // slots staggered behind it. Without this, the new active would
+    // wait out whatever deadline was set when it was inactive.
+    {
+        let accounts = state.accounts.list().map_err(err_to_string)?;
+        let interval = std::time::Duration::from_secs(
+            state.settings.read().polling_interval_secs.max(60),
+        );
+        let slot_ids: Vec<u32> = accounts.iter().map(|a| a.slot).collect();
+        *state.schedule_by_slot.write() = crate::poll_loop::seed_schedules(
+            &slot_ids,
+            Some(slot),
+            std::time::Instant::now(),
+            interval,
+        );
+    }
+
     if let Ok(Some(target)) = state.accounts.get(slot) {
         let prev = state.keychain_guardian.lock().replace(
             crate::auth::keychain_guardian::KeychainGuardian::arm_with_claude_code_creds(
