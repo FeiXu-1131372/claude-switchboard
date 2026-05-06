@@ -1,9 +1,12 @@
 import { useMemo, useState } from 'react';
+import { motion } from 'framer-motion';
 import { useAppStore } from '../lib/store';
 import { ipc } from '../lib/ipc';
+import { IconButton } from '../components/ui/IconButton';
 import { AccountRow } from './AccountRow';
 import { AddAccountChooser } from './AddAccountChooser';
 import { SwapConfirmCard } from './SwapConfirmCard';
+import { IconRefresh } from '../lib/icons';
 import type { AccountListEntry, RunningClaudeCode } from '../lib/generated/bindings';
 
 interface Props {
@@ -24,6 +27,21 @@ export function AccountsPanel({ onBack }: Props) {
   const [swappingSlot, setSwappingSlot] = useState<number | null>(null);
   const [pending, setPending] = useState<PendingSwap | null>(null);
   const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  async function handleRefreshAll() {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await ipc.forceRefresh('all');
+    } catch {
+      // Best-effort; the loop logs failures.
+    }
+    // Spinner runs for (N - 1) * 30 s + 2 s safety buffer so the user
+    // sees a "refreshing" affordance until the staggered round completes.
+    const staggerTotalMs = Math.max(0, (accounts.length - 1) * 30_000) + 2_000;
+    setTimeout(() => setRefreshing(false), staggerTotalMs);
+  }
 
   const orgGroups = useMemo(() => {
     const map = new Map<string, AccountListEntry>();
@@ -102,7 +120,19 @@ export function AccountsPanel({ onBack }: Props) {
         <span className="text-[length:var(--text-label)] uppercase tracking-[var(--tracking-label)] text-[color:var(--color-text-secondary)]">
           Accounts
         </span>
-        <span style={{ width: '24px' }} />
+        <IconButton label="Refresh all" onClick={handleRefreshAll}>
+          <motion.span
+            animate={refreshing ? { rotate: 360 } : { rotate: 0 }}
+            transition={
+              refreshing
+                ? { duration: 0.7, ease: 'linear', repeat: Infinity }
+                : { duration: 0.2 }
+            }
+            style={{ display: 'inline-flex' }}
+          >
+            <IconRefresh size={13} />
+          </motion.span>
+        </IconButton>
       </div>
 
       <div className="flex-1 overflow-y-auto">
