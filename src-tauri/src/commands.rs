@@ -518,6 +518,7 @@ pub async fn remove_account(
     state.accounts.remove(slot).map_err(err_to_string)?;
     state.cached_usage_by_slot.write().remove(&slot);
     state.backoff_by_slot.write().remove(&slot);
+    state.schedule_by_slot.write().remove(&slot);
     Ok(())
 }
 
