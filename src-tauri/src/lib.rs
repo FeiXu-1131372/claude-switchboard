@@ -68,6 +68,7 @@ pub fn run() {
         cached_usage_by_slot: parking_lot::RwLock::new(std::collections::HashMap::new()),
         active_slot: parking_lot::RwLock::new(None),
         backoff_by_slot: parking_lot::RwLock::new(std::collections::HashMap::new()),
+        schedule_by_slot: parking_lot::RwLock::new(std::collections::HashMap::new()),
         keychain_guardian: parking_lot::Mutex::new(None),
     });
 

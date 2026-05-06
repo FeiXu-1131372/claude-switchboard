@@ -85,6 +85,7 @@ pub struct AppState {
     pub cached_usage_by_slot: RwLock<HashMap<u32, CachedUsage>>,
     pub active_slot: RwLock<Option<u32>>,
     pub backoff_by_slot: RwLock<HashMap<u32, BackoffState>>,
+    pub schedule_by_slot: RwLock<HashMap<u32, ScheduleState>>,
     pub keychain_guardian: Mutex<Option<KeychainGuardian>>,
 }
 
@@ -92,6 +93,14 @@ pub struct AppState {
 pub struct BackoffState {
     pub until: Instant,
     pub last_delay: StdDuration,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ScheduleState {
+    /// Earliest moment this slot is eligible for a usage fetch. The poll
+    /// loop will not fetch this slot before this instant. Updated after
+    /// each successful fetch to `now + polling_interval_secs`.
+    pub next_poll_at: Instant,
 }
 
 impl AppState {
