@@ -1,5 +1,6 @@
 use crate::app_state::{AppState, BackoffState, BurnRateProjection, CachedUsage};
 use crate::auth::AuthSource;
+use crate::auth::accounts::ManagedAccount;
 use crate::notifier;
 use crate::tray;
 use crate::usage_api::{next_backoff, FetchOutcome, UsageSnapshot};
@@ -122,12 +123,16 @@ async fn fetch_and_apply_one(
     state: &AppState,
     burn_buffers: &mut HashMap<u32, VecDeque<(DateTime<Utc>, f64)>>,
     slot: u32,
+    accounts: &[ManagedAccount],
 ) {
-    let accounts = state.accounts.list().unwrap_or_default();
     let acc = match accounts.iter().find(|a| a.slot == slot).cloned() {
         Some(a) => a,
-        None => return, // slot disappeared mid-tick (remove)
+        None => return, // slot disappeared between poll_all's accounts read and now
     };
+    // Re-read active_slot here; in the rare race where swap_to_account
+    // fires between poll_all's reconciliation and this point, we accept
+    // a one-cycle cosmetic flicker on tray/auth_source rather than
+    // adding a lock or capturing the value at the call site.
     let active_slot = *state.active_slot.read();
 
     let token_result = state
@@ -221,6 +226,12 @@ async fn fetch_and_apply_one(
                 .get(&slot)
                 .map(|b| b.last_delay)
                 .unwrap_or(Duration::from_secs(60));
+            // Honor `Retry-After` only when it carries a positive value.
+            // The Anthropic usage endpoint has been observed returning
+            // `Retry-After: 0` on 429, which would let us hammer it on
+            // the next tick — fall back to exponential backoff there.
+            // Clamp explicit values into [60s, 30min] so a misconfigured
+            // server can't lock us out indefinitely or sub-minute-poll us.
             let delay = match retry_after {
                 Some(d) if d > Duration::ZERO => clamp_backoff(d),
                 _ => next_backoff(prev_delay),
@@ -340,7 +351,7 @@ async fn poll_all(
     // 4. Pick at most one due slot, fetch it, advance its deadline.
     let now = Instant::now();
     if let Some(slot) = pick_due_slot(state, now) {
-        fetch_and_apply_one(handle, state, burn_buffers, slot).await;
+        fetch_and_apply_one(handle, state, burn_buffers, slot, &accounts).await;
         let interval = Duration::from_secs(
             state.settings.read().polling_interval_secs.max(60),
         );
