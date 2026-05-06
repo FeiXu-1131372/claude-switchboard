@@ -13,6 +13,90 @@ use tauri::{AppHandle, Emitter};
 
 static STALE_EMITTED: AtomicBool = AtomicBool::new(false);
 
+/// Default gap between consecutive slot polls in a staggered round.
+/// Compressed automatically when (slots * STAGGER_GAP_SECS) > polling_interval_secs.
+pub const STAGGER_GAP_SECS: u64 = 30;
+
+/// Compute the per-slot stagger gap. Compresses below 30 s when the
+/// configured polling interval can't fit (slots * 30 s).
+pub fn stagger_gap(slot_count: usize, interval: Duration) -> Duration {
+    if slot_count == 0 {
+        return Duration::from_secs(STAGGER_GAP_SECS);
+    }
+    let default_gap = Duration::from_secs(STAGGER_GAP_SECS);
+    let max_total = interval;
+    let needed_total = default_gap * (slot_count.saturating_sub(1) as u32);
+    if needed_total <= max_total {
+        default_gap
+    } else {
+        max_total / slot_count as u32
+    }
+}
+
+/// Lay out per-slot poll deadlines so the active slot fires first and
+/// inactive slots trail at fixed offsets. Slot-id ordering for inactive
+/// slots makes the schedule deterministic regardless of input order.
+pub fn seed_schedules(
+    slots: &[u32],
+    active_slot: Option<u32>,
+    now: Instant,
+    interval: Duration,
+) -> HashMap<u32, crate::app_state::ScheduleState> {
+    use crate::app_state::ScheduleState;
+
+    let gap = stagger_gap(slots.len(), interval);
+    let mut ordered: Vec<u32> = match active_slot {
+        Some(active) if slots.contains(&active) => {
+            let mut v = vec![active];
+            let mut rest: Vec<u32> = slots.iter().copied().filter(|&s| s != active).collect();
+            rest.sort_unstable();
+            v.extend(rest);
+            v
+        }
+        _ => {
+            let mut v: Vec<u32> = slots.to_vec();
+            v.sort_unstable();
+            v
+        }
+    };
+    ordered.dedup();
+
+    ordered
+        .into_iter()
+        .enumerate()
+        .map(|(i, slot)| {
+            let next_poll_at = now + gap * (i as u32);
+            (slot, ScheduleState { next_poll_at })
+        })
+        .collect()
+}
+
+/// Choose the slot with the earliest already-expired `next_poll_at`,
+/// skipping any slot currently in 429 backoff. Returns None when no
+/// slot is ready to fetch.
+pub fn pick_due_slot(state: &crate::app_state::AppState, now: Instant) -> Option<u32> {
+    let schedule = state.schedule_by_slot.read();
+    let backoff = state.backoff_by_slot.read();
+    schedule
+        .iter()
+        .filter(|(_slot, sched)| sched.next_poll_at <= now)
+        .filter(|(slot, _sched)| backoff.get(slot).is_none_or(|b| now >= b.until))
+        .min_by_key(|(_slot, sched)| sched.next_poll_at)
+        .map(|(&slot, _)| slot)
+}
+
+/// Earliest future deadline across all scheduled slots, used to pick a
+/// sleep target when nothing is currently due. Falls back to 60 s out
+/// when the schedule is empty (e.g., before any account is added).
+pub fn next_wake_time(state: &crate::app_state::AppState, now: Instant) -> Instant {
+    let schedule = state.schedule_by_slot.read();
+    schedule
+        .values()
+        .map(|s| s.next_poll_at)
+        .min()
+        .unwrap_or(now + Duration::from_secs(60))
+}
+
 pub fn spawn(handle: AppHandle, state: Arc<AppState>) {
     tauri::async_runtime::spawn(async move {
         let mut burn_buffers: HashMap<u32, VecDeque<(DateTime<Utc>, f64)>> = HashMap::new();
@@ -286,4 +370,71 @@ fn update_burn_rate(
         utilization_per_min: slope,
         projected_at_reset: u1 + slope * mins_until_reset,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn stagger_gap_default_30s_when_interval_fits() {
+        // 3 slots, 300 s interval → needs 60 s for stagger, fits comfortably.
+        let gap = stagger_gap(3, Duration::from_secs(300));
+        assert_eq!(gap, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn stagger_gap_compresses_when_interval_too_short() {
+        // 4 slots, 60 s interval → 90 s needed > 60 s → compress to 60/4 = 15 s.
+        let gap = stagger_gap(4, Duration::from_secs(60));
+        assert_eq!(gap, Duration::from_secs(15));
+    }
+
+    #[test]
+    fn stagger_gap_zero_slots_returns_default() {
+        let gap = stagger_gap(0, Duration::from_secs(60));
+        assert_eq!(gap, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn seed_schedules_active_first_then_inactive_in_slot_id_order() {
+        let now = Instant::now();
+        let interval = Duration::from_secs(300);
+        let sched = seed_schedules(&[3, 1, 2], Some(2), now, interval);
+
+        assert_eq!(sched[&2].next_poll_at, now);
+        assert_eq!(sched[&1].next_poll_at, now + Duration::from_secs(30));
+        assert_eq!(sched[&3].next_poll_at, now + Duration::from_secs(60));
+    }
+
+    #[test]
+    fn seed_schedules_no_active_slot_orders_by_slot_id() {
+        let now = Instant::now();
+        let interval = Duration::from_secs(300);
+        let sched = seed_schedules(&[3, 1, 2], None, now, interval);
+
+        assert_eq!(sched[&1].next_poll_at, now);
+        assert_eq!(sched[&2].next_poll_at, now + Duration::from_secs(30));
+        assert_eq!(sched[&3].next_poll_at, now + Duration::from_secs(60));
+    }
+
+    #[test]
+    fn seed_schedules_active_not_in_slots_ignored() {
+        // Active is 99 but only slots 1, 2 are managed: fall back to id order.
+        let now = Instant::now();
+        let interval = Duration::from_secs(300);
+        let sched = seed_schedules(&[1, 2], Some(99), now, interval);
+
+        assert_eq!(sched[&1].next_poll_at, now);
+        assert_eq!(sched[&2].next_poll_at, now + Duration::from_secs(30));
+        assert_eq!(sched.contains_key(&99), false);
+    }
+
+    #[test]
+    fn seed_schedules_empty_slots_returns_empty_map() {
+        let now = Instant::now();
+        let sched = seed_schedules(&[], Some(1), now, Duration::from_secs(300));
+        assert!(sched.is_empty());
+    }
 }
