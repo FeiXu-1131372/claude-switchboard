@@ -79,7 +79,7 @@ export function CompactPopover() {
     if (refreshing) return;
     setRefreshing(true);
     try {
-      await ipc.forceRefresh();
+      await ipc.forceRefresh('active');
     } finally {
       setTimeout(() => setRefreshing(false), 420);
     }
@@ -164,7 +164,7 @@ function LoadingShell({
   const [hint, setHint] = useState(false);
 
   useEffect(() => {
-    ipc.forceRefresh().catch(() => {});
+    ipc.forceRefresh('active').catch(() => {});
 
     const tick = setInterval(() => {
       refreshUsage().catch(() => {});

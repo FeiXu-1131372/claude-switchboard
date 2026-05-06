@@ -30,5 +30,5 @@ export const ipc = {
   updateSettings: (s: Settings) => commands.updateSettings(s).then(unwrap),
 
   resizeWindow: (mode: 'compact' | 'expanded') => commands.resizeWindow(mode).then(unwrap),
-  forceRefresh: () => commands.forceRefresh().then(unwrap),
+  forceRefresh: (scope: 'active' | 'all') => commands.forceRefresh(scope).then(unwrap),
 };
