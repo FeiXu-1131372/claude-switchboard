@@ -100,19 +100,161 @@ pub fn next_wake_time(state: &crate::app_state::AppState, now: Instant) -> Insta
 pub fn spawn(handle: AppHandle, state: Arc<AppState>) {
     tauri::async_runtime::spawn(async move {
         let mut burn_buffers: HashMap<u32, VecDeque<(DateTime<Utc>, f64)>> = HashMap::new();
-        let _ = poll_all(&handle, &state, &mut burn_buffers).await;
         loop {
-            let interval = {
-                let s = state.settings.read();
-                Duration::from_secs(s.polling_interval_secs.max(60))
-            };
+            let _ = poll_all(&handle, &state, &mut burn_buffers).await;
+            let now = Instant::now();
+            let wake_at = next_wake_time(&state, now);
+            // Cap the sleep at 60 s so we still re-reconcile active_slot
+            // periodically even when no slot is due (covers the
+            // "live creds change without a swap" path).
+            let max_sleep = Duration::from_secs(60);
+            let sleep_for = wake_at.saturating_duration_since(now).min(max_sleep);
             tokio::select! {
-                _ = tokio::time::sleep(interval) => {}
+                _ = tokio::time::sleep(sleep_for) => {}
                 _ = state.force_refresh.notified() => {}
             }
-            let _ = poll_all(&handle, &state, &mut burn_buffers).await;
         }
     });
+}
+
+async fn fetch_and_apply_one(
+    handle: &AppHandle,
+    state: &AppState,
+    burn_buffers: &mut HashMap<u32, VecDeque<(DateTime<Utc>, f64)>>,
+    slot: u32,
+) {
+    let accounts = state.accounts.list().unwrap_or_default();
+    let acc = match accounts.iter().find(|a| a.slot == slot).cloned() {
+        Some(a) => a,
+        None => return, // slot disappeared mid-tick (remove)
+    };
+    let active_slot = *state.active_slot.read();
+
+    let token_result = state
+        .auth
+        .token_for_slot(slot, active_slot, &state.accounts)
+        .await;
+    let outcome = match token_result {
+        Ok(tok) => Some(state.usage.fetch(&tok).await),
+        Err(e) => {
+            tracing::warn!("token_for_slot({slot}) failed: {e}");
+            let _ = handle.emit(
+                "auth_required_for_slot",
+                json!({ "slot": slot, "email": acc.email }),
+            );
+            return;
+        }
+    };
+    let Some(outcome) = outcome else { return };
+
+    match outcome {
+        FetchOutcome::Ok(snapshot) => {
+            let buf = burn_buffers.entry(slot).or_default();
+            let burn_rate = update_burn_rate(buf, &snapshot, Utc::now());
+            let cached = CachedUsage {
+                snapshot: snapshot.clone(),
+                account_id: acc.account_uuid.clone(),
+                account_email: acc.email.clone(),
+                last_error: None,
+                burn_rate,
+                auth_source: if Some(slot) == active_slot {
+                    AuthSource::ClaudeCode
+                } else {
+                    AuthSource::OAuth
+                },
+            };
+            state.cached_usage_by_slot.write().insert(slot, cached.clone());
+            state.backoff_by_slot.write().remove(&slot);
+            let _ = handle.emit(
+                "usage_updated",
+                json!({ "slot": slot, "cached": cached }),
+            );
+
+            if Some(slot) == active_slot {
+                *state.cached_usage.write() = Some(cached.clone());
+                tray::set_level(
+                    handle,
+                    snapshot.five_hour.as_ref().map(|u| u.utilization),
+                    snapshot.seven_day.as_ref().map(|u| u.utilization),
+                    snapshot.five_hour.as_ref().and_then(|u| u.resets_at),
+                    snapshot.seven_day.as_ref().and_then(|u| u.resets_at),
+                    false,
+                );
+                let thresholds = state.settings.read().thresholds.clone();
+                if let Ok(fired) = notifier::evaluate(
+                    &state.db,
+                    &cached.account_id,
+                    &snapshot,
+                    &thresholds,
+                    Utc::now(),
+                ) {
+                    for f in fired {
+                        use tauri_plugin_notification::NotificationExt;
+                        let _ = handle
+                            .notification()
+                            .builder()
+                            .title(f.title)
+                            .body(f.body)
+                            .show();
+                    }
+                }
+                STALE_EMITTED.store(false, Ordering::Relaxed);
+            }
+        }
+        FetchOutcome::Unauthorized => {
+            let _ = handle.emit(
+                "auth_required_for_slot",
+                json!({ "slot": slot, "email": acc.email }),
+            );
+            let mut entry = state
+                .cached_usage_by_slot
+                .write()
+                .remove(&slot)
+                .unwrap_or_else(|| placeholder_cached(&acc, "auth_required"));
+            entry.last_error = Some("auth_required".into());
+            state.cached_usage_by_slot.write().insert(slot, entry);
+        }
+        FetchOutcome::RateLimited(retry_after) => {
+            let prev_delay = state
+                .backoff_by_slot
+                .read()
+                .get(&slot)
+                .map(|b| b.last_delay)
+                .unwrap_or(Duration::from_secs(60));
+            let delay = match retry_after {
+                Some(d) if d > Duration::ZERO => clamp_backoff(d),
+                _ => next_backoff(prev_delay),
+            };
+            tracing::warn!(
+                "slot {slot} rate-limited; backing off {:?} (server retry-after={:?})",
+                delay,
+                retry_after,
+            );
+            state.backoff_by_slot.write().insert(
+                slot,
+                BackoffState {
+                    until: Instant::now() + delay,
+                    last_delay: delay,
+                },
+            );
+            let mut entry = state
+                .cached_usage_by_slot
+                .write()
+                .remove(&slot)
+                .unwrap_or_else(|| placeholder_cached(&acc, "rate-limited (429)"));
+            entry.last_error = Some("rate-limited (429)".into());
+            state.cached_usage_by_slot.write().insert(slot, entry);
+        }
+        FetchOutcome::Transient(e) => {
+            let mut entry = state
+                .cached_usage_by_slot
+                .write()
+                .remove(&slot)
+                .unwrap_or_else(|| placeholder_cached(&acc, &e));
+            entry.last_error = Some(e);
+            state.cached_usage_by_slot.write().insert(slot, entry);
+        }
+    }
 }
 
 async fn poll_all(
@@ -120,7 +262,7 @@ async fn poll_all(
     state: &AppState,
     burn_buffers: &mut HashMap<u32, VecDeque<(DateTime<Utc>, f64)>>,
 ) -> Result<(), anyhow::Error> {
-    // 1. Reconcile active slot.
+    // 1. Reconcile active slot from live CC creds.
     let live = state.auth.read_live_claude_code().await.ok().flatten();
     let accounts = state.accounts.list().unwrap_or_default();
     let active_slot = live.as_ref().and_then(|l| {
@@ -147,164 +289,63 @@ async fn poll_all(
         }
     }
 
-    // 3. Fan out per-slot fetches in parallel, respecting per-slot backoff
-    //    deadlines. A slot is due when no entry exists or the deadline has
-    //    elapsed; entries are evicted lazily on the next successful fetch.
-    let now = Instant::now();
-    let due_slots: Vec<u32> = accounts
-        .iter()
-        .filter(|a| {
-            let backoff_map = state.backoff_by_slot.read();
-            backoff_map.get(&a.slot).is_none_or(|b| now >= b.until)
-        })
-        .map(|a| a.slot)
-        .collect();
+    // 3. Lazy-seed the schedule on first call (or when slots have been
+    //    added/removed without going through swap_to_account, which seeds
+    //    explicitly). If schedule_by_slot is empty but we have managed
+    //    accounts, seed; if accounts have been removed since last tick,
+    //    drop their entries; if accounts have been added, append at the
+    //    tail of the round one stagger gap behind the latest deadline.
+    {
+        let mut sched = state.schedule_by_slot.write();
+        let existing_slots: std::collections::HashSet<u32> =
+            sched.keys().copied().collect();
+        let current_slots: std::collections::HashSet<u32> =
+            accounts.iter().map(|a| a.slot).collect();
 
-    let fetches: Vec<_> = due_slots
-        .iter()
-        .map(|&slot| async move {
-            let token_result = state
-                .auth
-                .token_for_slot(slot, active_slot, &state.accounts)
-                .await;
-            let token_failed = token_result.is_err();
-            let outcome = match token_result {
-                Ok(tok) => Some(state.usage.fetch(&tok).await),
-                Err(e) => {
-                    tracing::warn!("token_for_slot({slot}) failed: {e}");
-                    None
-                }
-            };
-            (slot, outcome, token_failed)
-        })
-        .collect();
-    let results = futures::future::join_all(fetches).await;
+        // Drop schedule entries for slots that no longer exist.
+        sched.retain(|slot, _| current_slots.contains(slot));
 
-    // 4. Update per-slot cache + emit events; also drive tray + notifier from active.
-    for (slot, outcome, token_failed) in results {
-        let acc = accounts.iter().find(|a| a.slot == slot).cloned();
-        let Some(acc) = acc else { continue };
-        if token_failed {
-            let _ = handle.emit(
-                "auth_required_for_slot",
-                json!({ "slot": slot, "email": acc.email }),
+        if sched.is_empty() && !accounts.is_empty() {
+            let interval = Duration::from_secs(
+                state.settings.read().polling_interval_secs.max(60),
             );
-            continue;
+            let slot_ids: Vec<u32> = accounts.iter().map(|a| a.slot).collect();
+            *sched = seed_schedules(&slot_ids, active_slot, Instant::now(), interval);
+        } else {
+            // Append newly added slots so they trail the existing
+            // schedule (one stagger gap behind the latest deadline).
+            // This avoids placing a new slot ahead of an existing slot's
+            // next fetch, which would break the 30 s gap.
+            let now = Instant::now();
+            let interval = Duration::from_secs(
+                state.settings.read().polling_interval_secs.max(60),
+            );
+            let gap = stagger_gap(current_slots.len(), interval);
+            let latest = sched
+                .values()
+                .map(|s| s.next_poll_at)
+                .max()
+                .unwrap_or(now);
+            let mut next_at = latest + gap;
+            for slot in current_slots.difference(&existing_slots) {
+                sched.insert(
+                    *slot,
+                    crate::app_state::ScheduleState { next_poll_at: next_at },
+                );
+                next_at += gap;
+            }
         }
-        let Some(outcome) = outcome else { continue };
-        match outcome {
-            FetchOutcome::Ok(snapshot) => {
-                let buf = burn_buffers.entry(slot).or_default();
-                let burn_rate = update_burn_rate(buf, &snapshot, Utc::now());
-                let cached = CachedUsage {
-                    snapshot: snapshot.clone(),
-                    account_id: acc.account_uuid.clone(),
-                    account_email: acc.email.clone(),
-                    last_error: None,
-                    burn_rate,
-                    auth_source: if Some(slot) == active_slot {
-                        AuthSource::ClaudeCode
-                    } else {
-                        AuthSource::OAuth
-                    },
-                };
-                state.cached_usage_by_slot.write().insert(slot, cached.clone());
-                state.backoff_by_slot.write().remove(&slot);
-                let _ = handle.emit(
-                    "usage_updated",
-                    json!({ "slot": slot, "cached": cached }),
-                );
+    }
 
-                if Some(slot) == active_slot {
-                    *state.cached_usage.write() = Some(cached.clone());
-                    tray::set_level(
-                        handle,
-                        snapshot.five_hour.as_ref().map(|u| u.utilization),
-                        snapshot.seven_day.as_ref().map(|u| u.utilization),
-                        snapshot.five_hour.as_ref().and_then(|u| u.resets_at),
-                        snapshot.seven_day.as_ref().and_then(|u| u.resets_at),
-                        false,
-                    );
-                    let thresholds = state.settings.read().thresholds.clone();
-                    if let Ok(fired) = notifier::evaluate(
-                        &state.db,
-                        &cached.account_id,
-                        &snapshot,
-                        &thresholds,
-                        Utc::now(),
-                    ) {
-                        for f in fired {
-                            use tauri_plugin_notification::NotificationExt;
-                            let _ = handle
-                                .notification()
-                                .builder()
-                                .title(f.title)
-                                .body(f.body)
-                                .show();
-                        }
-                    }
-                    STALE_EMITTED.store(false, Ordering::Relaxed);
-                }
-            }
-            FetchOutcome::Unauthorized => {
-                let _ = handle.emit(
-                    "auth_required_for_slot",
-                    json!({ "slot": slot, "email": acc.email }),
-                );
-                let mut entry = state
-                    .cached_usage_by_slot
-                    .write()
-                    .remove(&slot)
-                    .unwrap_or_else(|| placeholder_cached(&acc, "auth_required"));
-                entry.last_error = Some("auth_required".into());
-                state.cached_usage_by_slot.write().insert(slot, entry);
-            }
-            FetchOutcome::RateLimited(retry_after) => {
-                let prev_delay = state
-                    .backoff_by_slot
-                    .read()
-                    .get(&slot)
-                    .map(|b| b.last_delay)
-                    .unwrap_or(Duration::from_secs(60));
-                // Honor `Retry-After` only when it carries a positive value.
-                // The Anthropic usage endpoint has been observed returning
-                // `Retry-After: 0` on 429, which would let us hammer it on
-                // the next tick — fall back to exponential backoff there.
-                // Clamp explicit values into [60s, 30min] so a misconfigured
-                // server can't lock us out indefinitely or sub-minute-poll us.
-                let delay = match retry_after {
-                    Some(d) if d > Duration::ZERO => clamp_backoff(d),
-                    _ => next_backoff(prev_delay),
-                };
-                tracing::warn!(
-                    "slot {slot} rate-limited; backing off {:?} (server retry-after={:?})",
-                    delay,
-                    retry_after,
-                );
-                state.backoff_by_slot.write().insert(
-                    slot,
-                    BackoffState {
-                        until: Instant::now() + delay,
-                        last_delay: delay,
-                    },
-                );
-                let mut entry = state
-                    .cached_usage_by_slot
-                    .write()
-                    .remove(&slot)
-                    .unwrap_or_else(|| placeholder_cached(&acc, "rate-limited (429)"));
-                entry.last_error = Some("rate-limited (429)".into());
-                state.cached_usage_by_slot.write().insert(slot, entry);
-            }
-            FetchOutcome::Transient(e) => {
-                let mut entry = state
-                    .cached_usage_by_slot
-                    .write()
-                    .remove(&slot)
-                    .unwrap_or_else(|| placeholder_cached(&acc, &e));
-                entry.last_error = Some(e);
-                state.cached_usage_by_slot.write().insert(slot, entry);
-            }
+    // 4. Pick at most one due slot, fetch it, advance its deadline.
+    let now = Instant::now();
+    if let Some(slot) = pick_due_slot(state, now) {
+        fetch_and_apply_one(handle, state, burn_buffers, slot).await;
+        let interval = Duration::from_secs(
+            state.settings.read().polling_interval_secs.max(60),
+        );
+        if let Some(entry) = state.schedule_by_slot.write().get_mut(&slot) {
+            entry.next_poll_at = Instant::now() + interval;
         }
     }
 
