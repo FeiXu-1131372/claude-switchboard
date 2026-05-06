@@ -101,9 +101,9 @@ async resizeWindow(mode: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async forceRefresh() : Promise<Result<null, string>> {
+async forceRefresh(scope: RefreshScope) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("force_refresh") };
+    return { status: "ok", data: await TAURI_INVOKE("force_refresh", { scope }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -230,6 +230,7 @@ export type PricingEntry = { prefix: string; input_per_mtok: number; output_per_
 tier?: PricingTier | null }
 export type PricingTier = { above_tokens: number; input_per_mtok: number; output_per_mtok: number; cache_read_per_mtok: number; cache_5m_per_mtok: number; cache_1h_per_mtok: number }
 export type ProjectStats = { project: string; session_count: number; total_cost_usd: number }
+export type RefreshScope = "active" | "all"
 export type RunningClaudeCode = { cli_processes: number; vscode_with_extension: string[] }
 export type Settings = { polling_interval_secs: number; thresholds: number[]; theme: string; launch_at_login: boolean; crash_reports: boolean; preferred_auth_source: AuthSource | null }
 export type StoredSessionEvent = { ts: string; project: string; model: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_5m_tokens: number; cache_creation_1h_tokens: number; cost_usd: number; source_file: string; source_line: number; 

@@ -5,7 +5,20 @@ use crate::store::StoredSessionEvent;
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Instant;
 use tauri::{command, State};
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum RefreshScope {
+    /// Re-fetch only the currently active slot. Inactive slots stay on
+    /// their staggered schedule. Triggered by the popover home view's
+    /// refresh icon.
+    Active,
+    /// Re-fetch every managed slot, staggered by 30 s starting from now.
+    /// Triggered by the AccountsPanel header refresh button.
+    All,
+}
 
 #[derive(Debug, Serialize, Deserialize, specta::Type)]
 pub struct DailyBucket {
@@ -252,7 +265,33 @@ pub async fn start_oauth_flow(
 
 #[command]
 #[specta::specta]
-pub async fn force_refresh(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+pub async fn force_refresh(
+    scope: RefreshScope,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    use crate::app_state::ScheduleState;
+
+    let now = Instant::now();
+    match scope {
+        RefreshScope::Active => {
+            if let Some(active) = *state.active_slot.read() {
+                state.schedule_by_slot.write().insert(
+                    active,
+                    ScheduleState { next_poll_at: now },
+                );
+            }
+        }
+        RefreshScope::All => {
+            let accounts = state.accounts.list().map_err(err_to_string)?;
+            let active = *state.active_slot.read();
+            let interval = std::time::Duration::from_secs(
+                state.settings.read().polling_interval_secs.max(60),
+            );
+            let slot_ids: Vec<u32> = accounts.iter().map(|a| a.slot).collect();
+            *state.schedule_by_slot.write() =
+                crate::poll_loop::seed_schedules(&slot_ids, active, now, interval);
+        }
+    }
     state.force_refresh.notify_one();
     Ok(())
 }
