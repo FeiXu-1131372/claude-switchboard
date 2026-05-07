@@ -8,13 +8,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct Db {
     conn: Mutex<Connection>,
-    _lock: File, // held for process lifetime
+    _lock: Option<File>, // None in --tick mode; Some(file) in GUI mode
     /// True when the DB was corrupt on startup and had to be recreated.
     pub recovered: bool,
 }
 
 impl Db {
-    /// Open (or recover) the database in `dir`.
+    /// GUI mode. Holds the exclusive file lock for process lifetime —
+    /// prevents two GUI instances from racing on the DB.
     ///
     /// Returns `Ok(db)` in all non-fatal cases:
     ///   - clean open: `db.recovered == false`
@@ -23,13 +24,30 @@ impl Db {
     /// Returns `Err` only if the directory or lockfile cannot be created, or if
     /// another instance holds the process lock.
     pub fn open(dir: &Path) -> Result<Self> {
+        Self::open_inner(dir, /*lock = */ true)
+    }
+
+    /// Headless `--tick` mode. Opens without the file lock — relies on
+    /// SQLite WAL (schema.sql sets `journal_mode = WAL`) and the
+    /// transactional claim in `scheduler::claim::try_claim` for cross-process
+    /// correctness. Used by `claude-switchboard --tick` so the dispatcher
+    /// can run alongside a running GUI without lock contention.
+    pub fn open_for_tick(dir: &Path) -> Result<Self> {
+        Self::open_inner(dir, /*lock = */ false)
+    }
+
+    fn open_inner(dir: &Path, lock: bool) -> Result<Self> {
         std::fs::create_dir_all(dir).context("create db dir")?;
 
-        let lock_path = dir.join(crate::branding::DB_LOCKFILE_NAME);
-        let lock_file = File::create(&lock_path).context("create lockfile")?;
-        lock_file
-            .try_lock_exclusive()
-            .context("another instance holds the DB lock")?;
+        let lock_file = if lock {
+            let lock_path = dir.join(crate::branding::DB_LOCKFILE_NAME);
+            let lf = File::create(&lock_path).context("create lockfile")?;
+            lf.try_lock_exclusive()
+                .context("another instance holds the DB lock")?;
+            Some(lf)
+        } else {
+            None
+        };
 
         let db_path = dir.join("data.db");
         let (conn, recovered) = Self::open_or_recover(&db_path)?;
@@ -381,6 +399,35 @@ mod tests {
             )
             .expect("warmup_consent_granted setting row exists");
         assert_eq!(consent, "0");
+    }
+
+    #[test]
+    fn open_for_tick_does_not_take_exclusive_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        // Acquire the exclusive lock as if a GUI is running.
+        let _gui_db = Db::open(dir.path()).expect("gui open");
+
+        // A second `Db::open(...)` would fail because the lockfile is held.
+        let conflict = Db::open(dir.path());
+        assert!(
+            conflict.is_err(),
+            "Db::open while another holds the lock should fail",
+        );
+
+        // But Db::open_for_tick should succeed — it doesn't take the file lock.
+        let tick_db = Db::open_for_tick(dir.path()).expect("tick open should succeed");
+        assert!(!tick_db.recovered);
+
+        // Both connections can read & write (SQLite WAL handles concurrency).
+        let conn = tick_db.conn();
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(n > 0);
     }
 
     #[test]
