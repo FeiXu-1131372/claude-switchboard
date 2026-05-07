@@ -5,6 +5,8 @@ use reqwest::{Client, StatusCode};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::branding;
+
 pub const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 pub const ANTHROPIC_BETA: &str = "oauth-2025-04-20";
 
@@ -52,7 +54,7 @@ impl UsageClient {
             .header("anthropic-beta", ANTHROPIC_BETA)
             .header(
                 "User-Agent",
-                format!("claude-limits/{}", self.app_version),
+                format!("{}/{}", branding::USER_AGENT_PREFIX, self.app_version),
             );
 
         let resp = match req.send().await {
@@ -148,5 +150,10 @@ mod tests {
         assert_eq!(d, Duration::from_secs(600)); // cap
         d = next_backoff(d);
         assert_eq!(d, Duration::from_secs(600)); // cap
+    }
+
+    #[test]
+    fn user_agent_uses_switchboard_prefix() {
+        assert_eq!(branding::USER_AGENT_PREFIX, "claude-switchboard");
     }
 }
