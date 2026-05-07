@@ -10,6 +10,7 @@ import { AccountsPanel } from '../accounts/AccountsPanel';
 import { UnmanagedActiveBanner } from '../accounts/UnmanagedActiveBanner';
 import { useAppStore } from '../lib/store';
 import { useUpdateStore } from '../state/updateStore';
+import { useActiveModel } from '../lib/useActiveModel';
 import { ipc } from '../lib/ipc';
 import { IconRefresh, IconSettings, ChevronRight, X, IconExpand } from '../lib/icons';
 import { handleDragStart, closeWindow } from '../lib/window-chrome';
@@ -65,6 +66,10 @@ export function CompactPopover() {
   const stale = useAppStore((s) => s.stale);
   const dismissBanner = useAppStore((s) => s.dismissBanner);
   const toggleViewMode = useAppStore((s) => s.toggleViewMode);
+  const accountPlan = useAppStore(
+    (s) => s.accounts.find((a) => a.is_active)?.subscription_type ?? null,
+  );
+  const activeModel = useActiveModel();
   const [view, setView] = useState<'home' | 'settings' | 'accounts'>('home');
   const [refreshing, setRefreshing] = useState(false);
 
@@ -119,6 +124,7 @@ export function CompactPopover() {
         stale={stale}
         refreshing={refreshing}
         accountEmail={accountEmail}
+        accountPlan={accountPlan}
         onRefresh={handleRefresh}
         onSettings={() => setView('settings')}
         onAccounts={() => setView('accounts')}
@@ -135,7 +141,7 @@ export function CompactPopover() {
         )}
       </div>
 
-      <UsageSummary usage={usage} thresholds={[warn, danger]} />
+      <UsageSummary usage={usage} thresholds={[warn, danger]} activeModel={activeModel} />
 
       <div
         style={{ marginTop: 'auto' }}
@@ -220,6 +226,7 @@ function ChromeBar({
   stale,
   refreshing,
   accountEmail,
+  accountPlan,
   onRefresh,
   onSettings,
   onAccounts,
@@ -229,6 +236,7 @@ function ChromeBar({
   stale: boolean;
   refreshing: boolean;
   accountEmail: string | null;
+  accountPlan?: string | null;
   onRefresh: () => void;
   onSettings: () => void;
   onAccounts: () => void;
@@ -239,18 +247,16 @@ function ChromeBar({
       onPointerDown={handleDragStart}
       className="flex items-center justify-between gap-[var(--space-sm)] px-[var(--popover-pad)] pt-[var(--space-md)] pb-[var(--space-sm)] cursor-default select-none"
     >
-      <div className="flex items-center gap-[var(--space-xs)]">
-        <span className="text-[length:var(--text-label)] font-[var(--weight-semibold)] text-[color:var(--color-text-secondary)] tracking-[var(--tracking-label)] uppercase pointer-events-none">
-          Claude
-        </span>
+      <div className="flex items-center gap-[var(--space-xs)] min-w-0">
         <button
           type="button"
           onClick={onAccounts}
-          className="text-[length:var(--text-micro)] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] truncate max-w-[180px]"
+          className="text-[length:var(--text-body)] font-[var(--weight-medium)] text-[color:var(--color-text)] hover:text-[color:var(--color-accent)] truncate max-w-[220px]"
           title={accountEmail ?? ''}
         >
           {accountEmail ?? 'Sign in'}
         </button>
+        {accountPlan && <PlanPill plan={accountPlan} />}
         <StatusDot live={live} stale={stale} />
       </div>
       <div className="flex items-center gap-[2px]">
@@ -310,6 +316,25 @@ function Header({ title, onBack }: { title: string; onBack: () => void }) {
         <X size={13} />
       </IconButton>
     </div>
+  );
+}
+
+function PlanPill({ plan }: { plan: string }) {
+  const isMax = plan.toLowerCase().includes('max');
+  return (
+    <span
+      className={`
+        inline-flex items-center rounded-[var(--radius-pill)]
+        px-[var(--space-xs)] py-[1px] shrink-0
+        text-[length:var(--text-micro)] font-[var(--weight-semibold)]
+        uppercase tracking-[var(--tracking-label)]
+        ${isMax
+          ? 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)]'
+          : 'bg-[var(--color-track)] text-[color:var(--color-text-secondary)]'}
+      `}
+    >
+      {plan}
+    </span>
   );
 }
 
