@@ -129,6 +129,15 @@ pub fn run() {
             commands::swap_to_account,
             commands::detect_running_claude_code,
             commands::refresh_account,
+            commands::warmup_account_now,
+            commands::set_account_schedule,
+            commands::set_warmup_enabled,
+            commands::grant_warmup_consent,
+            commands::revoke_warmup_consent,
+            commands::get_warmup_consent_granted,
+            commands::os_scheduler_register,
+            commands::os_scheduler_unregister,
+            commands::os_scheduler_is_registered,
         ]);
 
     #[cfg(debug_assertions)]
@@ -156,6 +165,15 @@ pub fn run() {
             commands::detect_running_claude_code,
             commands::refresh_account,
             commands::debug_force_threshold,
+            commands::warmup_account_now,
+            commands::set_account_schedule,
+            commands::set_warmup_enabled,
+            commands::grant_warmup_consent,
+            commands::revoke_warmup_consent,
+            commands::get_warmup_consent_granted,
+            commands::os_scheduler_register,
+            commands::os_scheduler_unregister,
+            commands::os_scheduler_is_registered,
         ]);
 
     #[cfg(debug_assertions)]

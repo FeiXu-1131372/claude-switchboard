@@ -615,3 +615,129 @@ pub async fn refresh_account(
     state.force_refresh.notify_one();
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Warmup pillar commands (Plan B T16)
+// ---------------------------------------------------------------------------
+
+/// Trigger a manual warm-up for a specific account (UI "Warm up now" button).
+#[command]
+#[specta::specta]
+pub async fn warmup_account_now(
+    state: State<'_, Arc<AppState>>,
+    account_id: String,
+) -> Result<crate::warmup::errors::WarmupOutcome, String> {
+    crate::scheduler_glue::manual_warmup(state.inner(), &account_id)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Set the per-account schedule preset.
+#[command]
+#[specta::specta]
+pub async fn set_account_schedule(
+    state: State<'_, Arc<AppState>>,
+    account_id: String,
+    schedule: crate::scheduler::Schedule,
+) -> Result<(), String> {
+    let conn = state.db.conn();
+    let json = serde_json::to_string(&schedule).map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE accounts SET schedule = ?1 WHERE id = ?2",
+        rusqlite::params![json, account_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Toggle warm-up on/off for a specific account.
+#[command]
+#[specta::specta]
+pub async fn set_warmup_enabled(
+    state: State<'_, Arc<AppState>>,
+    account_id: String,
+    enabled: bool,
+) -> Result<(), String> {
+    let conn = state.db.conn();
+    conn.execute(
+        "UPDATE accounts SET warmup_enabled = ?1 WHERE id = ?2",
+        rusqlite::params![enabled as i64, account_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Grant the global warm-up consent (called by WarmupConsentModal on Accept).
+#[command]
+#[specta::specta]
+pub async fn grant_warmup_consent(
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    let conn = state.db.conn();
+    conn.execute(
+        "UPDATE settings SET value = '1' WHERE key = 'warmup_consent_granted'",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Revoke global consent (also disables warm-up on every account).
+#[command]
+#[specta::specta]
+pub async fn revoke_warmup_consent(
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    let conn = state.db.conn();
+    conn.execute_batch(
+        "UPDATE settings SET value = '0' WHERE key = 'warmup_consent_granted'; \
+         UPDATE accounts SET warmup_enabled = 0;",
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Read the consent flag.
+#[command]
+#[specta::specta]
+pub async fn get_warmup_consent_granted(
+    state: State<'_, Arc<AppState>>,
+) -> Result<bool, String> {
+    let conn = state.db.conn();
+    let v: String = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'warmup_consent_granted'",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(v == "1")
+}
+
+/// Register OS-level scheduler (writes plist / schtasks task).
+#[command]
+#[specta::specta]
+pub async fn os_scheduler_register() -> Result<(), String> {
+    let bin = std::env::current_exe().map_err(|e| e.to_string())?;
+    let s = crate::os_scheduler::for_current_platform()
+        .ok_or_else(|| "OS-level scheduling not supported on this platform".to_string())?;
+    s.register(&bin).map_err(|e| format!("{e:#}"))
+}
+
+/// Unregister OS-level scheduler.
+#[command]
+#[specta::specta]
+pub async fn os_scheduler_unregister() -> Result<(), String> {
+    let s = crate::os_scheduler::for_current_platform()
+        .ok_or_else(|| "OS-level scheduling not supported on this platform".to_string())?;
+    s.unregister().map_err(|e| format!("{e:#}"))
+}
+
+/// Check if OS-level scheduler is currently registered.
+#[command]
+#[specta::specta]
+pub async fn os_scheduler_is_registered() -> Result<bool, String> {
+    let s = crate::os_scheduler::for_current_platform()
+        .ok_or_else(|| "OS-level scheduling not supported on this platform".to_string())?;
+    s.is_registered().map_err(|e| format!("{e:#}"))
+}

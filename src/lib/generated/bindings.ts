@@ -180,6 +180,105 @@ async debugForceThreshold(bucket: string, pct: number) : Promise<Result<null, st
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Trigger a manual warm-up for a specific account (UI "Warm up now" button).
+ */
+async warmupAccountNow(accountId: string) : Promise<Result<WarmupOutcome, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("warmup_account_now", { accountId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Set the per-account schedule preset.
+ */
+async setAccountSchedule(accountId: string, schedule: Schedule) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_account_schedule", { accountId, schedule }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Toggle warm-up on/off for a specific account.
+ */
+async setWarmupEnabled(accountId: string, enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_warmup_enabled", { accountId, enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Grant the global warm-up consent (called by WarmupConsentModal on Accept).
+ */
+async grantWarmupConsent() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grant_warmup_consent") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Revoke global consent (also disables warm-up on every account).
+ */
+async revokeWarmupConsent() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("revoke_warmup_consent") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Read the consent flag.
+ */
+async getWarmupConsentGranted() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_warmup_consent_granted") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Register OS-level scheduler (writes plist / schtasks task).
+ */
+async osSchedulerRegister() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("os_scheduler_register") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Unregister OS-level scheduler.
+ */
+async osSchedulerUnregister() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("os_scheduler_unregister") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Check if OS-level scheduler is currently registered.
+ */
+async osSchedulerIsRegistered() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("os_scheduler_is_registered") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -220,6 +319,10 @@ export type CacheStats = { total_cache_read_tokens: number; total_cache_creation
 export type CachedUsage = { snapshot: UsageSnapshot; account_id: string; account_email: string; last_error: string | null; burn_rate?: BurnRateProjection | null; auth_source: AuthSource }
 export type DailyBucket = { date: string; input_tokens: number; output_tokens: number; cost_usd: number }
 export type ExtraUsage = { is_enabled?: boolean; monthly_limit_cents?: number; used_credits_cents?: number; utilization?: number | null; resets_at?: string | null }
+/**
+ * Wall-clock time-of-day in user's local timezone.
+ */
+export type HhMm = { hour: number; minute: number }
 export type ModelStats = { model: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; cost_usd: number }
 export type PricingEntry = { prefix: string; input_per_mtok: number; output_per_mtok: number; cache_read_per_mtok: number; cache_5m_per_mtok: number; cache_1h_per_mtok: number; 
 /**
@@ -243,6 +346,15 @@ export type RefreshScope =
  */
 "all"
 export type RunningClaudeCode = { cli_processes: number; vscode_with_extension: string[] }
+/**
+ * Per-account schedule preset.
+ * 
+ * Default is `Off`. Stored in `accounts.schedule` as a tagged JSON union:
+ * {"type":"Off"}
+ * {"type":"Every5h","anchor":{"hour":6,"minute":0}}
+ * {"type":"Custom","times":[{"hour":7,"minute":30},{"hour":17,"minute":0}]}
+ */
+export type Schedule = { type: "Off" } | { type: "Every5h"; anchor: HhMm } | { type: "Custom"; times: HhMm[] }
 export type Settings = { polling_interval_secs: number; thresholds: number[]; theme: string; launch_at_login: boolean; crash_reports: boolean; preferred_auth_source: AuthSource | null }
 export type StoredSessionEvent = { ts: string; project: string; model: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_5m_tokens: number; cache_creation_1h_tokens: number; cost_usd: number; source_file: string; source_line: number; 
 /**
@@ -254,6 +366,35 @@ event_id: string }
 export type SwapReport = { new_active_slot: number; running: RunningClaudeCode }
 export type UsageSnapshot = { five_hour: Utilization | null; seven_day: Utilization | null; seven_day_sonnet: Utilization | null; seven_day_opus: Utilization | null; extra_usage: ExtraUsage | null; fetched_at?: string }
 export type Utilization = { utilization: number; resets_at?: string | null }
+export type WarmupOutcome = 
+/**
+ * 200 OK — the call started a fresh 5h window.
+ */
+"Success" | 
+/**
+ * Active-window precondition: bucket already running (no HTTP issued).
+ */
+"SkippedAlreadyActive" | 
+/**
+ * 401 / 403 — token expired or revoked. Slot needs reauth.
+ */
+"NeedsReauth" | 
+/**
+ * 429 — already at limit. Window running and at cap.
+ */
+"AtRateLimit" | 
+/**
+ * 5xx — Anthropic server. Retry-once policy already applied.
+ */
+"AnthropicServerError" | 
+/**
+ * Network failure or timeout.
+ */
+"NetworkError" | 
+/**
+ * Other / unknown HTTP status.
+ */
+{ OtherFailure: { status: number } }
 
 /** tauri-specta globals **/
 
