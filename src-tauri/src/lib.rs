@@ -9,6 +9,7 @@ pub mod migration;
 pub mod notifier;
 mod poll_loop;
 mod process_detection;
+pub mod os_scheduler;
 pub mod scheduler;
 pub mod store;
 mod tray;
