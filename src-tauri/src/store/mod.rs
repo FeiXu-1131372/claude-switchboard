@@ -267,4 +267,64 @@ mod tests {
             .expect("migration_completed row should exist");
         assert_eq!(value, "0", "default value is '0' (false)");
     }
+
+    /// Verify that `0004_migration_state.sql` is actually executed and inserts
+    /// the `migration_completed` row.
+    ///
+    /// The existing test above covers the fresh-DB path (schema.sql seed), but
+    /// never invokes the migration file itself.  Re-opening an existing DB is
+    /// insufficient to isolate the migration because `open_or_recover` re-runs
+    /// schema.sql on every existing-file open (which seeds the row via
+    /// `INSERT OR IGNORE` before `migrate()` runs).
+    ///
+    /// Strategy — direct `execute_batch` against a minimal in-memory-style DB:
+    ///   1. Open a real DB so the `settings` table exists.
+    ///   2. Delete the seed row so the table looks like a pre-migration state.
+    ///   3. Execute `0004_migration_state.sql` via `execute_batch` directly.
+    ///   4. Assert the row was inserted with value `'0'`.
+    ///   5. Execute again — confirm idempotency (ON CONFLICT DO NOTHING).
+    #[test]
+    fn migration_0004_inserts_row_when_upgrading_from_v3() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(dir.path()).expect("open fresh db");
+        let conn = db.conn();
+
+        // Step 2: remove the schema.sql seed row to simulate a pre-0004 DB.
+        conn.execute("DELETE FROM settings WHERE key = 'migration_completed'", [])
+            .expect("remove seed row");
+        let absent: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM settings WHERE key = 'migration_completed'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(absent, 0, "seed row must be absent before running the migration");
+
+        // Step 3: run the migration SQL directly — this is the code under test.
+        conn.execute_batch(include_str!("migrations/0004_migration_state.sql"))
+            .expect("0004_migration_state.sql should execute without error");
+
+        // Step 4: row must now exist with value '0'.
+        let value: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'migration_completed'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("migration_completed row must exist after 0004 migration SQL");
+        assert_eq!(value, "0", "migration_completed default value must be '0'");
+
+        // Step 5: re-run is idempotent (ON CONFLICT DO NOTHING).
+        conn.execute_batch(include_str!("migrations/0004_migration_state.sql"))
+            .expect("re-running 0004 should be a no-op, not an error");
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM settings WHERE key = 'migration_completed'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "idempotent re-run must not duplicate the row");
+    }
 }
