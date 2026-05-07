@@ -1,9 +1,10 @@
 mod app_state;
 pub mod auth;
 pub mod branding;
+pub mod cli;
 mod commands;
 pub mod jsonl_parser;
-mod logging;
+pub mod logging;
 pub mod migration;
 pub mod notifier;
 mod poll_loop;
