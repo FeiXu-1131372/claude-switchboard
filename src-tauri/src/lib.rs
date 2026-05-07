@@ -14,6 +14,7 @@ mod tray;
 mod tray_icon;
 mod updater;
 pub mod usage_api;
+pub mod warmup;
 
 use app_state::AppState;
 use std::sync::Arc;
