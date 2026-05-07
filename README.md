@@ -132,6 +132,38 @@ The app never logs in on your behalf. It only ever reads tokens that your OS alr
 
 **Hot reload, not restart.** A swap rewrites the OS-level credentials atomically — running CC sessions pick up the new account within ~30 seconds (CC's own keychain cache TTL on macOS, one API tick on Windows). A 60-second `KeychainGuardian` covers the narrow race where a CC process started its OAuth refresh just before the swap.
 
+## Warm-up & scheduling
+
+Switchboard can deliberately start an account's 5-hour rolling window so its
+reset time is known and predictable — useful when rotating across multiple
+accounts. **Off by default per account; strictly opt-in.**
+
+The first time you enable warm-up on any account, a one-time consent dialog
+explains exactly what gets sent. Per-account toggle and global revoke are
+available in Settings at any time.
+
+### How it works
+
+A warm-up sends a 1-token Haiku request to `api.anthropic.com/v1/messages`
+using the account's existing OAuth credentials — the same surface Claude
+Code uses. Cost: rounding-error against your subscription
+(≈$0.000007/fire, ≈$0.013/year per account on a 5-fires-a-day cadence).
+
+If the account already has an active 5-hour window from your normal coding,
+warm-up is a no-op — it skips the HTTP call entirely.
+
+### Schedules
+
+Three presets cover the realistic cases:
+- **Off** — manual only.
+- **Every 5h** — pick an anchor (e.g. 06:00) and the app fires at 06:00,
+  11:00, 16:00, 21:00.
+- **Custom** — explicit list of `HH:MM` times.
+
+Schedules fire via the OS (launchd on macOS, Task Scheduler on Windows) so
+they work even when the app is closed. If you'd rather not register an OS
+agent, the in-app scheduler still fires while the app is open.
+
 ## Migrating from Claude Limits (v0.3.x)
 
 If you previously used Claude Limits, install Switchboard from the releases
@@ -154,6 +186,10 @@ app will offer a "tidy old data" button.
 - All data stays on your machine. Usage history is in SQLite at `~/Library/Application Support/com.claude-switchboard.ClaudeSwitchboard/data.db` (macOS) or the platform equivalent on Windows.
 - The only outbound traffic is to Anthropic's official API.
 - No telemetry, no analytics, no third-party services.
+- **Opt-in warm-up:** With your explicit per-account consent, Switchboard
+  can send 1-token warm-up messages to `/v1/messages` to start the 5-hour
+  window deliberately. No other content is ever sent. Off by default;
+  revocable any time from Settings.
 
 ## Stack
 
