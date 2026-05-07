@@ -28,7 +28,7 @@ export function AddAccountChooser({ onClose }: Props) {
     }
   }
 
-  if (showOauth) return <AuthPanel />;
+  if (showOauth) return <AuthPanel onBack={() => setShowOauth(false)} />;
 
   const liveAlreadyManaged = false;
   const showImportTile = !liveAlreadyManaged;

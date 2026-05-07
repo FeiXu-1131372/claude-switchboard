@@ -1,5 +1,5 @@
-use claude_limits_lib::jsonl_parser::{walker, PricingTable};
-use claude_limits_lib::store::{Db, StoredAccount};
+use claude_switchboard_lib::jsonl_parser::{walker, PricingTable};
+use claude_switchboard_lib::store::{Db, StoredAccount};
 use std::fs;
 use tempfile::tempdir;
 

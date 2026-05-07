@@ -30,5 +30,19 @@ export const ipc = {
   updateSettings: (s: Settings) => commands.updateSettings(s).then(unwrap),
 
   resizeWindow: (mode: 'compact' | 'expanded') => commands.resizeWindow(mode).then(unwrap),
-  forceRefresh: () => commands.forceRefresh().then(unwrap),
+  forceRefresh: (scope: 'active' | 'all') => commands.forceRefresh(scope).then(unwrap),
+
+  // Warmup pillar
+  getWarmupState: (accountId: string) => commands.getWarmupState(accountId).then(unwrap),
+  setWarmupEnabled: (accountId: string, enabled: boolean) =>
+    commands.setWarmupEnabled(accountId, enabled).then(unwrap),
+  setAccountSchedule: (accountId: string, schedule: import('./generated/bindings').Schedule) =>
+    commands.setAccountSchedule(accountId, schedule).then(unwrap),
+  warmupAccountNow: (accountId: string) => commands.warmupAccountNow(accountId).then(unwrap),
+  grantWarmupConsent: () => commands.grantWarmupConsent().then(unwrap),
+  revokeWarmupConsent: () => commands.revokeWarmupConsent().then(unwrap),
+  getWarmupConsentGranted: () => commands.getWarmupConsentGranted().then(unwrap),
+  osSchedulerRegister: () => commands.osSchedulerRegister().then(unwrap),
+  osSchedulerUnregister: () => commands.osSchedulerUnregister().then(unwrap),
+  osSchedulerIsRegistered: () => commands.osSchedulerIsRegistered().then(unwrap),
 };

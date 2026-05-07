@@ -5,10 +5,13 @@ use reqwest::{Client, StatusCode};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::branding;
+
 pub const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 pub const ANTHROPIC_BETA: &str = "oauth-2025-04-20";
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)] // UsageSnapshot is intentionally value-typed; boxing adds indirection for no benefit here
 pub enum FetchOutcome {
     Ok(UsageSnapshot),
     Unauthorized,
@@ -51,7 +54,7 @@ impl UsageClient {
             .header("anthropic-beta", ANTHROPIC_BETA)
             .header(
                 "User-Agent",
-                format!("claude-limits/{}", self.app_version),
+                format!("{}/{}", branding::USER_AGENT_PREFIX, self.app_version),
             );
 
         let resp = match req.send().await {
@@ -117,10 +120,10 @@ impl UsageClient {
     }
 }
 
-/// Exponential backoff ladder: 1m, 2m, 4m, 8m, 16m, 30m (cap).
+/// Exponential backoff ladder: 1m, 2m, 4m, 8m, 10m (cap).
 pub fn next_backoff(previous: Duration) -> Duration {
     let doubled = previous.saturating_mul(2);
-    let cap = Duration::from_secs(30 * 60);
+    let cap = Duration::from_secs(10 * 60);
     if doubled > cap {
         cap
     } else {
@@ -142,10 +145,15 @@ mod tests {
         d = next_backoff(d);
         assert_eq!(d, Duration::from_secs(480));
         d = next_backoff(d);
-        assert_eq!(d, Duration::from_secs(960));
+        assert_eq!(d, Duration::from_secs(600)); // doubled 960 clamped to 10m cap
         d = next_backoff(d);
-        assert_eq!(d, Duration::from_secs(1800));
+        assert_eq!(d, Duration::from_secs(600)); // cap
         d = next_backoff(d);
-        assert_eq!(d, Duration::from_secs(1800)); // cap
+        assert_eq!(d, Duration::from_secs(600)); // cap
+    }
+
+    #[test]
+    fn user_agent_uses_switchboard_prefix() {
+        assert_eq!(branding::USER_AGENT_PREFIX, "claude-switchboard");
     }
 }

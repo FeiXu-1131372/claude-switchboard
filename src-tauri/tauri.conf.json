@@ -1,9 +1,9 @@
 {
-  "productName": "Claude Limits",
-  "identifier": "com.claude-limits.app",
+  "productName": "Claude Switchboard",
+  "identifier": "com.claude-switchboard.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
-    "devUrl": "http://127.0.0.1:1420",
+    "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
@@ -12,7 +12,7 @@
     "windows": [
       {
         "label": "popover",
-        "title": "Claude Limits",
+        "title": "Claude Switchboard",
         "width": 360,
         "height": 380,
         "resizable": false,
@@ -36,7 +36,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/FeiXu-1131372/claude-limits/releases/latest/download/latest.json"
+        "https://github.com/FeiXu-1131372/claude-switchboard/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk3M0JCNzkxNDNEQTQyRTkKUldUcFF0cERrYmM3bDNad2loc2ZBWHhEQnhDZ2c1OEs1OGkzbXRzaU5EMmdINVpZVmd4OFZzRUMK",
       "windows": { "installMode": "passive" }

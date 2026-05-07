@@ -114,6 +114,7 @@ export function InstrumentRow({
   data,
   warnAt,
   dangerAt,
+  active,
 }: {
   label: string;
   caption?: string;
@@ -121,6 +122,8 @@ export function InstrumentRow({
   data?: Utilization | null;
   warnAt: number;
   dangerAt: number;
+  /** Marks this row as the currently-in-use model — accent dot + accent label. */
+  active?: boolean;
 }) {
   const v = value ?? data?.utilization ?? null;
   const level = levelOf(v, warnAt, dangerAt);
@@ -130,7 +133,24 @@ export function InstrumentRow({
     <div className="flex flex-col gap-[6px]">
       <div className="flex items-baseline justify-between gap-[var(--space-sm)] min-w-0">
         <div className="flex items-baseline gap-[var(--space-xs)] min-w-0">
-          <span className="text-[length:var(--text-label)] font-[var(--weight-medium)] text-[color:var(--color-text-secondary)] truncate">
+          {active && (
+            <span
+              aria-label="currently in use"
+              title="Currently in use"
+              className="inline-block h-[6px] w-[6px] rounded-full shrink-0 self-center"
+              style={{
+                background: 'var(--color-accent)',
+                animation: 'pulse-dot 2.4s ease-in-out infinite',
+              }}
+            />
+          )}
+          <span
+            className={`text-[length:var(--text-label)] font-[var(--weight-medium)] truncate ${
+              active
+                ? 'text-[color:var(--color-accent)]'
+                : 'text-[color:var(--color-text-secondary)]'
+            }`}
+          >
             {label}
           </span>
           {caption && (

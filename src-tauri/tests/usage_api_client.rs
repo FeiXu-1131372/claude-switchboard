@@ -1,4 +1,4 @@
-use claude_limits_lib::usage_api::{FetchOutcome, UsageClient};
+use claude_switchboard_lib::usage_api::{FetchOutcome, UsageClient};
 use mockito::Server;
 
 #[tokio::test]

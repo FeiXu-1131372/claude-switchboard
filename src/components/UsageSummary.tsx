@@ -16,12 +16,17 @@ interface UsageSummaryProps {
   thresholds: [number, number];
   /** Tighter layout for embedding at the top of the expanded report. */
   condensed?: boolean;
+  /** Highlights the matching Opus/Sonnet sub-row as currently in use. */
+  activeModel?: 'opus' | 'sonnet' | 'haiku' | null;
 }
 
-export function UsageSummary({ usage, thresholds, condensed }: UsageSummaryProps) {
+export function UsageSummary({ usage, thresholds, condensed, activeModel }: UsageSummaryProps) {
   const snap = usage.snapshot;
   const extra = snap.extra_usage;
   const [warn, danger] = thresholds;
+  // Render the model split whenever the 7d primary has loaded — even if both
+  // sub-buckets are null, an empty row reads better than disappearing data.
+  const showModelSplit = snap.seven_day != null;
 
   return (
     <div className={condensed ? 'flex flex-col gap-[var(--space-xs)]' : 'flex flex-col'}>
@@ -57,13 +62,27 @@ export function UsageSummary({ usage, thresholds, condensed }: UsageSummaryProps
         />
       </motion.div>
 
-      {/* Opus / Sonnet sub-row — only if 7d split data exists */}
-      {(snap.seven_day_opus || snap.seven_day_sonnet) && (
+      {/* Opus / Sonnet sub-row — rendered whenever 7d data is present so the
+       * model split stays visible even when one bucket is idle. The currently-
+       * in-use family (derived from local session events) is highlighted. */}
+      {showModelSplit && (
         <>
           <Hairline />
           <div className="grid grid-cols-2 gap-x-[var(--space-lg)] px-[var(--popover-pad)] py-[var(--space-sm)]">
-            <InstrumentRow label="Opus" data={snap.seven_day_opus} warnAt={warn} dangerAt={danger} />
-            <InstrumentRow label="Sonnet" data={snap.seven_day_sonnet} warnAt={warn} dangerAt={danger} />
+            <InstrumentRow
+              label="Opus"
+              data={snap.seven_day_opus}
+              warnAt={warn}
+              dangerAt={danger}
+              active={activeModel === 'opus'}
+            />
+            <InstrumentRow
+              label="Sonnet"
+              data={snap.seven_day_sonnet}
+              warnAt={warn}
+              dangerAt={danger}
+              active={activeModel === 'sonnet'}
+            />
           </div>
         </>
       )}

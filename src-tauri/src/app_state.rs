@@ -1,15 +1,31 @@
 use crate::auth::accounts::AccountManager;
+use crate::auth::keychain_guardian::KeychainGuardian;
 use crate::auth::{AuthOrchestrator, AuthSource};
 use crate::jsonl_parser::PricingTable;
 use crate::store::Db;
 use crate::usage_api::{UsageClient, UsageSnapshot};
 use chrono::{DateTime, Utc};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration as StdDuration;
+use std::time::{Duration as StdDuration, Instant};
 use tokio::sync::Notify;
+
+/// Marker struct for the in-app warm-up scheduler. The tokio JoinHandle is
+/// held by lib.rs at task spawn time and does not need to be reachable from
+/// Tauri commands. Kept as a named struct so future tasks (T22+) can add
+/// UI-visible state here (e.g. `last_outcome_by_account`) without churning
+/// AppState's field layout.
+pub struct WarmupState {
+    // Reserved for future per-account status badges (Plan B T22+).
+}
+
+impl Default for WarmupState {
+    fn default() -> Self {
+        Self {}
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(default)]
@@ -76,6 +92,10 @@ pub struct AppState {
     pub db: Arc<Db>,
     pub auth: Arc<AuthOrchestrator>,
     pub usage: Arc<UsageClient>,
+    /// Shared HTTP client — used by the usage API, token exchange, and the
+    /// warm-up dispatcher. Stored here so `scheduler_glue` can reach it
+    /// without going through UsageClient's private `inner` field.
+    pub http_client: Arc<reqwest::Client>,
     pub pricing: Arc<PricingTable>,
     pub settings: RwLock<Settings>,
     pub cached_usage: RwLock<Option<CachedUsage>>,
@@ -83,7 +103,24 @@ pub struct AppState {
     pub accounts: Arc<AccountManager>,
     pub cached_usage_by_slot: RwLock<HashMap<u32, CachedUsage>>,
     pub active_slot: RwLock<Option<u32>>,
-    pub backoff_by_slot: RwLock<HashMap<u32, StdDuration>>,
+    pub backoff_by_slot: RwLock<HashMap<u32, BackoffState>>,
+    pub schedule_by_slot: RwLock<HashMap<u32, ScheduleState>>,
+    pub keychain_guardian: Mutex<Option<KeychainGuardian>>,
+    pub warmup: WarmupState,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct BackoffState {
+    pub until: Instant,
+    pub last_delay: StdDuration,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ScheduleState {
+    /// Earliest moment this slot is eligible for a usage fetch. The poll
+    /// loop will not fetch this slot before this instant. Updated after
+    /// each successful fetch to `now + polling_interval_secs`.
+    pub next_poll_at: Instant,
 }
 
 impl AppState {

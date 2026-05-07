@@ -11,7 +11,10 @@ CREATE TABLE IF NOT EXISTS accounts (
     id TEXT PRIMARY KEY,
     email TEXT NOT NULL,
     display_name TEXT,
-    last_seen_at INTEGER NOT NULL
+    last_seen_at INTEGER NOT NULL,
+    warmup_enabled INTEGER NOT NULL DEFAULT 0,
+    schedule TEXT NOT NULL DEFAULT '{"type":"Off"}',
+    last_warmup_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS api_snapshots (
@@ -69,3 +72,7 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- Seed default settings rows (idempotent — safe to re-run on existing DBs).
+INSERT OR IGNORE INTO settings (key, value) VALUES ('migration_completed', '0');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('warmup_consent_granted', '0');

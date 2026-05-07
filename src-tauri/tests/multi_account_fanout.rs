@@ -2,7 +2,7 @@
 //! Verifies: only the 429 slot enters backoff; the other two have fresh
 //! cached_usage; per-slot events are emitted with distinct slot ids.
 
-use claude_limits_lib as lib;
+use claude_switchboard_lib as lib;
 
 // We can't directly emit events without an AppHandle, so this test exercises
 // the lower-level path: AccountManager + UsageClient round-trips against

@@ -57,7 +57,7 @@ export function ExpandedReport() {
     if (refreshing) return;
     setRefreshing(true);
     try {
-      await ipc.forceRefresh();
+      await ipc.forceRefresh('active');
       setTabKey((k) => k + 1);
     } finally {
       setTimeout(() => setRefreshing(false), 420);

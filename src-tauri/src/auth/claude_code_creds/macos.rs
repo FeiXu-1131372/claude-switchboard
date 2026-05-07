@@ -170,35 +170,29 @@ async fn read_one_blob(service: String) -> Result<Option<serde_json::Value>> {
 }
 
 /// Write the full `claudeAiOauth` blob to the canonical Keychain service.
-/// Always writes to `"Claude Code-credentials"` (no per-account variant) and
-/// passes the blob via stdin so it never appears in the process command-line.
+/// Always writes to `"Claude Code-credentials"` (no per-account variant).
+///
+/// The blob is passed as the `-w <password>` argument. macOS `security` has
+/// no stdin-mode for passwords (omitting `-w` reads from `/dev/tty`, not
+/// stdin), so the JSON briefly appears in this process's command line —
+/// readable by other processes of the same user via `ps`. Acceptable for
+/// a desktop tool where the same user already owns the keychain item
+/// itself; reach for the `security-framework` crate if that ever changes.
 pub async fn write_full_blob(blob: &serde_json::Value) -> Result<()> {
-    use std::io::Write;
-    use std::process::Stdio;
-
-    // Wrap into the file-on-disk shape: { "claudeAiOauth": { ... } }
     let wrapped = serde_json::json!({ "claudeAiOauth": blob });
     let payload = serde_json::to_string(&wrapped)?;
     let user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
 
     tokio::task::spawn_blocking(move || -> Result<()> {
-        let mut child = Command::new("security")
+        let out = Command::new("security")
             .args([
                 "add-generic-password", "-U",
                 "-s", SERVICE_PREFIX,
                 "-a", &user,
-                "-w", "-",
+                "-w", &payload,
             ])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
+            .output()
             .context("spawn security add-generic-password")?;
-
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(payload.as_bytes()).context("write payload to stdin")?;
-        }
-        let out = child.wait_with_output().context("wait for security")?;
         if !out.status.success() {
             let stderr = String::from_utf8_lossy(&out.stderr);
             anyhow::bail!("security add-generic-password failed: {stderr}");

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card } from '../components/ui/Card';
 import { Toggle } from '../components/ui/Toggle';
 import { Slider } from '../components/ui/Slider';
@@ -7,6 +7,8 @@ import { Button } from '../components/ui/Button';
 import { useAppStore } from '../lib/store';
 import type { Settings } from '../lib/types';
 import { enable as enableAutostart, disable as disableAutostart } from '@tauri-apps/plugin-autostart';
+import { ipc } from '../lib/ipc';
+import { WarmupSettings } from './WarmupSettings';
 
 const POLL_MIN_SECS = 60;
 const POLL_MAX_SECS = 1800;
@@ -19,6 +21,28 @@ export function SettingsPanel() {
   const [local, setLocal] = useState<Settings | null>(() => settings);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [consentGranted, setConsentGranted] = useState(false);
+  const [osRegistered, setOsRegistered] = useState(false);
+
+  useEffect(() => {
+    ipc.getWarmupConsentGranted().then(setConsentGranted).catch(() => {});
+    ipc.osSchedulerIsRegistered().then(setOsRegistered).catch(() => {});
+  }, []);
+
+  const handleRevoke = async () => {
+    await ipc.revokeWarmupConsent();
+    setConsentGranted(false);
+  };
+
+  const handleRegisterOs = async () => {
+    await ipc.osSchedulerRegister();
+    setOsRegistered(true);
+  };
+
+  const handleUnregisterOs = async () => {
+    await ipc.osSchedulerUnregister();
+    setOsRegistered(false);
+  };
 
   if (!local) return <p className="text-[color:var(--color-text-muted)]">Loading...</p>;
 
@@ -161,6 +185,22 @@ export function SettingsPanel() {
               </span>
             )}
           </div>
+        </Card>
+      </section>
+
+      {/* Warm-up */}
+      <section className="flex flex-col gap-[var(--space-sm)]">
+        <h2 className="text-[length:var(--text-label)] font-[var(--weight-semibold)] text-[color:var(--color-text-muted)] uppercase tracking-[0.04em] px-[var(--space-2xs)]">
+          Warm-up
+        </h2>
+        <Card className="p-[var(--space-md)]">
+          <WarmupSettings
+            consentGranted={consentGranted}
+            osSchedulerRegistered={osRegistered}
+            onRevoke={handleRevoke}
+            onRegisterOs={handleRegisterOs}
+            onUnregisterOs={handleUnregisterOs}
+          />
         </Card>
       </section>
 

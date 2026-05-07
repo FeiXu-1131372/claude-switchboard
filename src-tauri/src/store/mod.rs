@@ -8,13 +8,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct Db {
     conn: Mutex<Connection>,
-    _lock: File, // held for process lifetime
+    _lock: Option<File>, // None in --tick mode; Some(file) in GUI mode
     /// True when the DB was corrupt on startup and had to be recreated.
     pub recovered: bool,
 }
 
 impl Db {
-    /// Open (or recover) the database in `dir`.
+    /// GUI mode. Holds the exclusive file lock for process lifetime —
+    /// prevents two GUI instances from racing on the DB.
     ///
     /// Returns `Ok(db)` in all non-fatal cases:
     ///   - clean open: `db.recovered == false`
@@ -23,13 +24,30 @@ impl Db {
     /// Returns `Err` only if the directory or lockfile cannot be created, or if
     /// another instance holds the process lock.
     pub fn open(dir: &Path) -> Result<Self> {
+        Self::open_inner(dir, /*lock = */ true)
+    }
+
+    /// Headless `--tick` mode. Opens without the file lock — relies on
+    /// SQLite WAL (schema.sql sets `journal_mode = WAL`) and the
+    /// transactional claim in `scheduler::claim::try_claim` for cross-process
+    /// correctness. Used by `claude-switchboard --tick` so the dispatcher
+    /// can run alongside a running GUI without lock contention.
+    pub fn open_for_tick(dir: &Path) -> Result<Self> {
+        Self::open_inner(dir, /*lock = */ false)
+    }
+
+    fn open_inner(dir: &Path, lock: bool) -> Result<Self> {
         std::fs::create_dir_all(dir).context("create db dir")?;
 
-        let lock_path = dir.join("claude-monitor.lock");
-        let lock_file = File::create(&lock_path).context("create lockfile")?;
-        lock_file
-            .try_lock_exclusive()
-            .context("another instance holds the DB lock")?;
+        let lock_file = if lock {
+            let lock_path = dir.join(crate::branding::DB_LOCKFILE_NAME);
+            let lf = File::create(&lock_path).context("create lockfile")?;
+            lf.try_lock_exclusive()
+                .context("another instance holds the DB lock")?;
+            Some(lf)
+        } else {
+            None
+        };
 
         let db_path = dir.join("data.db");
         let (conn, recovered) = Self::open_or_recover(&db_path)?;
@@ -82,13 +100,13 @@ impl Db {
     }
 
     /// Create a brand-new SQLite database with the current schema and stamp
-    /// schema_version=3 so that migrate() skips steps meant for older upgrades.
+    /// schema_version=5 so that migrate() skips steps meant for older upgrades.
     fn create_fresh_db(db_path: &Path) -> Result<Connection> {
         let conn = Connection::open(db_path).context("open sqlite")?;
         conn.execute_batch(include_str!("schema.sql")).context("apply schema")?;
         conn.execute(
             "INSERT OR REPLACE INTO schema_version (version) VALUES (?1)",
-            [3_i64],
+            [5_i64],
         )
         .context("stamp schema version")?;
         Ok(conn)
@@ -117,9 +135,21 @@ impl Db {
             .context("apply migration 0003")?;
         }
 
+        if current < 4 {
+            tracing::info!("migrating settings v3 -> v4 (insert migration_completed flag)");
+            conn.execute_batch(include_str!("migrations/0004_migration_state.sql"))
+                .context("apply migration 0004")?;
+        }
+
+        if current < 5 {
+            tracing::info!("migrating accounts v4 -> v5 (warmup columns + consent setting)");
+            conn.execute_batch(include_str!("migrations/0005_warmup.sql"))
+                .context("apply migration 0005")?;
+        }
+
         conn.execute(
             "INSERT OR REPLACE INTO schema_version (version) VALUES (?1)",
-            [3_i64],
+            [5_i64],
         )?;
         Ok(())
     }
@@ -133,9 +163,16 @@ pub mod queries;
 pub use queries::*;
 
 pub fn default_dir() -> PathBuf {
-    directories::ProjectDirs::from("com", "claude-limits", "ClaudeLimits")
-        .map(|p| p.data_local_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from(".claude-monitor"))
+    use crate::branding::{
+        PROJECT_DIRS_APP, PROJECT_DIRS_ORG, PROJECT_DIRS_QUALIFIER,
+    };
+    directories::ProjectDirs::from(
+        PROJECT_DIRS_QUALIFIER,
+        PROJECT_DIRS_ORG,
+        PROJECT_DIRS_APP,
+    )
+    .map(|p| p.data_local_dir().to_path_buf())
+    .unwrap_or_else(|| PathBuf::from(".claude-monitor"))
 }
 
 #[cfg(test)]
@@ -214,5 +251,223 @@ mod tests {
 
         // The fresh DB file must exist at the original path.
         assert!(db_path.exists(), "fresh data.db must exist after recovery");
+    }
+
+    #[test]
+    fn default_dir_uses_branding_constants() {
+        let path = default_dir();
+        let path_str = path.to_string_lossy();
+        // The macOS path is ~/Library/Application Support/com.claude-switchboard.ClaudeSwitchboard
+        // Linux/Windows produce platform-specific paths but always include the org+app strings.
+        assert!(
+            path_str.contains("claude-switchboard")
+                || path_str.contains("ClaudeSwitchboard"),
+            "default_dir should reference branding constants, got: {path_str}",
+        );
+        assert!(
+            !path_str.contains("claude-limits"),
+            "default_dir should NOT reference legacy claude-limits, got: {path_str}",
+        );
+    }
+
+    #[test]
+    fn lockfile_name_comes_from_branding() {
+        // The lockfile is created in Db::open(); we verify the constant routes
+        // through correctly by spot-checking the branding module value.
+        assert_eq!(crate::branding::DB_LOCKFILE_NAME, "claude-switchboard.lock");
+    }
+
+    #[test]
+    fn migration_0004_inserts_migration_completed_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(dir.path()).expect("open");
+        let conn = db.conn();
+        let value: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'migration_completed'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("migration_completed row should exist");
+        assert_eq!(value, "0", "default value is '0' (false)");
+    }
+
+    /// Verify that `0004_migration_state.sql` is actually executed and inserts
+    /// the `migration_completed` row.
+    ///
+    /// The existing test above covers the fresh-DB path (schema.sql seed), but
+    /// never invokes the migration file itself.  Re-opening an existing DB is
+    /// insufficient to isolate the migration because `open_or_recover` re-runs
+    /// schema.sql on every existing-file open (which seeds the row via
+    /// `INSERT OR IGNORE` before `migrate()` runs).
+    ///
+    /// Strategy — direct `execute_batch` against a minimal in-memory-style DB:
+    ///   1. Open a real DB so the `settings` table exists.
+    ///   2. Delete the seed row so the table looks like a pre-migration state.
+    ///   3. Execute `0004_migration_state.sql` via `execute_batch` directly.
+    ///   4. Assert the row was inserted with value `'0'`.
+    ///   5. Execute again — confirm idempotency (ON CONFLICT DO NOTHING).
+    #[test]
+    fn migration_0004_inserts_row_when_upgrading_from_v3() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(dir.path()).expect("open fresh db");
+        let conn = db.conn();
+
+        // Step 2: remove the schema.sql seed row to simulate a pre-0004 DB.
+        conn.execute("DELETE FROM settings WHERE key = 'migration_completed'", [])
+            .expect("remove seed row");
+        let absent: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM settings WHERE key = 'migration_completed'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(absent, 0, "seed row must be absent before running the migration");
+
+        // Step 3: run the migration SQL directly — this is the code under test.
+        conn.execute_batch(include_str!("migrations/0004_migration_state.sql"))
+            .expect("0004_migration_state.sql should execute without error");
+
+        // Step 4: row must now exist with value '0'.
+        let value: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'migration_completed'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("migration_completed row must exist after 0004 migration SQL");
+        assert_eq!(value, "0", "migration_completed default value must be '0'");
+
+        // Step 5: re-run is idempotent (ON CONFLICT DO NOTHING).
+        conn.execute_batch(include_str!("migrations/0004_migration_state.sql"))
+            .expect("re-running 0004 should be a no-op, not an error");
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM settings WHERE key = 'migration_completed'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "idempotent re-run must not duplicate the row");
+    }
+
+    #[test]
+    fn migration_0005_adds_warmup_columns_and_consent_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(dir.path()).expect("open");
+        let conn = db.conn();
+
+        conn.execute(
+            "INSERT INTO accounts (id, email, last_seen_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params!["acct-1", "test@example.com", 0i64],
+        )
+        .unwrap();
+
+        let warmup_enabled: i64 = conn
+            .query_row(
+                "SELECT warmup_enabled FROM accounts WHERE id = 'acct-1'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("warmup_enabled column exists with default");
+        assert_eq!(warmup_enabled, 0);
+
+        let schedule: String = conn
+            .query_row(
+                "SELECT schedule FROM accounts WHERE id = 'acct-1'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("schedule column exists with default");
+        assert_eq!(schedule, r#"{"type":"Off"}"#);
+
+        let last: Option<i64> = conn
+            .query_row(
+                "SELECT last_warmup_at FROM accounts WHERE id = 'acct-1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(last, None);
+
+        let consent: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'warmup_consent_granted'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("warmup_consent_granted setting row exists");
+        assert_eq!(consent, "0");
+    }
+
+    #[test]
+    fn open_for_tick_does_not_take_exclusive_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        // Acquire the exclusive lock as if a GUI is running.
+        let _gui_db = Db::open(dir.path()).expect("gui open");
+
+        // A second `Db::open(...)` would fail because the lockfile is held.
+        let conflict = Db::open(dir.path());
+        assert!(
+            conflict.is_err(),
+            "Db::open while another holds the lock should fail",
+        );
+
+        // But Db::open_for_tick should succeed — it doesn't take the file lock.
+        let tick_db = Db::open_for_tick(dir.path()).expect("tick open should succeed");
+        assert!(!tick_db.recovered);
+
+        // Both connections can read & write (SQLite WAL handles concurrency).
+        let conn = tick_db.conn();
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(n > 0);
+    }
+
+    #[test]
+    fn migration_0005_inserts_columns_when_upgrading() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        // Build the v4 schema shape (accounts WITHOUT the new columns).
+        conn.execute_batch(
+            "CREATE TABLE accounts ( \
+               id TEXT PRIMARY KEY, \
+               email TEXT NOT NULL, \
+               display_name TEXT, \
+               last_seen_at INTEGER NOT NULL \
+             ); \
+             CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL); \
+             INSERT INTO settings (key, value) VALUES ('migration_completed', '1');",
+        )
+        .unwrap();
+
+        // Apply only 0005 directly.
+        conn.execute_batch(include_str!("migrations/0005_warmup.sql")).unwrap();
+
+        // Now insert an account and verify defaults.
+        conn.execute(
+            "INSERT INTO accounts (id, email, last_seen_at) VALUES ('a', 'x@y.z', 0)",
+            [],
+        )
+        .unwrap();
+        let warmup: i64 = conn
+            .query_row("SELECT warmup_enabled FROM accounts WHERE id='a'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(warmup, 0);
+        let consent: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key='warmup_consent_granted'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(consent, "0");
     }
 }

@@ -1,6 +1,6 @@
 {
-  "name": "claude-limits",
-  "version": "0.2.0",
+  "name": "claude-switchboard",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {

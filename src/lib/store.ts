@@ -36,6 +36,7 @@ interface AppStore {
     kind: 'requiresSetup' | 'stale' | 'dbReset' | 'unmanagedActive',
   ) => void;
   toggleViewMode: () => void;
+  setPendingSwapReport: (report: SwapReport) => void;
   consumeSwapReport: () => void;
 }
 
@@ -226,6 +227,9 @@ export const useAppStore = create<AppStore>((set, _get) => ({
     ipc.resizeWindow(next).catch(() => {});
   },
 
+  setPendingSwapReport(report) {
+    set({ pendingSwapReport: report });
+  },
   consumeSwapReport() {
     set({ pendingSwapReport: null });
   },

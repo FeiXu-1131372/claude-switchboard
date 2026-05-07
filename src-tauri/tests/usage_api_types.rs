@@ -1,4 +1,4 @@
-use claude_limits_lib::usage_api::types::UsageSnapshot;
+use claude_switchboard_lib::usage_api::types::UsageSnapshot;
 
 #[test]
 fn standard_account_round_trips() {

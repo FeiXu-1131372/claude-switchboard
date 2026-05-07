@@ -5,7 +5,20 @@ use crate::store::StoredSessionEvent;
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Instant;
 use tauri::{command, State};
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum RefreshScope {
+    /// Re-fetch only the currently active slot. Inactive slots stay on
+    /// their staggered schedule. Triggered by the popover home view's
+    /// refresh icon.
+    Active,
+    /// Re-fetch every managed slot, staggered by 30 s starting from now.
+    /// Triggered by the AccountsPanel header refresh button.
+    All,
+}
 
 #[derive(Debug, Serialize, Deserialize, specta::Type)]
 pub struct DailyBucket {
@@ -252,7 +265,33 @@ pub async fn start_oauth_flow(
 
 #[command]
 #[specta::specta]
-pub async fn force_refresh(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+pub async fn force_refresh(
+    scope: RefreshScope,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    use crate::app_state::ScheduleState;
+
+    let now = Instant::now();
+    match scope {
+        RefreshScope::Active => {
+            if let Some(active) = *state.active_slot.read() {
+                state.schedule_by_slot.write().insert(
+                    active,
+                    ScheduleState { next_poll_at: now },
+                );
+            }
+        }
+        RefreshScope::All => {
+            let accounts = state.accounts.list().map_err(err_to_string)?;
+            let active = *state.active_slot.read();
+            let interval = std::time::Duration::from_secs(
+                state.settings.read().polling_interval_secs.max(60),
+            );
+            let slot_ids: Vec<u32> = accounts.iter().map(|a| a.slot).collect();
+            *state.schedule_by_slot.write() =
+                crate::poll_loop::seed_schedules(&slot_ids, active, now, interval);
+        }
+    }
     state.force_refresh.notify_one();
     Ok(())
 }
@@ -411,6 +450,9 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
 pub struct AccountListEntry {
     pub slot: u32,
     pub email: String,
+    /// The stable UUID that identifies this account in the SQLite `accounts`
+    /// table. Pass this as `accountId` to all warmup-related Tauri commands.
+    pub account_uuid: String,
     pub org_name: Option<String>,
     pub org_uuid: Option<String>,
     pub subscription_type: Option<String>,
@@ -426,13 +468,18 @@ pub struct SwapReport {
     pub running: RunningClaudeCode,
 }
 
-fn entry_for(state: &AppState, acc: &ManagedAccount, active: Option<u32>) -> AccountListEntry {
+pub(crate) fn entry_for(
+    state: &AppState,
+    acc: &ManagedAccount,
+    active: Option<u32>,
+) -> AccountListEntry {
     let cache = state.cached_usage_by_slot.read();
     let cached = cache.get(&acc.slot).cloned();
     let last_error = cached.as_ref().and_then(|c| c.last_error.clone());
     AccountListEntry {
         slot: acc.slot,
         email: acc.email.clone(),
+        account_uuid: acc.account_uuid.clone(),
         org_name: acc.organization_name.clone(),
         org_uuid: acc.organization_uuid.clone(),
         subscription_type: acc.subscription_type.clone(),
@@ -479,6 +526,7 @@ pub async fn remove_account(
     state.accounts.remove(slot).map_err(err_to_string)?;
     state.cached_usage_by_slot.write().remove(&slot);
     state.backoff_by_slot.write().remove(&slot);
+    state.schedule_by_slot.write().remove(&slot);
     Ok(())
 }
 
@@ -493,6 +541,51 @@ pub async fn swap_to_account(
         .swap_to(slot)
         .await
         .map_err(|e| e.to_string())?;
+
+    // swap_to commits both CC creds and the global oauthAccount blob for
+    // `slot`; reconcile active_slot eagerly so the next list_accounts call
+    // (the UI hits this immediately after we return) sees correct is_active
+    // flags without waiting on the poll-loop tick.
+    *state.active_slot.write() = Some(slot);
+
+    // Drop per-slot backoff state. The previous backoff was earned by a
+    // different token (the prior active slot's live CC blob, or a stale
+    // OAuth refresh token) — a swap rotates which token authenticates each
+    // slot's usage fetch, so prior 429s no longer apply. Without this, an
+    // unlucky run of throttling can leave every slot waiting out a 30-min
+    // window with no successful fetch, which strands the popover on the
+    // empty LoadingShell because state.snapshot() has nothing to return.
+    state.backoff_by_slot.write().clear();
+
+    // Re-seed per-slot schedules so the new active slot polls first
+    // (next_poll_at = now), with previously-active and other inactive
+    // slots staggered behind it. Without this, the new active would
+    // wait out whatever deadline was set when it was inactive.
+    {
+        let accounts = state.accounts.list().map_err(err_to_string)?;
+        let interval = std::time::Duration::from_secs(
+            state.settings.read().polling_interval_secs.max(60),
+        );
+        let slot_ids: Vec<u32> = accounts.iter().map(|a| a.slot).collect();
+        *state.schedule_by_slot.write() = crate::poll_loop::seed_schedules(
+            &slot_ids,
+            Some(slot),
+            std::time::Instant::now(),
+            interval,
+        );
+    }
+
+    if let Ok(Some(target)) = state.accounts.get(slot) {
+        let prev = state.keychain_guardian.lock().replace(
+            crate::auth::keychain_guardian::KeychainGuardian::arm_with_claude_code_creds(
+                target.claude_code_oauth_blob.clone(),
+            ),
+        );
+        if let Some(p) = prev {
+            p.cancel();
+        }
+    }
+
     let running = process_detection::detect();
     state.force_refresh.notify_one();
     Ok(SwapReport {
@@ -525,4 +618,163 @@ pub async fn refresh_account(
         .map_err(err_to_string)?;
     state.force_refresh.notify_one();
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Warmup pillar commands (Plan B T16)
+// ---------------------------------------------------------------------------
+
+/// Trigger a manual warm-up for a specific account (UI "Warm up now" button).
+#[command]
+#[specta::specta]
+pub async fn warmup_account_now(
+    state: State<'_, Arc<AppState>>,
+    account_id: String,
+) -> Result<crate::warmup::errors::WarmupOutcome, String> {
+    crate::scheduler_glue::manual_warmup(state.inner(), &account_id)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Set the per-account schedule preset.
+#[command]
+#[specta::specta]
+pub async fn set_account_schedule(
+    state: State<'_, Arc<AppState>>,
+    account_id: String,
+    schedule: crate::scheduler::Schedule,
+) -> Result<(), String> {
+    let conn = state.db.conn();
+    let json = serde_json::to_string(&schedule).map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE accounts SET schedule = ?1 WHERE id = ?2",
+        rusqlite::params![json, account_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Toggle warm-up on/off for a specific account.
+#[command]
+#[specta::specta]
+pub async fn set_warmup_enabled(
+    state: State<'_, Arc<AppState>>,
+    account_id: String,
+    enabled: bool,
+) -> Result<(), String> {
+    let conn = state.db.conn();
+    conn.execute(
+        "UPDATE accounts SET warmup_enabled = ?1 WHERE id = ?2",
+        rusqlite::params![enabled as i64, account_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Grant the global warm-up consent (called by WarmupConsentModal on Accept).
+#[command]
+#[specta::specta]
+pub async fn grant_warmup_consent(
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    let conn = state.db.conn();
+    conn.execute(
+        "UPDATE settings SET value = '1' WHERE key = 'warmup_consent_granted'",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Revoke global consent (also disables warm-up on every account).
+#[command]
+#[specta::specta]
+pub async fn revoke_warmup_consent(
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    let conn = state.db.conn();
+    conn.execute_batch(
+        "UPDATE settings SET value = '0' WHERE key = 'warmup_consent_granted'; \
+         UPDATE accounts SET warmup_enabled = 0;",
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Read the consent flag.
+#[command]
+#[specta::specta]
+pub async fn get_warmup_consent_granted(
+    state: State<'_, Arc<AppState>>,
+) -> Result<bool, String> {
+    let conn = state.db.conn();
+    let v: String = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'warmup_consent_granted'",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(v == "1")
+}
+
+/// Register OS-level scheduler (writes plist / schtasks task).
+#[command]
+#[specta::specta]
+pub async fn os_scheduler_register() -> Result<(), String> {
+    let bin = std::env::current_exe().map_err(|e| e.to_string())?;
+    let s = crate::os_scheduler::for_current_platform()
+        .ok_or_else(|| "OS-level scheduling not supported on this platform".to_string())?;
+    s.register(&bin).map_err(|e| format!("{e:#}"))
+}
+
+/// Unregister OS-level scheduler.
+#[command]
+#[specta::specta]
+pub async fn os_scheduler_unregister() -> Result<(), String> {
+    let s = crate::os_scheduler::for_current_platform()
+        .ok_or_else(|| "OS-level scheduling not supported on this platform".to_string())?;
+    s.unregister().map_err(|e| format!("{e:#}"))
+}
+
+/// Check if OS-level scheduler is currently registered.
+#[command]
+#[specta::specta]
+pub async fn os_scheduler_is_registered() -> Result<bool, String> {
+    let s = crate::os_scheduler::for_current_platform()
+        .ok_or_else(|| "OS-level scheduling not supported on this platform".to_string())?;
+    s.is_registered().map_err(|e| format!("{e:#}"))
+}
+
+/// Per-account warm-up state returned by `get_warmup_state`.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+pub struct WarmupAccountState {
+    pub warmup_enabled: bool,
+    pub schedule: crate::scheduler::Schedule,
+    pub last_warmup_at: Option<i64>,
+}
+
+/// Fetch the warm-up state for a specific account. Used by the UI row to
+/// initialise the WarmupToggle / ScheduleSelector on mount.
+#[command]
+#[specta::specta]
+pub async fn get_warmup_state(
+    state: State<'_, Arc<AppState>>,
+    account_id: String,
+) -> Result<WarmupAccountState, String> {
+    let conn = state.db.conn();
+    let (enabled, schedule_json, last_warmup_at): (i64, String, Option<i64>) = conn
+        .query_row(
+            "SELECT warmup_enabled, schedule, last_warmup_at FROM accounts WHERE id = ?1",
+            rusqlite::params![account_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(|e| e.to_string())?;
+    let schedule: crate::scheduler::Schedule =
+        serde_json::from_str(&schedule_json).map_err(|e| e.to_string())?;
+    Ok(WarmupAccountState {
+        warmup_enabled: enabled != 0,
+        schedule,
+        last_warmup_at,
+    })
 }

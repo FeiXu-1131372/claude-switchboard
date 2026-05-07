@@ -6,7 +6,7 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { IconButton } from '../components/ui/IconButton';
 import { fadeIn } from '../lib/motion';
-import { IconAuth, IconRefresh, IconTimer, ExternalLink, X } from '../lib/icons';
+import { IconAuth, IconRefresh, IconTimer, ExternalLink, X, ChevronRight } from '../lib/icons';
 import { ipc } from '../lib/ipc';
 import { useAppStore } from '../lib/store';
 import { handleDragStart, closeWindow } from '../lib/window-chrome';
@@ -22,7 +22,11 @@ function toMessage(e: unknown, fallback: string): string {
   return fallback;
 }
 
-export function AuthPanel() {
+interface Props {
+  onBack?: () => void;
+}
+
+export function AuthPanel({ onBack }: Props) {
   const [step, setStep] = useState<Step>('choose');
   const [error, setError] = useState<string | null>(null);
   const refreshAccounts = useAppStore((s) => s.refreshAccounts);
@@ -80,13 +84,23 @@ export function AuthPanel() {
     <div className="relative flex flex-col h-full">
       <div
         onPointerDown={handleDragStart}
-        className="flex items-center justify-end gap-[var(--space-sm)] px-[var(--popover-pad)] pt-[var(--space-md)] pb-[var(--space-sm)] cursor-default select-none"
+        className={`flex items-center ${onBack ? 'justify-between' : 'justify-end'} gap-[var(--space-sm)] px-[var(--popover-pad)] pt-[var(--space-md)] pb-[var(--space-sm)] cursor-default select-none`}
       >
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex items-center gap-[var(--space-2xs)] text-[length:var(--text-label)] text-[color:var(--color-text-secondary)] tracking-[var(--tracking-label)] uppercase transition-colors duration-[var(--duration-fast)] hover:text-[color:var(--color-text)] focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] focus-visible:outline-offset-2 rounded"
+          >
+            <ChevronRight size={11} className="rotate-180" />
+            Back
+          </button>
+        )}
         <IconButton label="Close" onClick={closeWindow}>
           <X size={13} />
         </IconButton>
       </div>
-      <div className="flex items-center justify-center flex-1 px-[var(--space-2xl)] pb-[var(--space-2xl)]">
+      <div className="flex items-center justify-center flex-1 min-h-0 overflow-y-auto px-[var(--space-2xl)] pb-[var(--space-2xl)]">
         <motion.div
           className="flex flex-col gap-[var(--space-xl)] max-w-[280px]"
           variants={fadeIn}

@@ -1,16 +1,23 @@
 mod app_state;
 pub mod auth;
+pub mod branding;
+pub mod cli;
 mod commands;
 pub mod jsonl_parser;
-mod logging;
+pub mod logging;
+pub mod migration;
 pub mod notifier;
 mod poll_loop;
 mod process_detection;
+pub mod os_scheduler;
+pub mod scheduler;
+pub mod scheduler_glue;
 pub mod store;
 mod tray;
 mod tray_icon;
 mod updater;
 pub mod usage_api;
+pub mod warmup;
 
 use app_state::AppState;
 use std::sync::Arc;
@@ -21,10 +28,20 @@ pub fn run() {
     let _log_guard = logging::init(log_dir.clone());
 
     let data_dir = store::default_dir();
+
     let db_result = store::Db::open(&data_dir).unwrap_or_else(|e| {
         tracing::error!("fatal: cannot open or recover the database: {e}");
         std::process::exit(1);
     });
+
+    // Mark startup migration complete (no-op idempotent set; reserved for
+    // future migrations).
+    {
+        let conn = db_result.conn();
+        if let Err(e) = crate::migration::mark_complete(&conn) {
+            tracing::warn!("failed to set migration_completed flag: {e:#}");
+        }
+    }
     let db_recovered = db_result.recovered;
     let db = Arc::new(db_result);
     let pricing = Arc::new(jsonl_parser::PricingTable::bundled().expect("pricing"));
@@ -52,7 +69,7 @@ pub fn run() {
         })
         .unwrap_or_default();
 
-    let auth = Arc::new(auth::AuthOrchestrator::new(data_dir.clone(), http_client));
+    let auth = Arc::new(auth::AuthOrchestrator::new(data_dir.clone(), http_client.clone()));
 
     let accounts = Arc::new(crate::auth::accounts::AccountManager::new(data_dir.clone()));
 
@@ -60,6 +77,7 @@ pub fn run() {
         db: db.clone(),
         auth,
         usage: usage_client,
+        http_client: http_client.clone(),
         pricing: pricing.clone(),
         settings: parking_lot::RwLock::new(persisted_settings),
         cached_usage: parking_lot::RwLock::new(None),
@@ -68,6 +86,9 @@ pub fn run() {
         cached_usage_by_slot: parking_lot::RwLock::new(std::collections::HashMap::new()),
         active_slot: parking_lot::RwLock::new(None),
         backoff_by_slot: parking_lot::RwLock::new(std::collections::HashMap::new()),
+        schedule_by_slot: parking_lot::RwLock::new(std::collections::HashMap::new()),
+        keychain_guardian: parking_lot::Mutex::new(None),
+        warmup: app_state::WarmupState::default(),
     });
 
     // tauri-specta's Builder::commands replaces previously registered commands rather
@@ -96,6 +117,16 @@ pub fn run() {
             commands::swap_to_account,
             commands::detect_running_claude_code,
             commands::refresh_account,
+            commands::warmup_account_now,
+            commands::set_account_schedule,
+            commands::set_warmup_enabled,
+            commands::grant_warmup_consent,
+            commands::revoke_warmup_consent,
+            commands::get_warmup_consent_granted,
+            commands::get_warmup_state,
+            commands::os_scheduler_register,
+            commands::os_scheduler_unregister,
+            commands::os_scheduler_is_registered,
         ]);
 
     #[cfg(debug_assertions)]
@@ -123,6 +154,16 @@ pub fn run() {
             commands::detect_running_claude_code,
             commands::refresh_account,
             commands::debug_force_threshold,
+            commands::warmup_account_now,
+            commands::set_account_schedule,
+            commands::set_warmup_enabled,
+            commands::grant_warmup_consent,
+            commands::revoke_warmup_consent,
+            commands::get_warmup_consent_granted,
+            commands::get_warmup_state,
+            commands::os_scheduler_register,
+            commands::os_scheduler_unregister,
+            commands::os_scheduler_is_registered,
         ]);
 
     #[cfg(debug_assertions)]
@@ -335,6 +376,29 @@ pub fn run() {
 
             poll_loop::spawn(handle.clone(), state.clone());
             crate::updater::run_scheduler(handle.clone());
+
+            // In-app warm-up dispatcher: wakes every 30 seconds, walks
+            // accounts with warmup_enabled = 1, calls tick_for_account per
+            // account. Mirrors the poll_loop::spawn pattern above.
+            {
+                let warmup_state = state.clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut interval = tokio::time::interval(
+                        std::time::Duration::from_secs(30),
+                    );
+                    interval.set_missed_tick_behavior(
+                        tokio::time::MissedTickBehavior::Delay,
+                    );
+                    loop {
+                        interval.tick().await;
+                        if let Err(e) =
+                            scheduler_glue::walk_due_accounts(&warmup_state).await
+                        {
+                            tracing::warn!("warmup dispatcher iter failed: {e:#}");
+                        }
+                    }
+                });
+            }
 
             if let Some(root) = jsonl_parser::walker::claude_projects_root() {
                 let bf_root = root.clone();
