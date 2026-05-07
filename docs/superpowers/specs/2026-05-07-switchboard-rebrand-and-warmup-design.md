@@ -88,6 +88,8 @@ pub const WARMUP_MODEL: &str = "claude-haiku-4-5";
 ```
 When a cheaper / newer Haiku ships, the rename is one-touch.
 
+**Auth scope.** The OAuth tokens this app stores are the same ones Claude Code obtains — scoped for `user:inference` (which permits `/v1/messages` calls). No separate scope grant or `anthropic-beta` header is needed for warm-up; the same token used by the upstream CLI is sufficient. If Anthropic ever issues subscription tokens that don't include `user:inference`, the warm-up call returns 403 and the failure-handling table catches it.
+
 ### Precondition: skip if window already active
 
 The 5h bucket has two states the API surfaces (verified in `usage_api/types.rs:8-14`): when active, `resets_at` is a `DateTime<Utc>`; when inactive, `resets_at = null` and `utilization = 0.0`. The window is established on the first request after a quiet period; it does **not** restart with each subsequent request.
@@ -140,19 +142,39 @@ Warm-ups are staggered across slots using the existing throttle mechanism from `
                               fires warm-up only if rows_affected == 1
 ```
 
-Both schedulers call the same `scheduler::tick()` function. The dedup window is **transactional**, not advisory — without that, two processes (GUI tokio task + headless `--tick` invocation) could both read `last_warmup_at = T-100s`, both decide "fire," and both fire.
+Both schedulers call the same `scheduler::tick()` function. The dispatcher's per-account flow is fixed and applies in **all** call sites — the launchd path, the in-app tokio task, and the on-launch catch-up sweep:
 
-The dispatcher must claim the right to fire via a single SQL statement that is also the dedup check:
+```text
+ALGORITHM tick_for_account(account_id, now)
+  # Step 1: schedule eligibility (cheap, no I/O)
+  if account.schedule == Off                          : return
+  if not is_due(account.schedule, now)                : return     # in-app/launchd path
+  # (catch-up uses most_recent_expected_fire instead — see "Catch-up sweep")
 
-```sql
-UPDATE accounts
-SET last_warmup_at = :now
-WHERE id = :account_id
-  AND warmup_enabled = 1
-  AND (last_warmup_at IS NULL OR last_warmup_at < :now - 60);
+  # Step 2: transactional claim (the ONLY cross-process synchronization)
+  UPDATE accounts
+    SET last_warmup_at = :now
+    WHERE id = :account_id
+      AND warmup_enabled = 1
+      AND (last_warmup_at IS NULL OR last_warmup_at < :now - 60);
+  if rows_affected != 1                               : return     # claim lost
+
+  # Step 3: active-window precondition (§6) — applies to every fire path
+  snapshot := load_most_recent_snapshot(account_id)
+  if snapshot.five_hour.resets_at.is_some()           : return     # no-op:
+                                                                   # window
+                                                                   # already
+                                                                   # running
+
+  # Step 4: issue the HTTP request (Section 6 wire-level)
+  result := warmup::issue_call(account_id)
+  log(result)
 ```
 
-Firing proceeds only if `rows_affected == 1`. If the row was already updated by the other scheduler in the last 60 seconds, this UPDATE matches zero rows and the caller skips. SQLite's WAL + serialized writes make this atomic across processes; this is the *only* synchronization point between the two schedulers.
+**Key invariants encoded above:**
+- **Transactional dedup** absorbs the cross-process race: two simultaneous `tick()` calls (GUI tokio + headless `--tick`) cannot both reach Step 3 for the same account in the same 60-second window. SQLite WAL + serialized writes make Step 2's UPDATE atomic across processes.
+- **Active-window check** is part of every fire path. Whether scheduled, manually triggered, or fired by catch-up, the dispatcher always passes through Steps 2–3. A slot with an active window from the user's normal coding consumes a claim slot but issues no HTTP call — `last_warmup_at` advances anyway, which is correct (treats the active-window observation as a successful "no-op fire" for dedup purposes, preventing rapid re-checks).
+- **Disable-during-fire is best-effort.** If a user toggles `warmup_enabled` from 1 → 0 between Step 2 (claim) and Step 4 (HTTP issue), the in-flight fire completes — Step 2's claim already set `last_warmup_at`, and the call has been authorized. The toggle takes effect for the *next* schedule fire (or catch-up), within at most one tick interval. Cost of a single in-flight stragger: one Haiku call (≈$0.000007). This is documented as expected behavior; future fires are blocked because Step 2's `WHERE warmup_enabled = 1` clause filters them out.
 
 ### Schedule shape (per slot)
 
@@ -171,7 +193,7 @@ UI exposes these as three presets only — no raw cron input.
 **Timezone semantics.** All `HhMm` values are **wall-clock in the user's current local timezone** (read from `chrono::Local`), evaluated fresh at each tick. Implications:
 - DST transition (spring forward): a 02:30 fire is skipped that day, and the next-occurrence math advances to the following day's 02:30. DST-fall: a 01:30 fire happens once, on the first occurrence of 01:30 (the duplicated hour does not double-fire — dedup absorbs the second).
 - Travel: if the user crosses a timezone, schedules retarget to the new local TZ on next tick. No coordination across machines.
-- Anchor stability: `Every5h { anchor: 06:00 }` produces fires at 06:00, 11:00, 16:00, 21:00 — fixed wall-clock, regardless of DST.
+- Anchor stability: `Every5h { anchor: 06:00 }` produces fires at 06:00, 11:00, 16:00, 21:00 — fixed wall-clock day-to-day, with one DST exception: a fire scheduled for an `HhMm` that falls inside the spring-forward gap (e.g. anchor 02:30 on the day clocks jump 02:00 → 03:00) is skipped that day and resumes the next.
 
 ### OS-level scheduler install flow
 
@@ -181,6 +203,8 @@ First time the user enables any schedule:
 2. macOS path: write `~/Library/LaunchAgents/com.claude-switchboard.scheduler.plist` (program `<install path>/Claude Switchboard.app/Contents/MacOS/claude-switchboard`, args `--tick`, `StartInterval 60`), then `launchctl load`.
 3. Windows path: `schtasks /Create /SC MINUTE /MO 1 /TN "Claude Switchboard Tick" /TR "<install path>\\claude-switchboard.exe --tick"` — user-level, no admin.
 4. If user declines: only in-app scheduler runs. Banner in popover surfaces the gap: *"Schedules only fire while the app is open. Enable OS-level scheduling →"*.
+
+**Tick cadence cost.** `StartInterval=60` (and `/SC MINUTE`) produce ~43,200 invocations/month. Each invocation: spawn the binary, `Db::open_for_tick` (no file lock), one `SELECT … FROM accounts WHERE warmup_enabled = 1`, and — for the typical case where nothing is due — exit. On modern hardware that's ≤50 ms per tick, so ≈36 minutes of CPU/month aggregated. Acceptable. Switching to a coarser cadence (e.g. 5 min) would lose precision against `Custom { times }` schedules whose `HhMm` granularity is per-minute, so 1-min wins.
 
 ### Catch-up sweep on launch
 
@@ -204,13 +228,18 @@ ALGORITHM most_recent_expected_fire(schedule, now) -> Option<DateTime>
 ALGORITHM catchup_sweep(now)
   for each account with warmup_enabled = 1 and schedule != Off:
     last_expected := most_recent_expected_fire(account.schedule, now)
-    if last_expected exists AND last_expected > account.last_warmup_at:
-      # Use the same transactional UPDATE from the dedup section
-      attempt one warm-up; the SQL update absorbs any race
+    if last_expected is None                                  : continue
+    if last_expected <= account.last_warmup_at                : continue
+    # Hand off to the same dispatcher flow — Steps 2–4 from `tick_for_account`
+    # apply: transactional claim, then active-window precondition, then HTTP.
+    # An active 5h window observed at Step 3 silently no-ops without an
+    # HTTP call and without firing a wasted warm-up.
+    tick_for_account(account.id, now)   # bypasses is_due() check
 ```
 
 - Capped at one catch-up per slot per launch (the algorithm returns at most the *latest* expected fire, even if multiple were missed).
 - Lookback floor is 24 hours: opening the app after 3 days away gives at most one warm-up per slot, anchored to the most recent expected fire within the last 24h.
+- Catch-up inherits the active-window precondition — a slot the user has been actively coding on does *not* receive a wasted catch-up warm-up.
 
 ### Edge cases
 
@@ -290,19 +319,29 @@ No telemetry on warm-up frequency. No aggregate reporting. No upload of failure 
 │      ~/Library/Application Support/             │
 │      com.claude-limits.ClaudeLimits/ exists)    │
 │   2. Quit any running claude-limits process     │
-│      (reuse src-tauri/src/process_detection.rs; │
-│      SIGTERM/WM_CLOSE, 5s grace)                │
-│   3. Copy SQLite db to new path (don't delete)  │
-│   4. Copy credentials                           │
-│      (macOS Keychain / Windows Cred Manager)    │
-│   5. Import settings.json (warmup_consent       │
-│      starts false regardless — Section 8)       │
+│      (NEW helper module — see "Process          │
+│      detection" below; SIGTERM/WM_CLOSE,        │
+│      5s grace)                                  │
+│   3. Copy entire old data dir contents to       │
+│      new path (data.db, accounts.json,          │
+│      updater.json, etc.) — skip lockfiles       │
+│      (claude-monitor.lock, .accounts.lock).     │
+│      The OAuth blobs for every account live     │
+│      in accounts.json (auth/accounts/store.rs   │
+│      lines 28-29) and migrate alongside it.     │
+│      Source preserved (don't delete).           │
+│   4. Clean up legacy autostart plist if user    │
+│      had launch-at-login enabled (see           │
+│      "Autostart cleanup" below)                 │
+│   5. Import settings.json values (warmup_       │
+│      consent_granted starts false regardless    │
+│      — Section 8)                               │
 │   6. Set settings.migration_completed = true    │
 │   7. Show one-time "Welcome to Switchboard"     │
 │      dialog summarizing what migrated           │
 │                                                 │
 │ Fresh-install branch (no old data dir found):   │
-│   - Skip steps 1–4 entirely.                    │
+│   - Skip steps 1–5 entirely.                    │
 │   - Set settings.migration_completed = true.    │
 │   - Skip the "Welcome to Switchboard" dialog;   │
 │     show only the standard first-run onboarding │
@@ -310,20 +349,29 @@ No telemetry on warm-up frequency. No aggregate reporting. No upload of failure 
 └──────────────────────────────────────────────────┘
 ```
 
-The final v0.4.0 of claude-limits ships **a banner only** — no forced modal. It's not a security update. **v0.4.0 is the last release published on the `claude-limits` releases feed**; the auto-updater inside v0.4.0 will see no further releases (they all live on `claude-switchboard`'s feed). Existing v0.3.x clients update to v0.4.0 once, see the banner, and from then on the user's next move — clicking the banner — is a manual download of the new app.
+**Banner-only, last release on the old feed.** v0.4.0 of claude-limits ships **a banner only** — no forced modal. It's not a security update. **v0.4.0 is the last release published on the `claude-limits` releases feed**; the auto-updater inside v0.4.0 sees no further releases on that feed. Existing v0.3.x clients update to v0.4.0 once via the standard Tauri updater, see the banner, and from then on the user's next move — clicking the banner — is a **manual download** of the new bundle. The Tauri updater is **not** used to cross the rebrand boundary: the bundle-ID change makes that impossible by design (the updater rejects a downloaded bundle whose identifier doesn't match the current process). Crossing the rebrand is always a user-driven fresh install.
 
 **Idempotency.** Migration runs at most once per install. The `settings.migration_completed` flag (in the *new* app's SQLite) gates the entire flow — if true, skip steps 1–7 on every subsequent launch. This protects against re-migration if a user reinstalls v1.0.0 over an existing v1.x or restores from backup.
 
-**Process detection.** Reuse `src-tauri/src/process_detection.rs` (already in the tree). On macOS: matches by binary path under `Claude Limits.app/Contents/MacOS/` and by bundle identifier `com.claude-limits.app` (verified in current `tauri.conf.json:3`). On Windows: enumerates processes and matches the executable name. SIGTERM (`WM_CLOSE` on Windows) with a 5-second grace; SIGKILL only as fallback. If quit fails, abort migration with a user-actionable error: *"Couldn't quit Claude Limits automatically. Quit it manually and re-launch Switchboard to continue."*
+**Process detection — new helper, not a reuse.** The existing `src-tauri/src/process_detection.rs:32-44` is for upstream Claude Code / VS Code detection — it matches `claude` / `claude.exe` and VS Code with the `anthropic.claude-code` extension, and has **no concept of finding the app's own old process**. Migration step 2 introduces a sibling helper, `src-tauri/src/migration/legacy_process.rs`, that enumerates running processes via `sysinfo` (already a dependency) and matches:
+- **macOS:** binary path under `*/Claude Limits.app/Contents/MacOS/claude-limits` and/or `CFBundleIdentifier == "com.claude-limits.app"` (verified in `tauri.conf.json:3`).
+- **Windows:** executable name `claude-limits.exe` and parent install path matching the v0.3.x install footprint.
 
-**Credential storage migration (step 4).** The two platforms have different stores and require separate code paths:
+SIGTERM (`WM_CLOSE` on Windows) with a 5-second grace; SIGKILL only as fallback. If quit fails, abort migration with a user-actionable error: *"Couldn't quit Claude Limits automatically. Quit it manually and re-launch Switchboard to continue."*
 
-| Platform | Old service / target | New service / target | Mechanism |
-|---|---|---|---|
-| macOS | Keychain service prefix `claude-limits-*` | `claude-switchboard-*` | `security` API via existing `auth/creds/macos.rs` patterns; iterate old service names, write new entries, leave old intact (per "copy not move") |
-| Windows | Credential Manager target prefix `claude-limits-*` | `claude-switchboard-*` | `wincred` API via existing `auth/creds/windows.rs` patterns; same copy-not-move semantics |
+**Credential storage — no separate migration step needed.** Earlier drafts assumed there was an OS-keychain-stored secret to copy. After codebase audit, **the app does not own a keychain namespace**: per-account OAuth tokens are stored as JSON values directly inside `accounts.json` (`auth/accounts/store.rs:28-29` — `claude_code_oauth_blob` and `oauth_account_blob` are `serde_json::Value` fields on `ManagedAccount`). Step 3's data-dir copy moves `accounts.json` along with everything else, so OAuth state migrates for free. (Note: `auth/claude_code_creds/` does exist but reads/writes the *upstream* Claude Code CLI's Keychain entries owned by the CLI — not by this app — so it is deliberately untouched by migration.)
 
-Per-account access tokens, refresh tokens, and the keychain-blob format do not change. Only the *service/target name prefix* changes.
+**Autostart cleanup (step 4).** `lib.rs:159-162` shows the v0.3.x app initializes `tauri-plugin-autostart` in `MacosLauncher::LaunchAgent` mode. If the user enabled launch-at-login under v0.3.x, macOS holds a stale `~/Library/LaunchAgents/com.claude-limits.app.plist` pointing at the old binary. Without explicit cleanup the new app would write `com.claude-switchboard.app.plist`, but the old plist would still launch the old (still-installed-by-design, per "copy not move") binary at every login — producing two menu-bar icons. Step 4 of migration:
+
+1. Detect autostart state from the legacy plist's existence at `~/Library/LaunchAgents/com.claude-limits.app.plist`.
+2. If the legacy plist exists:
+   - `launchctl unload <path>`, then `rm <path>`.
+3. If autostart was previously enabled, re-register through `tauri-plugin-autostart` so the new bundle ID writes `com.claude-switchboard.app.plist` pointing at the new binary.
+4. **Windows:** query `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` for a `Claude Limits` value; remove it. Re-register the new entry under the new product name if autostart was on.
+
+If autostart was off under v0.3.x, this step still runs the cleanup half (remove the legacy plist if it somehow exists) but skips re-registration.
+
+**`tauri-plugin-single-instance` interaction.** `lib.rs:143` initializes the single-instance plugin, which is keyed off the bundle identifier. Because the rebrand changes the bundle ID, **a v1.0.0 instance and a still-running v0.3.x instance hold separate single-instance locks** — they do not see each other through the plugin. This is why migration step 2 explicitly hunts for and SIGTERMs the legacy process; the single-instance plugin can't help across the rebrand boundary. After migration, all v1.x clients share one lock as expected.
 
 ### Surface-by-surface rename
 
@@ -337,10 +385,12 @@ Per-account access tokens, refresh tokens, and the keychain-blob format do not c
 | Resulting data dir (macOS) | `~/Library/Application Support/com.claude-limits.ClaudeLimits/` | `~/Library/Application Support/com.claude-switchboard.ClaudeSwitchboard/` |
 | SQLite path | `<data dir>/data.db` | `<data dir>/data.db` (path follows from data dir) |
 | DB lockfile | `<data dir>/claude-monitor.lock` | `<data dir>/claude-switchboard.lock` |
-| Credential service prefix | `claude-limits-*` | `claude-switchboard-*` |
 | Updater URL | `https://github.com/FeiXu-1131372/claude-limits/releases/latest/download/latest.json` | `https://github.com/FeiXu-1131372/claude-switchboard/releases/latest/download/latest.json` |
+| User-Agent header (`usage_api/client.rs:55`) | `claude-limits/<version>` | `claude-switchboard/<version>` |
 | App icon, tray icon | current | new (Switchboard-themed; brand brief unchanged) |
 | Cargo / package.json names | `claude-limits` | `claude-switchboard` |
+| Autostart launch-agent plist (macOS) | `com.claude-limits.app.plist` | `com.claude-switchboard.app.plist` (legacy plist removed in migration step 4) |
+| Autostart registry entry (Windows) | `HKCU\…\Run\Claude Limits` | `HKCU\…\Run\Claude Switchboard` (legacy entry removed in migration step 4) |
 
 ### What does NOT change
 
@@ -348,7 +398,7 @@ Design tokens, color palette, layout, animation curves, popover/expanded-report 
 
 ### Why "copy, not move"
 
-Leaving old keychain entries and SQLite in place means: if migration ever breaks a user, they can still launch the old binary and recover. After ~3 months of stable v1.x, ship a small "tidy old data" button — never automatic.
+Leaving the old data dir and SQLite in place means: if migration ever breaks a user, they can still launch the old binary and recover. After ~3 months of stable v1.x, ship a small "tidy old data" button — never automatic.
 
 ## 10. File & module boundaries
 
@@ -374,17 +424,25 @@ os_scheduler/
   windows.rs    schtasks wrapper (StartWhenAvailable=true)
 
 migration/
-  mod.rs        first-launch flow per Section 9
-  sqlite.rs     copy old DB
-  creds.rs      platform-dispatched cred copy (macOS / Windows)
+  mod.rs              first-launch flow per Section 9
+  data_dir_copy.rs    copy entire old data dir contents
+                      (data.db, accounts.json, updater.json, …),
+                      excluding lockfiles
+  legacy_process.rs   NEW helper: find & quit the legacy claude-limits
+                      process (separate from process_detection.rs,
+                      which is for upstream Claude Code/VS Code only)
+  autostart.rs        clean up legacy launch-agent plist (macOS) /
+                      Run-key entry (Windows); re-register if
+                      autostart was previously enabled
 
 branding.rs     central constants: PRODUCT_NAME, TAURI_BUNDLE_ID,
                 PROJECT_DIRS_QUALIFIER/ORG/APPLICATION,
-                CRED_SERVICE_PREFIX, GITHUB_REPO_PATH
+                GITHUB_REPO_PATH, USER_AGENT_PREFIX,
+                LEGACY_BUNDLE_ID, LEGACY_PROJECT_DIRS (for migration)
 cli.rs          --tick (dispatcher entry), --migrate (manual rerun)
 ```
 
-**Reuse, don't duplicate:** `process_detection.rs` already exists in `src-tauri/src/` — `migration/mod.rs` calls into it for the "quit running claude-limits" step rather than reimplementing process enumeration.
+**`process_detection.rs` is NOT a drop-in helper for migration.** That module (`process_detection.rs:32-44`) finds upstream Claude Code CLI and VS Code processes; it has no concept of finding the app's own old process. Migration introduces a separate `migration/legacy_process.rs` (see Section 9 "Process detection — new helper, not a reuse").
 
 ### DB lock handling for `--tick` (resolves the headless-vs-GUI conflict)
 
@@ -415,7 +473,8 @@ impl Db {
 - `store/mod.rs` — adds `Db::open_for_tick` (no file lock) and renames the lockfile per the rename table; updates `default_dir()` to read from `branding.rs`.
 - `app_state.rs` — adds `WarmupState` and per-account `last_warmup_at` cache.
 - `commands.rs` — new Tauri commands: `warmup_account`, `set_schedule`, `grant_warmup_consent`, `revoke_warmup_consent`, `os_scheduler_register`, `os_scheduler_unregister`.
-- `process_detection.rs` — extended (if needed) to identify the legacy `Claude Limits.app` process for migration step 2.
+- `process_detection.rs` — **unchanged.** Migration uses `migration/legacy_process.rs` instead (see Section 9).
+- `usage_api/client.rs:55` — change the User-Agent prefix from `claude-limits/{version}` to `claude-switchboard/{version}` (read from `branding.rs::USER_AGENT_PREFIX`).
 - `store/migrations/` — new SQL file `0004_warmup.sql` (numbering follows the existing `0002_*`, `0003_*` convention). Adds three columns to **`accounts`** (NOT a new `slots` table — the codebase uses `accounts` keyed by id, with slots being an in-memory `u32` wrapper in `auth/accounts/manager.rs`):
   ```sql
   ALTER TABLE accounts ADD COLUMN warmup_enabled INTEGER NOT NULL DEFAULT 0;
@@ -460,17 +519,22 @@ lib/branding.ts           central brand constants (mirror of Rust)
 ### Unit (Rust)
 
 - `warmup::api_call` — mock HTTP client; verify request shape, header construction, all 5 failure-mode response codes route correctly.
-- `scheduler::dedup` — table-driven: pairs of `(last_warmup_at, now)` resolve to fire / skip correctly at the 60s boundary.
-- `scheduler::catchup` — synthetic `slots` × `schedules` × elapsed-time inputs verify "exactly one catch-up per slot per launch".
+- `scheduler::claim` — table-driven: pairs of `(last_warmup_at, now)` resolve to claim / skip correctly at the 60s boundary; verify the UPDATE returns `rows_affected == 1` only when expected.
+- **Active-window precondition skip** — synthetic snapshot with `five_hour.resets_at = Some(future)` → assert `tick_for_account` reaches Step 3 and exits without firing the HTTP call (mock the HTTP client; assert zero calls).
+- `scheduler::catchup` — synthetic `(account, schedule, last_warmup_at, now)` inputs verify "exactly one catch-up per slot per launch", 24h lookback floor, DST spring-forward skip behavior.
 - `scheduler::presets` — Off / Every5h / Custom serde round-trip.
 - `os_scheduler::macos` — plist generation given a known install path; no actual `launchctl` invocation in unit tests.
-- `migration::sqlite` and `migration::keychain` — fixture-based; an old-install-shaped tmpdir migrates correctly.
+- `migration::data_dir_copy` — fixture-based; an old-install-shaped tmpdir copies the right files (data.db, accounts.json, updater.json) and skips lockfiles.
+- `migration::legacy_process` — mocked `sysinfo::System` fixture; verify the matcher finds the legacy `Claude Limits.app` process and ignores upstream Claude Code / VS Code processes.
+- `migration::autostart` — verify the macOS path detects, unloads, and removes the legacy plist; verify Windows path queries and removes the Run-key entry.
 
 ### Integration (Rust)
 
 - End-to-end `--tick` mode in CI: spin up SQLite fixture, mocked HTTP server, invoke `claude-switchboard --tick`, verify warm-up fires and `last_warmup_at` updates.
-- Migration smoke: build a v0.3.x-shaped fixture, run v1.0.0 first-launch, verify all 7 migration steps complete (per §9).
+- Migration smoke (`--migrate` rerun + cold first-launch): build a v0.3.x-shaped fixture, run v1.0.0 first-launch, verify all 7 migration steps complete (per §9). Then run `claude-switchboard --migrate` against a corrupt-mid-migration fixture and verify it idempotently completes from where it left off (or no-ops if already complete).
+- **Multi-process transactional-claim race:** spawn two `--tick` invocations in parallel against the same SQLite fixture, both targeting the same account that is due for warm-up. Verify exactly one of them sees `rows_affected == 1` and issues the HTTP call; the other sees `rows_affected == 0` and exits cleanly. Run with N=20 iterations to surface flakiness.
 - Concurrency smoke: hold a `Db::open` lock from a fixture process, then invoke `claude-switchboard --tick` from a second process — verify it opens via `Db::open_for_tick`, performs the transactional claim, and exits cleanly without lock contention.
+- Autostart-cleanup smoke: write a fake legacy `com.claude-limits.app.plist` into a tmpdir-rooted `LaunchAgents`, run migration step 4 against it, verify the plist is unloaded and removed, and (if previously enabled) a new `com.claude-switchboard.app.plist` is written.
 
 ### Manual / smoke
 
@@ -497,6 +561,8 @@ New migration file: `src-tauri/src/store/migrations/0004_warmup.sql` (follows ex
 -- (The codebase has no `slots` table; slots are an in-memory u32 wrapper
 -- around accounts in src-tauri/src/auth/accounts/manager.rs.)
 -- SQLite uses INTEGER for booleans (0 / 1).
+-- last_warmup_at uses unix epoch SECONDS, matching the existing
+-- accounts.last_seen_at column (schema.sql:14) for unit consistency.
 ALTER TABLE accounts ADD COLUMN warmup_enabled INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE accounts ADD COLUMN schedule        TEXT    NOT NULL DEFAULT '{"type":"Off"}';
 ALTER TABLE accounts ADD COLUMN last_warmup_at  INTEGER;  -- unix epoch seconds, NULL = never
