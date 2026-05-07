@@ -73,6 +73,7 @@ Most Claude usage trackers fall into one of two shapes — CLI tools you have to
 ## Features
 
 - **Live tray badge** — 5-hour percentage as a ring around the menu-bar icon, refreshed at your configured interval. Pulled from Anthropic's official usage endpoint — the same numbers their console shows.
+- **Multi-account, one-click swap** — manage every Claude account you sign in to in the same popover, see all their 5H/7D bars side-by-side, and switch which one Claude Code uses with a single click. Running CLI / VS Code sessions adopt the new account within ~30 seconds — no restart required.
 - **Hover summary** — 5h and 7d percentages with reset times in a single line, without clicking.
 - **Compact popover** — 5H / 7D buckets, per-model bars (Opus, Sonnet), and pay-as-you-go credits when enabled.
 - **Expanded report** — Sessions, Models, Trends, Projects, Heatmap, and Cache tabs, sourced from local Claude Code JSONL transcripts.
@@ -118,11 +119,18 @@ Update integrity: every release artifact is signed with our ed25519 updater key,
 and the app refuses any update whose signature doesn't match the public key
 embedded at build time.
 
-## Authentication
+## Authentication & multi-account
 
-By default Claude Limits reuses your existing Claude Code credentials from the OS keychain — no separate sign-in. If you'd rather authenticate independently, an OAuth 2.0 + PKCE paste-back flow is available in Settings.
+Claude Limits can manage as many Claude accounts as you have. Each account lives in its own slot with its own polled usage; the **Accounts** sub-screen shows all of them stacked, with the currently-active one highlighted. Every slot has a **Switch account** button — click it to make Claude Code (CLI and the VS Code extension) point at that account.
 
-The app never logs in on your behalf. It reads the token your OS already holds and uses it only against `api.anthropic.com`.
+Two ways to add an account:
+
+1. **Import the upstream login** — sign in with `claude login` first, then in claude-limits hit "Use upstream's current login". Captures the live credentials in one click.
+2. **OAuth in-app** — click "Sign in with Claude" to start a local-redirect OAuth flow. Useful for adding accounts you haven't logged into via `claude` yet.
+
+The app never logs in on your behalf. It only ever reads tokens that your OS already holds and uses them against `api.anthropic.com`.
+
+**Hot reload, not restart.** A swap rewrites the OS-level credentials atomically — running CC sessions pick up the new account within ~30 seconds (CC's own keychain cache TTL on macOS, one API tick on Windows). A 60-second `KeychainGuardian` covers the narrow race where a CC process started its OAuth refresh just before the swap.
 
 ## Privacy
 
