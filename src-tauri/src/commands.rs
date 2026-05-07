@@ -615,3 +615,12 @@ pub async fn refresh_account(
     state.force_refresh.notify_one();
     Ok(())
 }
+
+#[command]
+#[specta::specta]
+pub async fn get_migration_outcome(
+    state: State<'_, Arc<AppState>>,
+) -> Result<crate::migration::MigrationOutcome, String> {
+    let guard = state.migration_outcome.lock().map_err(|e| e.to_string())?;
+    Ok(guard.clone())
+}

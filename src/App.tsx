@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { invoke } from '@tauri-apps/api/core';
 import { CompactPopover } from './popover/CompactPopover';
 import { ExpandedReport } from './report/ExpandedReport';
 import { AuthPanel } from './settings/AuthPanel';
+import { WelcomeToSwitchboard, MigrationOutcome } from './components/modals/WelcomeToSwitchboard';
 import { useAppStore } from './lib/store';
 import { attachUpdateListeners } from './lib/updateEvents';
 import './styles/globals.css';
@@ -13,10 +15,21 @@ export function App() {
   const accounts = useAppStore((s) => s.accounts);
   const viewMode = useAppStore((s) => s.viewMode);
   const [initialized, setInitialized] = useState(false);
+  const [welcomeOutcome, setWelcomeOutcome] = useState<MigrationOutcome | null>(null);
 
   useEffect(() => {
     init().finally(() => setInitialized(true));
   }, [init]);
+
+  useEffect(() => {
+    invoke<MigrationOutcome>('get_migration_outcome')
+      .then((o) => {
+        if (o.legacy_data_dir_found) setWelcomeOutcome(o);
+      })
+      .catch((e) => {
+        console.error('get_migration_outcome failed:', e);
+      });
+  }, []);
 
   useEffect(() => {
     let teardown: (() => void) | null = null;
@@ -52,30 +65,38 @@ export function App() {
   }
 
   return (
-    <AnimatePresence mode="wait" initial={false}>
-      {viewMode === 'expanded' ? (
-        <motion.div
-          key="expanded"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
-          style={{ height: '100%' }}
-        >
-          <ExpandedReport />
-        </motion.div>
-      ) : (
-        <motion.div
-          key="compact"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
-          style={{ height: '100%' }}
-        >
-          <CompactPopover />
-        </motion.div>
+    <>
+      <AnimatePresence mode="wait" initial={false}>
+        {viewMode === 'expanded' ? (
+          <motion.div
+            key="expanded"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
+            style={{ height: '100%' }}
+          >
+            <ExpandedReport />
+          </motion.div>
+        ) : (
+          <motion.div
+            key="compact"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
+            style={{ height: '100%' }}
+          >
+            <CompactPopover />
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {welcomeOutcome && (
+        <WelcomeToSwitchboard
+          outcome={welcomeOutcome}
+          onClose={() => setWelcomeOutcome(null)}
+        />
       )}
-    </AnimatePresence>
+    </>
   );
 }

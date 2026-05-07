@@ -136,6 +136,7 @@ pub fn run() {
             commands::swap_to_account,
             commands::detect_running_claude_code,
             commands::refresh_account,
+            commands::get_migration_outcome,
         ]);
 
     #[cfg(debug_assertions)]
@@ -162,6 +163,7 @@ pub fn run() {
             commands::swap_to_account,
             commands::detect_running_claude_code,
             commands::refresh_account,
+            commands::get_migration_outcome,
             commands::debug_force_threshold,
         ]);
 
