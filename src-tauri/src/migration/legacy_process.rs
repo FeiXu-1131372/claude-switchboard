@@ -12,19 +12,30 @@ use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, Signal, System};
 ///
 /// Windows: process name `claude-limits.exe`.
 pub fn find_legacy_pids(sys: &System) -> Vec<Pid> {
+    let legacy_org = crate::branding::LEGACY_PROJECT_DIRS_ORG; // "claude-limits"
+    let legacy_app_marker = format!(
+        "{}.app/Contents/MacOS/{}",
+        crate::branding::LEGACY_PRODUCT_NAME, // "Claude Limits"
+        legacy_org,                           // "claude-limits"
+    );
+
     let mut hits = Vec::new();
     for (pid, p) in sys.processes() {
-        let name = p.name().to_string_lossy();
+        let name = p.name().to_string_lossy().to_lowercase();
         let exe_path = p
             .exe()
             .map(|e| e.to_string_lossy().to_string())
             .unwrap_or_default();
 
-        let by_name = matches!(name.as_ref(), "claude-limits" | "claude-limits.exe");
-        let by_path =
-            exe_path.contains("Claude Limits.app/Contents/MacOS/claude-limits");
+        // Name match — accept both bare and .exe forms, case-insensitively.
+        let name_matches =
+            name == legacy_org || name == format!("{legacy_org}.exe");
 
-        if by_name || by_path {
+        // Path match — Mac install layout. Path strings are case-sensitive
+        // on macOS but the bundle name comes from branding so they line up.
+        let path_matches = exe_path.contains(&legacy_app_marker);
+
+        if name_matches || path_matches {
             hits.push(*pid);
         }
     }
