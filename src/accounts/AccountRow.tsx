@@ -10,6 +10,8 @@ interface Props {
   onSwap?: () => void;
   swapBusy?: boolean;
   swapping?: boolean;
+  onReauth?: () => void;
+  reauthBusy?: boolean;
 }
 
 function PlanBadge({ plan }: { plan: string | null }) {
@@ -39,6 +41,8 @@ export function AccountRow({
   onSwap,
   swapBusy = false,
   swapping = false,
+  onReauth,
+  reauthBusy = false,
 }: Props) {
   const cached = entry.cached_usage;
   const fiveHour = cached?.snapshot.five_hour ?? null;
@@ -112,9 +116,30 @@ export function AccountRow({
       </div>
 
       {errLabel ? (
-        <span className="text-[length:var(--text-micro)] text-[color:var(--color-warn)]">
-          {errLabel}
-        </span>
+        <div className="flex items-center gap-[var(--space-xs)]">
+          <span className="flex-1 text-[length:var(--text-micro)] text-[color:var(--color-warn)]">
+            {errLabel}
+          </span>
+          {entry.last_error === 'auth_required' && onReauth && (
+            <button
+              type="button"
+              onClick={onReauth}
+              disabled={reauthBusy}
+              className="
+                shrink-0 rounded-[var(--radius-pill)]
+                border border-[color:var(--color-warn)]
+                px-[var(--space-xs)] py-[1px]
+                text-[length:var(--text-micro)] uppercase tracking-[var(--tracking-label)]
+                text-[color:var(--color-warn)]
+                hover:bg-[color:var(--color-warn)] hover:text-white
+                disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:text-[color:var(--color-warn)]
+                focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] focus-visible:outline-offset-2
+              "
+            >
+              {reauthBusy ? 'Opening browser…' : 'Re-authenticate'}
+            </button>
+          )}
+        </div>
       ) : (
         <div className="flex flex-col gap-[var(--space-2xs)]">
           {fiveHour && (

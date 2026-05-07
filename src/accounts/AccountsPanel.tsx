@@ -1,5 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
+import { openUrl } from '@tauri-apps/plugin-opener';
+import { listen } from '@tauri-apps/api/event';
 import { useAppStore } from '../lib/store';
 import { ipc } from '../lib/ipc';
 import { IconButton } from '../components/ui/IconButton';
@@ -28,6 +30,40 @@ export function AccountsPanel({ onBack }: Props) {
   const [pending, setPending] = useState<PendingSwap | null>(null);
   const [confirmError, setConfirmError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [reauthSlot, setReauthSlot] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (reauthSlot === null) return;
+    // OAuth completion (success OR error) clears the busy state. The
+    // backend's add_from_oauth dedupes by accountUuid, so a successful
+    // re-auth for the same email refreshes the existing slot in place;
+    // the next poll-loop tick clears the auth_required marker on its
+    // first successful fetch.
+    const unlistenComplete = listen<number>('oauth_complete', () => {
+      refreshAccounts().catch(() => {});
+      setReauthSlot(null);
+    });
+    const unlistenError = listen<string>('oauth_error', () => {
+      setReauthSlot(null);
+    });
+    return () => {
+      unlistenComplete.then((f) => f());
+      unlistenError.then((f) => f());
+    };
+  }, [reauthSlot, refreshAccounts]);
+
+  async function handleReauth(entry: AccountListEntry) {
+    if (reauthSlot !== null) return;
+    setReauthSlot(entry.slot);
+    try {
+      const url = await ipc.startOauthFlow(false);
+      await openUrl(url);
+    } catch {
+      // If the OAuth URL can't be built or the browser can't open,
+      // drop the busy marker so the user can try again.
+      setReauthSlot(null);
+    }
+  }
 
   async function handleRefreshAll() {
     if (refreshing) return;
@@ -154,6 +190,8 @@ export function AccountsPanel({ onBack }: Props) {
               onSwap={() => requestSwap(a)}
               swapBusy={swappingSlot !== null}
               swapping={swappingSlot === a.slot}
+              onReauth={() => handleReauth(a)}
+              reauthBusy={reauthSlot === a.slot}
             />
           );
         })}
