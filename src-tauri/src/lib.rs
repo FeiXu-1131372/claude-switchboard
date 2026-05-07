@@ -43,25 +43,12 @@ pub fn run() {
     });
 
     // Phase 2: DB-aware cleanup (after Db::open; needs a live connection).
-    let migration_outcome = {
+    {
         let conn = db_result.conn();
-        match crate::migration::run_phase2(&conn, files_copied) {
-            Ok(outcome) => {
-                tracing::info!(
-                    "migration phase 2: legacy_found={} files_copied={} process_quit={} autostart_removed={}",
-                    outcome.legacy_data_dir_found,
-                    outcome.files_copied,
-                    outcome.legacy_process_quit,
-                    outcome.legacy_autostart_removed,
-                );
-                outcome
-            }
-            Err(e) => {
-                tracing::error!("migration phase 2 failed: {e:#}");
-                crate::migration::MigrationOutcome::default()
-            }
+        if let Err(e) = crate::migration::run_phase2(&conn, files_copied) {
+            tracing::error!("migration phase 2 failed: {e:#}");
         }
-    };
+    }
     let db_recovered = db_result.recovered;
     let db = Arc::new(db_result);
     let pricing = Arc::new(jsonl_parser::PricingTable::bundled().expect("pricing"));
@@ -107,7 +94,6 @@ pub fn run() {
         backoff_by_slot: parking_lot::RwLock::new(std::collections::HashMap::new()),
         schedule_by_slot: parking_lot::RwLock::new(std::collections::HashMap::new()),
         keychain_guardian: parking_lot::Mutex::new(None),
-        migration_outcome: std::sync::Mutex::new(migration_outcome),
     });
 
     // tauri-specta's Builder::commands replaces previously registered commands rather
@@ -136,7 +122,6 @@ pub fn run() {
             commands::swap_to_account,
             commands::detect_running_claude_code,
             commands::refresh_account,
-            commands::get_migration_outcome,
         ]);
 
     #[cfg(debug_assertions)]
@@ -163,7 +148,6 @@ pub fn run() {
             commands::swap_to_account,
             commands::detect_running_claude_code,
             commands::refresh_account,
-            commands::get_migration_outcome,
             commands::debug_force_threshold,
         ]);
 

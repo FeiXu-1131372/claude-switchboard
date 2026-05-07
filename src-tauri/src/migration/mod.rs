@@ -22,16 +22,6 @@ use crate::branding::{
     LEGACY_PROJECT_DIRS_APP, LEGACY_PROJECT_DIRS_ORG, LEGACY_PROJECT_DIRS_QUALIFIER,
 };
 
-/// What the migration steps found and did. Surfaces to UI for the
-/// "Welcome to Switchboard" dialog (T13).
-#[derive(Debug, Clone, Default, serde::Serialize, specta::Type)]
-pub struct MigrationOutcome {
-    pub legacy_data_dir_found: bool,
-    pub files_copied: usize,
-    pub legacy_process_quit: bool,
-    pub legacy_autostart_removed: bool,
-}
-
 /// Resolve the legacy v0.3.x data directory. Symmetric with `store::default_dir()`
 /// but using the legacy ProjectDirs strings.
 pub fn legacy_data_dir() -> Option<PathBuf> {
@@ -87,12 +77,11 @@ fn mark_phase2_completed(conn: &Connection) -> Result<()> {
 }
 
 /// Phase 2: DB-aware cleanup. Called AFTER `Db::open(new_data_dir)`.
-/// Idempotent — gated by settings.migration_completed.
-///
-/// Returns a MigrationOutcome describing what was found / done.
-pub fn run_phase2(conn: &Connection, files_copied_in_phase1: usize) -> Result<MigrationOutcome> {
+/// Idempotent — gated by settings.migration_completed. Logs what it does
+/// via `tracing`; returns `()` on success.
+pub fn run_phase2(conn: &Connection, files_copied_in_phase1: usize) -> Result<()> {
     if phase2_already_completed(conn)? {
-        return Ok(MigrationOutcome::default());
+        return Ok(());
     }
 
     let legacy_dir_present = legacy_data_dir()
@@ -103,27 +92,25 @@ pub fn run_phase2(conn: &Connection, files_copied_in_phase1: usize) -> Result<Mi
         // Fresh install — no v0.3.x legacy state. Mark completed so we
         // never re-check on subsequent launches.
         mark_phase2_completed(conn)?;
-        return Ok(MigrationOutcome::default());
+        tracing::info!("migration: fresh install, no legacy data");
+        return Ok(());
     }
 
     // Step 1: quit any running v0.3.x process.
-    let legacy_process_quit = match legacy_process::quit_legacy_processes(5) {
-        Ok(()) => true,
-        Err(e) => {
-            tracing::error!("Failed to quit legacy process: {e:#}");
-            return Err(e).context(
-                "Couldn't quit Claude Limits automatically. \
-                 Quit it manually and re-launch Switchboard to continue.",
-            );
-        }
-    };
+    if let Err(e) = legacy_process::quit_legacy_processes(5) {
+        tracing::error!("failed to quit legacy process: {e:#}");
+        return Err(e).context(
+            "Couldn't quit Claude Limits automatically. \
+             Quit it manually and re-launch Switchboard to continue.",
+        );
+    }
 
     // Step 2: clean up legacy autostart entries.
-    let mut legacy_autostart_removed = false;
+    let mut autostart_removed = false;
     if let Some(home) = directories::UserDirs::new().map(|u| u.home_dir().to_path_buf()) {
         if autostart::legacy_plist_exists(&home) {
             autostart::remove_legacy_plist(&home).ok();
-            legacy_autostart_removed = true;
+            autostart_removed = true;
         }
     }
     autostart::remove_legacy_run_key().ok();
@@ -131,12 +118,12 @@ pub fn run_phase2(conn: &Connection, files_copied_in_phase1: usize) -> Result<Mi
     // Step 3: mark complete.
     mark_phase2_completed(conn)?;
 
-    Ok(MigrationOutcome {
-        legacy_data_dir_found: true,
-        files_copied: files_copied_in_phase1,
-        legacy_process_quit,
-        legacy_autostart_removed,
-    })
+    tracing::info!(
+        "migration: files_copied={} autostart_removed={}",
+        files_copied_in_phase1,
+        autostart_removed,
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -156,17 +143,13 @@ mod tests {
 
     #[test]
     fn phase2_marks_completed_on_fresh_install() {
-        // No legacy dir on the test system (we can't easily fake ProjectDirs);
-        // expect: outcome is empty, flag flipped to '1'.
         let conn = open_fresh_conn();
         if legacy_data_dir().map(|p| p.exists()).unwrap_or(false) {
             eprintln!("legacy dir present on this system; skipping fresh-install test");
             return;
         }
 
-        let out = run_phase2(&conn, 0).unwrap();
-        assert!(!out.legacy_data_dir_found);
-        assert_eq!(out.files_copied, 0);
+        run_phase2(&conn, 0).unwrap();
 
         let value: String = conn
             .query_row(
@@ -187,9 +170,8 @@ mod tests {
         )
         .unwrap();
 
-        let out = run_phase2(&conn, 0).unwrap();
-        assert!(!out.legacy_data_dir_found);
-        assert_eq!(out.files_copied, 0);
+        // Should return Ok(()) without touching anything.
+        run_phase2(&conn, 0).unwrap();
     }
 
     #[test]
@@ -204,7 +186,6 @@ mod tests {
     #[test]
     fn phase1_returns_zero_when_no_legacy_dir() {
         let new = tempdir().unwrap();
-        // No data.db in new dir, but also no legacy dir on this CI system.
         if legacy_data_dir().map(|p| p.exists()).unwrap_or(false) {
             eprintln!("legacy dir present on this system; skipping no-legacy test");
             return;

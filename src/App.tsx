@@ -1,10 +1,8 @@
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { invoke } from '@tauri-apps/api/core';
 import { CompactPopover } from './popover/CompactPopover';
 import { ExpandedReport } from './report/ExpandedReport';
 import { AuthPanel } from './settings/AuthPanel';
-import { WelcomeToSwitchboard, MigrationOutcome } from './components/modals/WelcomeToSwitchboard';
 import { useAppStore } from './lib/store';
 import { attachUpdateListeners } from './lib/updateEvents';
 import './styles/globals.css';
@@ -15,21 +13,10 @@ export function App() {
   const accounts = useAppStore((s) => s.accounts);
   const viewMode = useAppStore((s) => s.viewMode);
   const [initialized, setInitialized] = useState(false);
-  const [welcomeOutcome, setWelcomeOutcome] = useState<MigrationOutcome | null>(null);
 
   useEffect(() => {
     init().finally(() => setInitialized(true));
   }, [init]);
-
-  useEffect(() => {
-    invoke<MigrationOutcome>('get_migration_outcome')
-      .then((o) => {
-        if (o.legacy_data_dir_found) setWelcomeOutcome(o);
-      })
-      .catch((e) => {
-        console.error('get_migration_outcome failed:', e);
-      });
-  }, []);
 
   useEffect(() => {
     let teardown: (() => void) | null = null;
@@ -91,12 +78,6 @@ export function App() {
           </motion.div>
         )}
       </AnimatePresence>
-      {welcomeOutcome && (
-        <WelcomeToSwitchboard
-          outcome={welcomeOutcome}
-          onClose={() => setWelcomeOutcome(null)}
-        />
-      )}
     </>
   );
 }
