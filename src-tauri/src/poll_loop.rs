@@ -147,6 +147,23 @@ async fn fetch_and_apply_one(
                 "auth_required_for_slot",
                 json!({ "slot": slot, "email": acc.email }),
             );
+            // Most common cause is the refresh token being revoked
+            // (Anthropic returns invalid_grant). Mark the slot's cache
+            // with auth_required so the UI shows "token expired —
+            // re-authenticate" without waiting for a manual refresh.
+            // Network blips fall under the same label here; the next
+            // successful refresh will clear last_error.
+            let mut entry = state
+                .cached_usage_by_slot
+                .write()
+                .remove(&slot)
+                .unwrap_or_else(|| placeholder_cached(&acc, "auth_required"));
+            entry.last_error = Some("auth_required".into());
+            state.cached_usage_by_slot.write().insert(slot, entry.clone());
+            let _ = handle.emit(
+                "usage_updated",
+                json!({ "slot": slot, "cached": entry }),
+            );
             return;
         }
     };
@@ -217,7 +234,11 @@ async fn fetch_and_apply_one(
                 .remove(&slot)
                 .unwrap_or_else(|| placeholder_cached(&acc, "auth_required"));
             entry.last_error = Some("auth_required".into());
-            state.cached_usage_by_slot.write().insert(slot, entry);
+            state.cached_usage_by_slot.write().insert(slot, entry.clone());
+            let _ = handle.emit(
+                "usage_updated",
+                json!({ "slot": slot, "cached": entry }),
+            );
         }
         FetchOutcome::RateLimited(retry_after) => {
             let prev_delay = state
@@ -254,7 +275,11 @@ async fn fetch_and_apply_one(
                 .remove(&slot)
                 .unwrap_or_else(|| placeholder_cached(&acc, "rate-limited (429)"));
             entry.last_error = Some("rate-limited (429)".into());
-            state.cached_usage_by_slot.write().insert(slot, entry);
+            state.cached_usage_by_slot.write().insert(slot, entry.clone());
+            let _ = handle.emit(
+                "usage_updated",
+                json!({ "slot": slot, "cached": entry }),
+            );
         }
         FetchOutcome::Transient(e) => {
             let mut entry = state
@@ -263,7 +288,11 @@ async fn fetch_and_apply_one(
                 .remove(&slot)
                 .unwrap_or_else(|| placeholder_cached(&acc, &e));
             entry.last_error = Some(e);
-            state.cached_usage_by_slot.write().insert(slot, entry);
+            state.cached_usage_by_slot.write().insert(slot, entry.clone());
+            let _ = handle.emit(
+                "usage_updated",
+                json!({ "slot": slot, "cached": entry }),
+            );
         }
     }
 }
