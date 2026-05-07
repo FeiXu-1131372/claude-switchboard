@@ -450,6 +450,9 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
 pub struct AccountListEntry {
     pub slot: u32,
     pub email: String,
+    /// The stable UUID that identifies this account in the SQLite `accounts`
+    /// table. Pass this as `accountId` to all warmup-related Tauri commands.
+    pub account_uuid: String,
     pub org_name: Option<String>,
     pub org_uuid: Option<String>,
     pub subscription_type: Option<String>,
@@ -476,6 +479,7 @@ pub(crate) fn entry_for(
     AccountListEntry {
         slot: acc.slot,
         email: acc.email.clone(),
+        account_uuid: acc.account_uuid.clone(),
         org_name: acc.organization_name.clone(),
         org_uuid: acc.organization_uuid.clone(),
         subscription_type: acc.subscription_type.clone(),
@@ -740,4 +744,37 @@ pub async fn os_scheduler_is_registered() -> Result<bool, String> {
     let s = crate::os_scheduler::for_current_platform()
         .ok_or_else(|| "OS-level scheduling not supported on this platform".to_string())?;
     s.is_registered().map_err(|e| format!("{e:#}"))
+}
+
+/// Per-account warm-up state returned by `get_warmup_state`.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+pub struct WarmupAccountState {
+    pub warmup_enabled: bool,
+    pub schedule: crate::scheduler::Schedule,
+    pub last_warmup_at: Option<i64>,
+}
+
+/// Fetch the warm-up state for a specific account. Used by the UI row to
+/// initialise the WarmupToggle / ScheduleSelector on mount.
+#[command]
+#[specta::specta]
+pub async fn get_warmup_state(
+    state: State<'_, Arc<AppState>>,
+    account_id: String,
+) -> Result<WarmupAccountState, String> {
+    let conn = state.db.conn();
+    let (enabled, schedule_json, last_warmup_at): (i64, String, Option<i64>) = conn
+        .query_row(
+            "SELECT warmup_enabled, schedule, last_warmup_at FROM accounts WHERE id = ?1",
+            rusqlite::params![account_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(|e| e.to_string())?;
+    let schedule: crate::scheduler::Schedule =
+        serde_json::from_str(&schedule_json).map_err(|e| e.to_string())?;
+    Ok(WarmupAccountState {
+        warmup_enabled: enabled != 0,
+        schedule,
+        last_warmup_at,
+    })
 }

@@ -1,7 +1,12 @@
-import { useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import { UsageBar } from '../popover/UsageBar';
 import { ResetCountdown } from '../popover/ResetCountdown';
-import type { AccountListEntry } from '../lib/generated/bindings';
+import { ipc } from '../lib/ipc';
+import type { AccountListEntry, Schedule } from '../lib/generated/bindings';
+import { WarmupToggle } from './WarmupToggle';
+import { WarmupNowButton } from './WarmupNowButton';
+import { ScheduleSelector } from './ScheduleSelector';
+import { WarmupConsentModal } from '../components/modals/WarmupConsentModal';
 
 interface Props {
   entry: AccountListEntry;
@@ -48,12 +53,54 @@ export function AccountRow({
   const fiveHour = cached?.snapshot.five_hour ?? null;
   const sevenDay = cached?.snapshot.seven_day ?? null;
 
-  const errLabel = useMemo(() => {
+  // Warmup state — fetched once per mount from the DB via get_warmup_state.
+  const [warmupEnabled, setWarmupEnabled] = useState(false);
+  const [schedule, setSchedule] = useState<Schedule>({ type: 'Off' });
+  const [showConsent, setShowConsent] = useState(false);
+
+  useEffect(() => {
+    ipc.getWarmupState(entry.account_uuid).then((ws) => {
+      setWarmupEnabled(ws.warmup_enabled);
+      setSchedule(ws.schedule);
+    }).catch(() => {
+      // Silently swallow — row still renders without warmup state.
+    });
+  }, [entry.account_uuid]);
+
+  const handleToggle = async (next: boolean) => {
+    if (next) {
+      const granted = await ipc.getWarmupConsentGranted().catch(() => false);
+      if (!granted) {
+        setShowConsent(true);
+        return;
+      }
+    }
+    await ipc.setWarmupEnabled(entry.account_uuid, next).catch(() => {});
+    setWarmupEnabled(next);
+  };
+
+  const handleConsentAccept = async () => {
+    await ipc.grantWarmupConsent().catch(() => {});
+    await ipc.setWarmupEnabled(entry.account_uuid, true).catch(() => {});
+    setWarmupEnabled(true);
+    setShowConsent(false);
+  };
+
+  const handleScheduleChange = async (s: Schedule) => {
+    await ipc.setAccountSchedule(entry.account_uuid, s).catch(() => {});
+    setSchedule(s);
+  };
+
+  const handleWarmupNow = async () => {
+    await ipc.warmupAccountNow(entry.account_uuid).catch(() => {});
+  };
+
+  const errLabel = (() => {
     if (entry.last_error === 'auth_required')
       return 'token expired — re-authenticate';
     if (entry.last_error) return 'usage unavailable';
     return null;
-  }, [entry.last_error]);
+  })();
 
   const showSwap = !!onSwap && !entry.is_active;
 
@@ -172,6 +219,31 @@ export function AccountRow({
             </span>
           )}
         </div>
+      )}
+
+      {/* Warm-up controls */}
+      <div className="border-t border-neutral-700/40 pt-2 mt-1 space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] text-neutral-400 uppercase tracking-wide">
+            Warm-up
+          </span>
+          <WarmupToggle enabled={warmupEnabled} onToggle={handleToggle} />
+        </div>
+        {warmupEnabled && (
+          <>
+            <ScheduleSelector value={schedule} onChange={handleScheduleChange} />
+            <div className="flex justify-end">
+              <WarmupNowButton enabled={true} onClick={handleWarmupNow} />
+            </div>
+          </>
+        )}
+      </div>
+
+      {showConsent && (
+        <WarmupConsentModal
+          onAccept={handleConsentAccept}
+          onDismiss={() => setShowConsent(false)}
+        />
       )}
     </div>
   );

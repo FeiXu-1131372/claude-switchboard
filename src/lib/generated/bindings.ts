@@ -248,6 +248,18 @@ async getWarmupConsentGranted() : Promise<Result<boolean, string>> {
 }
 },
 /**
+ * Fetch the warm-up state for a specific account. Used by the UI row to
+ * initialise the WarmupToggle / ScheduleSelector on mount.
+ */
+async getWarmupState(accountId: string) : Promise<Result<WarmupAccountState, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_warmup_state", { accountId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Register OS-level scheduler (writes plist / schtasks task).
  */
 async osSchedulerRegister() : Promise<Result<null, string>> {
@@ -292,7 +304,12 @@ async osSchedulerIsRegistered() : Promise<Result<boolean, string>> {
 
 /** user-defined types **/
 
-export type AccountListEntry = { slot: number; email: string; org_name: string | null; org_uuid: string | null; subscription_type: string | null; source: AddSource; is_active: boolean; cached_usage: CachedUsage | null; last_error: string | null }
+export type AccountListEntry = { slot: number; email: string; 
+/**
+ * The stable UUID that identifies this account in the SQLite `accounts`
+ * table. Pass this as `accountId` to all warmup-related Tauri commands.
+ */
+account_uuid: string; org_name: string | null; org_uuid: string | null; subscription_type: string | null; source: AddSource; is_active: boolean; cached_usage: CachedUsage | null; last_error: string | null }
 export type AddSource = "OAuth" | "ImportedFromClaudeCode"
 export type AuthSource = "OAuth" | "ClaudeCode"
 /**
@@ -366,6 +383,10 @@ event_id: string }
 export type SwapReport = { new_active_slot: number; running: RunningClaudeCode }
 export type UsageSnapshot = { five_hour: Utilization | null; seven_day: Utilization | null; seven_day_sonnet: Utilization | null; seven_day_opus: Utilization | null; extra_usage: ExtraUsage | null; fetched_at?: string }
 export type Utilization = { utilization: number; resets_at?: string | null }
+/**
+ * Per-account warm-up state returned by `get_warmup_state`.
+ */
+export type WarmupAccountState = { warmup_enabled: boolean; schedule: Schedule; last_warmup_at: number | null }
 export type WarmupOutcome = 
 /**
  * 200 OK — the call started a fresh 5h window.

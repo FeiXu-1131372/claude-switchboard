@@ -31,4 +31,14 @@ export const ipc = {
 
   resizeWindow: (mode: 'compact' | 'expanded') => commands.resizeWindow(mode).then(unwrap),
   forceRefresh: (scope: 'active' | 'all') => commands.forceRefresh(scope).then(unwrap),
+
+  // Warmup pillar
+  getWarmupState: (accountId: string) => commands.getWarmupState(accountId).then(unwrap),
+  setWarmupEnabled: (accountId: string, enabled: boolean) =>
+    commands.setWarmupEnabled(accountId, enabled).then(unwrap),
+  setAccountSchedule: (accountId: string, schedule: import('./generated/bindings').Schedule) =>
+    commands.setAccountSchedule(accountId, schedule).then(unwrap),
+  warmupAccountNow: (accountId: string) => commands.warmupAccountNow(accountId).then(unwrap),
+  grantWarmupConsent: () => commands.grantWarmupConsent().then(unwrap),
+  getWarmupConsentGranted: () => commands.getWarmupConsentGranted().then(unwrap),
 };
