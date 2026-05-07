@@ -40,5 +40,9 @@ export const ipc = {
     commands.setAccountSchedule(accountId, schedule).then(unwrap),
   warmupAccountNow: (accountId: string) => commands.warmupAccountNow(accountId).then(unwrap),
   grantWarmupConsent: () => commands.grantWarmupConsent().then(unwrap),
+  revokeWarmupConsent: () => commands.revokeWarmupConsent().then(unwrap),
   getWarmupConsentGranted: () => commands.getWarmupConsentGranted().then(unwrap),
+  osSchedulerRegister: () => commands.osSchedulerRegister().then(unwrap),
+  osSchedulerUnregister: () => commands.osSchedulerUnregister().then(unwrap),
+  osSchedulerIsRegistered: () => commands.osSchedulerIsRegistered().then(unwrap),
 };
