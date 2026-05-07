@@ -20,44 +20,38 @@ export function WelcomeToSwitchboard({ outcome, onClose }: Props) {
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-3"
     >
-      <div className="max-w-sm w-full rounded-xl border border-orange-500/12 bg-neutral-900/95 backdrop-blur p-5 text-[13px] text-neutral-100 shadow-2xl">
-        <div className="flex items-start gap-3 mb-3">
-          <CheckCircle2 className="w-5 h-5 text-teal-400 flex-shrink-0 mt-0.5" />
-          <div>
-            <h2 className="text-base font-semibold">
+      <div className="w-full max-w-[320px] max-h-full overflow-y-auto rounded-lg border border-orange-500/12 bg-neutral-900/95 backdrop-blur p-3.5 text-[12px] text-neutral-100 shadow-2xl">
+        <div className="flex items-start gap-2 mb-2">
+          <CheckCircle2 className="w-4 h-4 text-teal-400 shrink-0 mt-0.5" />
+          <div className="min-w-0">
+            <h2 className="text-[13px] font-semibold leading-tight">
               Welcome to {PRODUCT_NAME}
             </h2>
             <p className="text-neutral-300 mt-1 leading-snug">
-              {LEGACY_PRODUCT_NAME} is now {PRODUCT_NAME} — same app, broader
-              scope. Your data has been migrated automatically.
+              {LEGACY_PRODUCT_NAME} is now {PRODUCT_NAME}. Your data was
+              migrated automatically.
             </p>
           </div>
         </div>
 
-        <ul className="space-y-1 text-neutral-300 ml-8 list-disc list-inside">
-          <li>{outcome.files_copied} files migrated (usage history, accounts, settings)</li>
-          {outcome.legacy_process_quit && (
-            <li>The previous {LEGACY_PRODUCT_NAME} app was closed</li>
-          )}
-          {outcome.legacy_autostart_removed && (
-            <li>Legacy launch-at-login entry replaced</li>
-          )}
+        <ul className="space-y-0.5 text-neutral-300 pl-4 list-disc list-outside marker:text-neutral-500">
+          <li>{outcome.files_copied} files migrated</li>
+          {outcome.legacy_process_quit && <li>Previous app closed</li>}
+          {outcome.legacy_autostart_removed && <li>Legacy autostart cleared</li>}
         </ul>
 
-        <p className="text-neutral-400 mt-3 text-[12px] leading-snug">
-          Your old install at{" "}
-          <code>~/Library/Application Support/com.claude-limits.ClaudeLimits/</code>{" "}
-          is preserved as a fallback. After a few weeks of stable use you'll
-          see a "tidy old data" option.
+        <p className="text-neutral-400 mt-2 text-[11px] leading-snug">
+          Your old install is preserved. After a few weeks of stable use you'll
+          see a "tidy old data" option in Settings.
         </p>
 
-        <div className="mt-4 flex justify-end">
+        <div className="mt-3 flex justify-end">
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 rounded-md bg-teal-500/15 hover:bg-teal-500/25 text-teal-200 text-[12px] font-medium transition-colors"
+            className="px-3 py-1 rounded-md bg-teal-500/15 hover:bg-teal-500/25 text-teal-200 text-[11px] font-medium transition-colors"
           >
             Got it
           </button>
