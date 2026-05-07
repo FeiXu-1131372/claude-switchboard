@@ -1,5 +1,6 @@
 mod app_state;
 pub mod auth;
+pub mod branding;
 mod commands;
 pub mod jsonl_parser;
 mod logging;
