@@ -282,7 +282,21 @@ async fn poll_all(
             .find(|a| a.account_uuid == l.account_uuid)
             .map(|a| a.slot)
     });
-    *state.active_slot.write() = active_slot;
+    let prev_active_slot = std::mem::replace(&mut *state.active_slot.write(), active_slot);
+
+    // Notify the frontend whenever the active slot transitions. The
+    // frontend's `accounts` array only carries `is_active` flags from the
+    // last `list_accounts` call; without this event, an out-of-band CC
+    // login (or the startup race where `init()` reads `list_accounts`
+    // before this loop's first tick) leaves the AccountsPanel showing no
+    // active highlight even though the backend knows which slot is live.
+    if prev_active_slot != active_slot {
+        let entries: Vec<crate::commands::AccountListEntry> = accounts
+            .iter()
+            .map(|a| crate::commands::entry_for(state, a, active_slot))
+            .collect();
+        let _ = handle.emit("accounts_changed", &entries);
+    }
 
     // 2. Empty-state + unmanaged-active signals.
     if accounts.is_empty() && live.is_none() {

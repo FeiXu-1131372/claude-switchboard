@@ -465,7 +465,11 @@ pub struct SwapReport {
     pub running: RunningClaudeCode,
 }
 
-fn entry_for(state: &AppState, acc: &ManagedAccount, active: Option<u32>) -> AccountListEntry {
+pub(crate) fn entry_for(
+    state: &AppState,
+    acc: &ManagedAccount,
+    active: Option<u32>,
+) -> AccountListEntry {
     let cache = state.cached_usage_by_slot.read();
     let cached = cache.get(&acc.slot).cloned();
     let last_error = cached.as_ref().and_then(|c| c.last_error.clone());
