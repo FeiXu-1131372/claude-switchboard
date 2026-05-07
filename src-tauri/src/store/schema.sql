@@ -69,3 +69,6 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- Seed default settings rows (idempotent — safe to re-run on existing DBs).
+INSERT OR IGNORE INTO settings (key, value) VALUES ('migration_completed', '0');

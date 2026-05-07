@@ -82,13 +82,13 @@ impl Db {
     }
 
     /// Create a brand-new SQLite database with the current schema and stamp
-    /// schema_version=3 so that migrate() skips steps meant for older upgrades.
+    /// schema_version=4 so that migrate() skips steps meant for older upgrades.
     fn create_fresh_db(db_path: &Path) -> Result<Connection> {
         let conn = Connection::open(db_path).context("open sqlite")?;
         conn.execute_batch(include_str!("schema.sql")).context("apply schema")?;
         conn.execute(
             "INSERT OR REPLACE INTO schema_version (version) VALUES (?1)",
-            [3_i64],
+            [4_i64],
         )
         .context("stamp schema version")?;
         Ok(conn)
@@ -117,9 +117,15 @@ impl Db {
             .context("apply migration 0003")?;
         }
 
+        if current < 4 {
+            tracing::info!("migrating settings v3 -> v4 (insert migration_completed flag)");
+            conn.execute_batch(include_str!("migrations/0004_migration_state.sql"))
+                .context("apply migration 0004")?;
+        }
+
         conn.execute(
             "INSERT OR REPLACE INTO schema_version (version) VALUES (?1)",
-            [3_i64],
+            [4_i64],
         )?;
         Ok(())
     }
@@ -245,5 +251,20 @@ mod tests {
         // The lockfile is created in Db::open(); we verify the constant routes
         // through correctly by spot-checking the branding module value.
         assert_eq!(crate::branding::DB_LOCKFILE_NAME, "claude-switchboard.lock");
+    }
+
+    #[test]
+    fn migration_0004_inserts_migration_completed_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(dir.path()).expect("open");
+        let conn = db.conn();
+        let value: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'migration_completed'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("migration_completed row should exist");
+        assert_eq!(value, "0", "default value is '0' (false)");
     }
 }
