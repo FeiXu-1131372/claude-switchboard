@@ -87,6 +87,7 @@ pub struct AppState {
     pub backoff_by_slot: RwLock<HashMap<u32, BackoffState>>,
     pub schedule_by_slot: RwLock<HashMap<u32, ScheduleState>>,
     pub keychain_guardian: Mutex<Option<KeychainGuardian>>,
+    pub migration_outcome: std::sync::Mutex<crate::migration::MigrationOutcome>,
 }
 
 #[derive(Debug, Clone, Copy)]
