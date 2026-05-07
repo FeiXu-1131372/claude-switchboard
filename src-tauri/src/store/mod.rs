@@ -82,13 +82,13 @@ impl Db {
     }
 
     /// Create a brand-new SQLite database with the current schema and stamp
-    /// schema_version=4 so that migrate() skips steps meant for older upgrades.
+    /// schema_version=5 so that migrate() skips steps meant for older upgrades.
     fn create_fresh_db(db_path: &Path) -> Result<Connection> {
         let conn = Connection::open(db_path).context("open sqlite")?;
         conn.execute_batch(include_str!("schema.sql")).context("apply schema")?;
         conn.execute(
             "INSERT OR REPLACE INTO schema_version (version) VALUES (?1)",
-            [4_i64],
+            [5_i64],
         )
         .context("stamp schema version")?;
         Ok(conn)
@@ -123,9 +123,15 @@ impl Db {
                 .context("apply migration 0004")?;
         }
 
+        if current < 5 {
+            tracing::info!("migrating accounts v4 -> v5 (warmup columns + consent setting)");
+            conn.execute_batch(include_str!("migrations/0005_warmup.sql"))
+                .context("apply migration 0005")?;
+        }
+
         conn.execute(
             "INSERT OR REPLACE INTO schema_version (version) VALUES (?1)",
-            [4_i64],
+            [5_i64],
         )?;
         Ok(())
     }
@@ -326,5 +332,95 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1, "idempotent re-run must not duplicate the row");
+    }
+
+    #[test]
+    fn migration_0005_adds_warmup_columns_and_consent_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(dir.path()).expect("open");
+        let conn = db.conn();
+
+        conn.execute(
+            "INSERT INTO accounts (id, email, last_seen_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params!["acct-1", "test@example.com", 0i64],
+        )
+        .unwrap();
+
+        let warmup_enabled: i64 = conn
+            .query_row(
+                "SELECT warmup_enabled FROM accounts WHERE id = 'acct-1'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("warmup_enabled column exists with default");
+        assert_eq!(warmup_enabled, 0);
+
+        let schedule: String = conn
+            .query_row(
+                "SELECT schedule FROM accounts WHERE id = 'acct-1'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("schedule column exists with default");
+        assert_eq!(schedule, r#"{"type":"Off"}"#);
+
+        let last: Option<i64> = conn
+            .query_row(
+                "SELECT last_warmup_at FROM accounts WHERE id = 'acct-1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(last, None);
+
+        let consent: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'warmup_consent_granted'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("warmup_consent_granted setting row exists");
+        assert_eq!(consent, "0");
+    }
+
+    #[test]
+    fn migration_0005_inserts_columns_when_upgrading() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        // Build the v4 schema shape (accounts WITHOUT the new columns).
+        conn.execute_batch(
+            "CREATE TABLE accounts ( \
+               id TEXT PRIMARY KEY, \
+               email TEXT NOT NULL, \
+               display_name TEXT, \
+               last_seen_at INTEGER NOT NULL \
+             ); \
+             CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL); \
+             INSERT INTO settings (key, value) VALUES ('migration_completed', '1');",
+        )
+        .unwrap();
+
+        // Apply only 0005 directly.
+        conn.execute_batch(include_str!("migrations/0005_warmup.sql")).unwrap();
+
+        // Now insert an account and verify defaults.
+        conn.execute(
+            "INSERT INTO accounts (id, email, last_seen_at) VALUES ('a', 'x@y.z', 0)",
+            [],
+        )
+        .unwrap();
+        let warmup: i64 = conn
+            .query_row("SELECT warmup_enabled FROM accounts WHERE id='a'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(warmup, 0);
+        let consent: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key='warmup_consent_granted'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(consent, "0");
     }
 }
