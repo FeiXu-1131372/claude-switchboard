@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## v1.0.0 — 2026-05-07
+
+**Renamed: Claude Limits is now Claude Switchboard.** First release on the
+new repository at https://github.com/FeiXu-1131372/claude-switchboard.
+
+### Migration
+- v0.3.x users: install Switchboard from the new releases page. On first
+  launch, your data (usage history, account credentials, settings) migrates
+  automatically. The old install is preserved as a fallback.
+- The old `claude-limits` repository ships one final v0.4.0 release with an
+  in-app banner pointing here.
+
+### Functional changes
+- None. v1.0.0 is a pure rebrand; warm-up & scheduling features arrive in
+  v1.1.0.
+
 ## [0.3.0] — 2026-05-07
 
 The multi-account release. Manage every Claude account you sign in to from the same popover, see them all stacked, and switch which one Claude Code uses with a single click — running CC sessions adopt the new account within ~30 seconds, no restart.

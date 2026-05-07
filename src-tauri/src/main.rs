@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-  claude_limits_lib::run();
+  claude_switchboard_lib::run();
 }

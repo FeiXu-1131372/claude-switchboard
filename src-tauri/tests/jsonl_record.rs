@@ -1,4 +1,4 @@
-use claude_limits_lib::jsonl_parser::record::parse_event_line;
+use claude_switchboard_lib::jsonl_parser::record::parse_event_line;
 
 #[test]
 fn current_schema_parses_every_line() {

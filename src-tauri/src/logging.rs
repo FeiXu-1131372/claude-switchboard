@@ -16,7 +16,7 @@ pub fn init(log_dir: PathBuf) -> tracing_appender::non_blocking::WorkerGuard {
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
     let file_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,claude_limits_lib=debug"));
+        .unwrap_or_else(|_| EnvFilter::new("info,claude_switchboard_lib=debug"));
     // Only forward warnings and above to stderr — avoids every line being
     // written twice (file + stderr) in the common case.
     let stderr_filter = EnvFilter::new("warn");

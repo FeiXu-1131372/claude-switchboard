@@ -3,7 +3,7 @@
 //! 2-min refresh window. CC owns active-slot refresh; doubling up causes
 //! invalid_grant due to single-use rotating refresh tokens.
 
-use claude_limits_lib as lib;
+use claude_switchboard_lib as lib;
 
 #[tokio::test]
 async fn active_slot_path_never_calls_token_endpoint() {

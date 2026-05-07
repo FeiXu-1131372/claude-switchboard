@@ -1,6 +1,6 @@
 [package]
-name = "claude-limits"
-version = "0.2.0"
+name = "claude-switchboard"
+version = "1.0.0"
 description = "Track your Claude rate limits — 5h, weekly, Opus, Sonnet"
 authors = ["Claude Limits contributors"]
 license = "MIT"
@@ -8,7 +8,7 @@ edition = "2021"
 rust-version = "1.89"
 
 [lib]
-name = "claude_limits_lib"
+name = "claude_switchboard_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
