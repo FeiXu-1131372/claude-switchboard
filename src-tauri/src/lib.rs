@@ -8,6 +8,7 @@ pub mod migration;
 pub mod notifier;
 mod poll_loop;
 mod process_detection;
+pub mod scheduler;
 pub mod store;
 mod tray;
 mod tray_icon;
