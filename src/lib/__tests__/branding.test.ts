@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import * as branding from "./branding";
+import * as branding from "../branding";
 
 describe("branding (frontend mirror of Rust branding.rs)", () => {
   it("exports the new product name and identifiers", () => {
