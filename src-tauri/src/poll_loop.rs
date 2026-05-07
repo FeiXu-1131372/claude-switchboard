@@ -379,7 +379,7 @@ async fn poll_all(
 
 fn clamp_backoff(d: Duration) -> Duration {
     let min = Duration::from_secs(60);
-    let max = Duration::from_secs(30 * 60);
+    let max = Duration::from_secs(10 * 60);
     d.clamp(min, max)
 }
 
