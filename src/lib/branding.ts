@@ -8,5 +8,3 @@
 export const PRODUCT_NAME = "Claude Switchboard";
 export const TAURI_BUNDLE_ID = "com.claude-switchboard.app";
 export const GITHUB_REPO_PATH = "FeiXu-1131372/claude-switchboard";
-
-export const LEGACY_PRODUCT_NAME = "Claude Limits";

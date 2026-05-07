@@ -29,29 +29,17 @@ pub fn run() {
 
     let data_dir = store::default_dir();
 
-    // Phase 1: file-level migration (before Db::open so the SQLite file can
-    // be copied before the new dir gets a fresh empty data.db).
-    let files_copied = match crate::migration::run_phase1_file_copy(&data_dir) {
-        Ok(n) => {
-            tracing::info!("migration phase 1: {n} file(s) copied");
-            n
-        }
-        Err(e) => {
-            tracing::error!("migration phase 1 failed: {e:#}");
-            0
-        }
-    };
-
     let db_result = store::Db::open(&data_dir).unwrap_or_else(|e| {
         tracing::error!("fatal: cannot open or recover the database: {e}");
         std::process::exit(1);
     });
 
-    // Phase 2: DB-aware cleanup (after Db::open; needs a live connection).
+    // Mark startup migration complete (no-op idempotent set; reserved for
+    // future migrations).
     {
         let conn = db_result.conn();
-        if let Err(e) = crate::migration::run_phase2(&conn, files_copied) {
-            tracing::error!("migration phase 2 failed: {e:#}");
+        if let Err(e) = crate::migration::mark_complete(&conn) {
+            tracing::warn!("failed to set migration_completed flag: {e:#}");
         }
     }
     let db_recovered = db_result.recovered;

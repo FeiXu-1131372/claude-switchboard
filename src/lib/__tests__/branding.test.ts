@@ -9,8 +9,4 @@ describe("branding (frontend mirror of Rust branding.rs)", () => {
       "FeiXu-1131372/claude-switchboard",
     );
   });
-
-  it("exports the legacy product name (used in migration UI copy)", () => {
-    expect(branding.LEGACY_PRODUCT_NAME).toBe("Claude Limits");
-  });
 });
