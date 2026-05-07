@@ -25,7 +25,7 @@ impl Db {
     pub fn open(dir: &Path) -> Result<Self> {
         std::fs::create_dir_all(dir).context("create db dir")?;
 
-        let lock_path = dir.join("claude-monitor.lock");
+        let lock_path = dir.join(crate::branding::DB_LOCKFILE_NAME);
         let lock_file = File::create(&lock_path).context("create lockfile")?;
         lock_file
             .try_lock_exclusive()
@@ -133,9 +133,16 @@ pub mod queries;
 pub use queries::*;
 
 pub fn default_dir() -> PathBuf {
-    directories::ProjectDirs::from("com", "claude-limits", "ClaudeLimits")
-        .map(|p| p.data_local_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from(".claude-monitor"))
+    use crate::branding::{
+        PROJECT_DIRS_APP, PROJECT_DIRS_ORG, PROJECT_DIRS_QUALIFIER,
+    };
+    directories::ProjectDirs::from(
+        PROJECT_DIRS_QUALIFIER,
+        PROJECT_DIRS_ORG,
+        PROJECT_DIRS_APP,
+    )
+    .map(|p| p.data_local_dir().to_path_buf())
+    .unwrap_or_else(|| PathBuf::from(".claude-monitor"))
 }
 
 #[cfg(test)]
@@ -214,5 +221,29 @@ mod tests {
 
         // The fresh DB file must exist at the original path.
         assert!(db_path.exists(), "fresh data.db must exist after recovery");
+    }
+
+    #[test]
+    fn default_dir_uses_branding_constants() {
+        let path = default_dir();
+        let path_str = path.to_string_lossy();
+        // The macOS path is ~/Library/Application Support/com.claude-switchboard.ClaudeSwitchboard
+        // Linux/Windows produce platform-specific paths but always include the org+app strings.
+        assert!(
+            path_str.contains("claude-switchboard")
+                || path_str.contains("ClaudeSwitchboard"),
+            "default_dir should reference branding constants, got: {path_str}",
+        );
+        assert!(
+            !path_str.contains("claude-limits"),
+            "default_dir should NOT reference legacy claude-limits, got: {path_str}",
+        );
+    }
+
+    #[test]
+    fn lockfile_name_comes_from_branding() {
+        // The lockfile is created in Db::open(); we verify the constant routes
+        // through correctly by spot-checking the branding module value.
+        assert_eq!(crate::branding::DB_LOCKFILE_NAME, "claude-switchboard.lock");
     }
 }
