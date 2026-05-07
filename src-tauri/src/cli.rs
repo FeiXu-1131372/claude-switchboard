@@ -31,15 +31,35 @@ where
     CliMode::Gui
 }
 
-/// Run `--tick`. Headless: open DB without file lock, log a placeholder, exit.
-/// Full per-account dispatcher walk is wired in Plan B Task 15 once
-/// AccountManager is reachable from the headless context.
+/// Run `--tick`. Headless: open DB, attempt the per-account warm-up walk.
+///
+/// ## Trade-off: headless AppState reconstruction
+///
+/// The full `scheduler_glue::walk_due_accounts` path requires an `Arc<AppState>`,
+/// which holds an `AccountManager`, `AuthOrchestrator`, `Arc<reqwest::Client>`,
+/// and a per-slot snapshot cache (`cached_usage_by_slot`).
+///
+/// The snapshot cache starts empty for a headless tick — there is no running
+/// poll loop to populate it. This means `five_hour.resets_at` will always be
+/// `None` for a headless invocation, which is acceptable: the warm-up module
+/// treats `None` as "window inactive", so it will issue the warm-up call
+/// (correct behaviour for a launchd-driven pre-window fire).
+///
+/// Reconstructing the remaining AppState fields (AccountManager, Auth, HTTP
+/// client) is straightforward but requires wiring them into this entry point
+/// independently of `lib.rs::run()`, which builds them inside the Tauri
+/// Builder setup closure. That refactor is deferred to a future task.
+///
+/// **For now** the in-app 30-second dispatcher (spawned in `lib.rs`) handles
+/// all warm-up firing while the GUI is open. The launchd `--tick` path is a
+/// documented no-op until the headless AppState reconstruction task lands.
 pub async fn run_tick(data_dir: &Path) -> Result<()> {
     use crate::store::Db;
 
     let _db = Db::open_for_tick(data_dir)?;
     tracing::info!(
-        "[--tick] dispatcher placeholder — full account walk wired in T15"
+        "[--tick] headless AppState reconstruction not yet wired; \
+         in-app dispatcher (lib.rs) handles warm-up while GUI is open"
     );
     Ok(())
 }

@@ -11,6 +11,7 @@ mod poll_loop;
 mod process_detection;
 pub mod os_scheduler;
 pub mod scheduler;
+pub mod scheduler_glue;
 pub mod store;
 mod tray;
 mod tray_icon;
@@ -80,7 +81,7 @@ pub fn run() {
         })
         .unwrap_or_default();
 
-    let auth = Arc::new(auth::AuthOrchestrator::new(data_dir.clone(), http_client));
+    let auth = Arc::new(auth::AuthOrchestrator::new(data_dir.clone(), http_client.clone()));
 
     let accounts = Arc::new(crate::auth::accounts::AccountManager::new(data_dir.clone()));
 
@@ -88,6 +89,7 @@ pub fn run() {
         db: db.clone(),
         auth,
         usage: usage_client,
+        http_client: http_client.clone(),
         pricing: pricing.clone(),
         settings: parking_lot::RwLock::new(persisted_settings),
         cached_usage: parking_lot::RwLock::new(None),
@@ -98,6 +100,7 @@ pub fn run() {
         backoff_by_slot: parking_lot::RwLock::new(std::collections::HashMap::new()),
         schedule_by_slot: parking_lot::RwLock::new(std::collections::HashMap::new()),
         keychain_guardian: parking_lot::Mutex::new(None),
+        warmup: app_state::WarmupState::default(),
     });
 
     // tauri-specta's Builder::commands replaces previously registered commands rather
@@ -365,6 +368,29 @@ pub fn run() {
 
             poll_loop::spawn(handle.clone(), state.clone());
             crate::updater::run_scheduler(handle.clone());
+
+            // In-app warm-up dispatcher: wakes every 30 seconds, walks
+            // accounts with warmup_enabled = 1, calls tick_for_account per
+            // account. Mirrors the poll_loop::spawn pattern above.
+            {
+                let warmup_state = state.clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut interval = tokio::time::interval(
+                        std::time::Duration::from_secs(30),
+                    );
+                    interval.set_missed_tick_behavior(
+                        tokio::time::MissedTickBehavior::Delay,
+                    );
+                    loop {
+                        interval.tick().await;
+                        if let Err(e) =
+                            scheduler_glue::walk_due_accounts(&warmup_state).await
+                        {
+                            tracing::warn!("warmup dispatcher iter failed: {e:#}");
+                        }
+                    }
+                });
+            }
 
             if let Some(root) = jsonl_parser::walker::claude_projects_root() {
                 let bf_root = root.clone();

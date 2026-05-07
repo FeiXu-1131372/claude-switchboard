@@ -12,6 +12,21 @@ use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
 use tokio::sync::Notify;
 
+/// Marker struct for the in-app warm-up scheduler. The tokio JoinHandle is
+/// held by lib.rs at task spawn time and does not need to be reachable from
+/// Tauri commands. Kept as a named struct so future tasks (T22+) can add
+/// UI-visible state here (e.g. `last_outcome_by_account`) without churning
+/// AppState's field layout.
+pub struct WarmupState {
+    // Reserved for future per-account status badges (Plan B T22+).
+}
+
+impl Default for WarmupState {
+    fn default() -> Self {
+        Self {}
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(default)]
 pub struct Settings {
@@ -77,6 +92,10 @@ pub struct AppState {
     pub db: Arc<Db>,
     pub auth: Arc<AuthOrchestrator>,
     pub usage: Arc<UsageClient>,
+    /// Shared HTTP client — used by the usage API, token exchange, and the
+    /// warm-up dispatcher. Stored here so `scheduler_glue` can reach it
+    /// without going through UsageClient's private `inner` field.
+    pub http_client: Arc<reqwest::Client>,
     pub pricing: Arc<PricingTable>,
     pub settings: RwLock<Settings>,
     pub cached_usage: RwLock<Option<CachedUsage>>,
@@ -87,6 +106,7 @@ pub struct AppState {
     pub backoff_by_slot: RwLock<HashMap<u32, BackoffState>>,
     pub schedule_by_slot: RwLock<HashMap<u32, ScheduleState>>,
     pub keychain_guardian: Mutex<Option<KeychainGuardian>>,
+    pub warmup: WarmupState,
 }
 
 #[derive(Debug, Clone, Copy)]
