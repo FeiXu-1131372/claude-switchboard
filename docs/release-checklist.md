@@ -28,6 +28,7 @@ Before tagging a release, complete every item on both macOS and Windows.
 - [ ] Add C via paste-back OAuth (without changing upstream's login)
 - [ ] All three show usage in the Accounts sub-screen with correct numbers
 - [ ] Click row B → swap → verify CC primary store + `~/.claude.json` reflect B
+- [ ] **Keychain blob is valid JSON, not a sentinel.** After the swap above, run `security find-generic-password -s "Claude Code-credentials" -w | python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["claudeAiOauth"]["accessToken"][:12])'` — must print the first 12 chars of B's access token. If it errors with a parse failure or prints `-`, the keychain write is silently storing garbage (regression of the `-w "-"` bug — `security` has no stdin-mode for `-w`)
 - [ ] Hot reload — leave a `claude` CLI session running as A in another terminal; swap to B in tray; within ~30s, send a CC turn and verify it succeeds against B (check `~/.claude/logs` or run `/account` in CC)
 - [ ] Hot reload under in-flight refresh — force the running CC to refresh (e.g., wait until access expiry near or use `--debug` log to confirm refresh-in-flight) and trigger swap mid-refresh; verify final keychain state is B (`security find-generic-password -s "Claude Code-credentials" -w | jq -r .claudeAiOauth.refreshToken | head -c 12`); guardian re-applies within 60s
 - [ ] Repeat with VS Code extension running — toast shows running-process hint, restart extension and confirm B
