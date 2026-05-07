@@ -8,7 +8,11 @@ pub fn init(log_dir: PathBuf) -> tracing_appender::non_blocking::WorkerGuard {
         tracing::warn!("could not restrict log directory permissions: {e}");
     }
 
-    let file_appender = RollingFileAppender::new(Rotation::DAILY, &log_dir, "claude-limits.log");
+    let file_appender = RollingFileAppender::new(
+        Rotation::DAILY,
+        &log_dir,
+        &format!("{}.log", crate::branding::USER_AGENT_PREFIX),
+    );
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
     let file_filter = EnvFilter::try_from_default_env()
@@ -27,9 +31,13 @@ pub fn init(log_dir: PathBuf) -> tracing_appender::non_blocking::WorkerGuard {
 }
 
 pub fn log_dir() -> PathBuf {
-    directories::ProjectDirs::from("com", "claude-limits", "ClaudeLimits")
-        .map(|p| p.data_local_dir().join("logs"))
-        .unwrap_or_else(|| PathBuf::from(".claude-monitor/logs"))
+    directories::ProjectDirs::from(
+        crate::branding::PROJECT_DIRS_QUALIFIER,
+        crate::branding::PROJECT_DIRS_ORG,
+        crate::branding::PROJECT_DIRS_APP,
+    )
+    .map(|p| p.data_local_dir().join("logs"))
+    .unwrap_or_else(|| PathBuf::from(".claude-monitor/logs"))
 }
 
 #[cfg(unix)]
