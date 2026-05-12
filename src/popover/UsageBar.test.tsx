@@ -13,31 +13,30 @@ function makeUtil(utilization: number): Utilization {
 }
 
 describe('UsageBar', () => {
-  it('shows safe gradient when utilization is below warn threshold', () => {
+  it('shows accent fill when utilization is below warn threshold', () => {
     const { container } = render(
       <UsageBar label="5h" data={makeUtil(50)} warnAt={75} dangerAt={90} />,
     );
-    const fill = container.querySelector('.bg-gradient-to-r');
-    expect(fill?.className).toContain('from-[var(--color-safe)]');
-    expect(fill?.className).toContain('to-[var(--color-accent)]');
+    // The filled bar is the inner div carrying the bg-[var(--color-...)] class.
+    // It sits inside the track (which has `overflow-hidden`).
+    const fill = container.querySelector('[style*="width"]');
+    expect(fill?.className).toContain('bg-[var(--color-accent)]');
   });
 
-  it('shows warn gradient when utilization is at warn threshold', () => {
+  it('shows warn fill at warn threshold', () => {
     const { container } = render(
       <UsageBar label="5h" data={makeUtil(75)} warnAt={75} dangerAt={90} />,
     );
-    const fill = container.querySelector('.bg-gradient-to-r');
-    expect(fill?.className).toContain('from-[var(--color-accent)]');
-    expect(fill?.className).toContain('to-[var(--color-warn)]');
+    const fill = container.querySelector('[style*="width"]');
+    expect(fill?.className).toContain('bg-[var(--color-warn)]');
   });
 
-  it('shows danger gradient when utilization is above danger threshold', () => {
+  it('shows danger fill above danger threshold', () => {
     const { container } = render(
       <UsageBar label="5h" data={makeUtil(95)} warnAt={75} dangerAt={90} />,
     );
-    const fill = container.querySelector('.bg-gradient-to-r');
-    expect(fill?.className).toContain('from-[var(--color-warn)]');
-    expect(fill?.className).toContain('to-[var(--color-danger)]');
+    const fill = container.querySelector('[style*="width"]');
+    expect(fill?.className).toContain('bg-[var(--color-danger)]');
   });
 
   it('renders without crashing when data is null', () => {

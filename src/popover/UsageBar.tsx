@@ -28,10 +28,10 @@ function getLevel(v: number, warn: number, danger: number): ThresholdLevel {
   return 'safe';
 }
 
-const gradientMap: Record<ThresholdLevel, string> = {
-  safe: 'from-[var(--color-safe)] to-[var(--color-accent)]',
-  warn: 'from-[var(--color-accent)] to-[var(--color-warn)]',
-  danger: 'from-[var(--color-warn)] to-[var(--color-danger)]',
+const fillMap: Record<ThresholdLevel, string> = {
+  safe: 'bg-[var(--color-accent)]',
+  warn: 'bg-[var(--color-warn)]',
+  danger: 'bg-[var(--color-danger)]',
 };
 
 const textColorMap: Record<ThresholdLevel, string> = {
@@ -113,9 +113,11 @@ export const UsageBar = forwardRef<HTMLDivElement, UsageBarProps>(
         >
           <div
             className={[
-              'h-full rounded-[var(--radius-pill)] bg-gradient-to-r',
-              gradientMap[level],
-              'transition-[width] duration-[var(--duration-bar)] ease-[var(--ease-spring)]',
+              'h-full rounded-[var(--radius-pill)]',
+              fillMap[level],
+              'transition-[width,background-color]',
+              'duration-[var(--duration-bar)] ease-[var(--ease-spring)]',
+              '[transition-duration:var(--duration-bar),var(--duration-fast)]',
             ].join(' ')}
             style={{ width: `${clamped}%` }}
           />

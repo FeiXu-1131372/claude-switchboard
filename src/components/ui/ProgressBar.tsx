@@ -27,14 +27,14 @@ function getLevel(value: number, warn: number, danger: number): ThresholdLevel {
   return 'safe';
 }
 
-const gradientMap: Record<ThresholdLevel, string> = {
-  safe: 'bg-gradient-to-r from-[var(--color-safe)] to-[var(--color-accent)]',
-  warn: 'bg-gradient-to-r from-[var(--color-accent)] to-[var(--color-warn)]',
-  danger: 'bg-gradient-to-r from-[var(--color-warn)] to-[var(--color-danger)]',
+const fillMap: Record<ThresholdLevel, string> = {
+  safe: 'bg-[var(--color-accent)]',
+  warn: 'bg-[var(--color-warn)]',
+  danger: 'bg-[var(--color-danger)]',
 };
 
 const colorMap: Record<ThresholdLevel, string> = {
-  safe: 'text-[color:var(--color-safe)]',
+  safe: 'text-[color:var(--color-text)]',
   warn: 'text-[color:var(--color-warn)]',
   danger: 'text-[color:var(--color-danger)]',
 };
@@ -78,8 +78,10 @@ export const ProgressBar = forwardRef<HTMLDivElement, ProgressBarProps>(
           <div
             className={[
               'h-full rounded-[var(--radius-pill)]',
-              gradientMap[level],
-              'transition-[width] duration-[var(--duration-bar)] ease-[var(--ease-spring)]',
+              fillMap[level],
+              'transition-[width,background-color]',
+              'duration-[var(--duration-bar)] ease-[var(--ease-spring)]',
+              '[transition-duration:var(--duration-bar),var(--duration-fast)]',
             ].join(' ')}
             style={{ width: `${clamped}%` }}
           />
