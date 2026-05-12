@@ -73,7 +73,7 @@ Tailwind generates utilities like `bg-bg-base` once, against the cream values. A
 | `--color-bg-surface-hover` | `oklch(92% 0.010 80)` | `oklch(32% 0.018 65)` | Surface hover |
 | `--color-bg-card` | `oklch(98% 0.004 85)` | `oklch(34% 0.022 65)` | Card backgrounds |
 | `--color-bg-card-hover` | `oklch(99.5% 0.004 85)` | `oklch(38% 0.024 65)` | Card hover |
-| `--color-bg-elevated` | `oklch(100% 0 0)` | `oklch(42% 0.026 65)` | Elevated surfaces (popovers within popover) |
+| `--color-bg-elevated` | `oklch(99% 0.003 85)` | `oklch(42% 0.026 65)` | Elevated surfaces (modal cards, popovers within popover) |
 | `--color-rule` | `oklch(40% 0.015 65 / 0.06)` | `oklch(95% 0.020 65 / 0.06)` | Hairline rules |
 | `--color-rule-strong` | `oklch(40% 0.015 65 / 0.14)` | `oklch(95% 0.020 65 / 0.14)` | Stronger hairlines |
 | `--color-border` | `oklch(40% 0.015 65 / 0.12)` | `oklch(95% 0.020 65 / 0.20)` | Card outlines |
@@ -146,26 +146,64 @@ Track color is `--color-track`. Bar height stays the same. Two distinct animatio
 
 ### 6.2 Badge component
 
-Variants `safe` and `accent` collapse to the same visual treatment (terracotta surface). `live` keeps its pulse-dot but the dot color is now `--color-accent` instead of green. `opus` / `sonnet` / `haiku` adopt the chip palette from §5.3.
+Variants `safe` and `accent` collapse to the same visual treatment (terracotta surface). `safe` is retained as a name-only alias for one release alongside `--color-safe`, then removed; new callers should use `accent`. `live` keeps its pulse-dot but the dot color is now `--color-accent` instead of green. `opus` / `sonnet` / `haiku` adopt the chip palette from §5.3.
 
 ### 6.3 Popover background
 
 `globals.css` currently applies two radial-warm-wash gradients to `body[data-view-mode="compact"] #root` as a "light source" effect. Drop both on cream — flat `--color-bg-base`. Keep a subtler version on dark (one radial wash, top-left corner only, accent-tinted at 0.04 alpha).
 
-### 6.4 Selection, focus, scrollbar
+### 6.4 Selection, focus, scrollbar, native widget palette
 
-All resolve through tokens — no per-component theme branching needed:
+All four resolve through tokens — no per-component theme branching needed:
 - `::selection` → `background: var(--color-accent-dim); color: var(--color-accent);`
 - `:focus-visible` outline → `var(--color-border-focus)`
 - `::-webkit-scrollbar-thumb` → `var(--color-border)`
+- `color-scheme` is set theme-aware: `:root { color-scheme: light; }` (default for cream) and `body[data-theme="dark"] { color-scheme: dark; }`. This is more precise than `light dark` — it tells the browser which native widget palette to commit to, rather than leaving it to heuristics. Form controls (date pickers, native checkboxes) follow.
 
-### 6.5 Charts (expanded report — Recharts)
+### 6.5 Charts (expanded report)
 
-Recharts colors are passed as props from a theme-aware palette helper. New module `src/lib/chart-palette.ts` exports a `useChartPalette()` hook that subscribes to `resolvedTheme` from the Zustand store (not the DOM, so React re-renders correctly) and returns the resolved palette. Bar/line/area fills use `--color-accent`, `--color-warn`, `--color-danger`, plus the model chip values for stacked-by-model breakdowns. Grid lines and axes use `--color-rule`/`--color-text-muted`. Recharts requires concrete color strings (not CSS variables) on most props, so the hook returns resolved OKLCH strings — duplicated from the token definitions, with a comment in both places to keep them in sync.
+`package.json` declares `recharts` as a dependency, but **no source file imports it.** All charts in `src/report/*` are hand-rolled SVG: `ModelsTab` is a stroke-dasharray donut + Tailwind flat-fill bars; `TrendsTab` is a flexbox of `bg-gradient-to-t` div bars; `ProjectsTab` uses Tailwind backgrounds on divs; `CacheTab` is an SVG ring + flat-fill divs; `HeatmapTab` is an SVG grid of `<rect fill={…}>` elements.
+
+CSS custom properties resolve correctly through SVG `fill` and `stroke` (HeatmapTab today writes `fill="var(--color-track)"` and it works). This means **no theme-aware palette helper or hook is needed** — every chart can use `var(--color-*)` directly, and a `data-theme` flip on `<body>` automatically repaints every SVG and every Tailwind utility.
+
+The work in each chart consumer is therefore just a **token-rename pass**: replace references to the deprecated `--color-safe` and the now-unused 3-stop gradient classes with the new restrained tokens, and switch model-row colors from semantic status tokens to the dedicated `--color-model-*` tokens.
+
+Specific changes per consumer:
+
+| File | Current color references | Change |
+|---|---|---|
+| `ModelsTab.tsx` | Donut + bar use `opus→accent, sonnet→warn, haiku→safe` | Switch to `opus→model-opus, sonnet→model-sonnet, haiku→model-haiku` |
+| `TrendsTab.tsx` | 3 gradient classes (`from-safe to-accent`, `from-accent to-warn`, `from-warn to-danger`) | Flat fills: `bg-accent` (low), `bg-warn` (warn), `bg-danger` (danger) — matches `ProgressBar` refactor in §6.1 |
+| `ProjectsTab.tsx` | Single `bg-accent` fill | No change (already restrained) |
+| `CacheTab.tsx` | `--color-safe` for savings text + `--color-warn` for the miss arc | `--color-safe` resolves through the alias; can stay until alias removal. The hit/miss split stays accent vs warn — both still read sensibly in restrained palette |
+
+No new files, no new hooks, no OKLCH helpers, no token-duplication maintenance burden.
 
 ### 6.6 Heatmap
 
-The 6-month usage calendar uses a 5-step ramp from `--color-bg-card` (empty) to `--color-accent` (peak). The 5 stops are computed in JS at theme-change time (CSS doesn't interpolate between custom properties), using a small OKLCH-interpolation helper in `chart-palette.ts`. Returned as an array consumed by `HeatmapTab`. Same component, theme-aware ramp.
+The 6-month usage calendar currently uses 5 status-spectrum tokens for its discrete level buckets:
+
+```
+level 0: --color-track    (empty)
+level 1: --color-safe     (low)
+level 2: --color-accent   (mid)
+level 3: --color-warn     (high)
+level 4: --color-danger   (peak)
+```
+
+The redesign keeps the **threshold-bucket model** (so a heavy-usage day still "goes red") but removes green to match the restrained palette:
+
+```
+level 0: --color-track          (empty)
+level 1: --color-accent-muted   (low — terracotta at low chroma/alpha)
+level 2: --color-accent         (mid — full terracotta)
+level 3: --color-warn           (high)
+level 4: --color-danger         (peak)
+```
+
+This preserves the calendar's role as a severity signal — densest days remain visually alarming — while aligning with the spec's "color only when it matters" stance. The old approach used green for low-usage days, which was decorative rather than informational; the new approach encodes increasing concern as the cell darkens through terracotta into warn and danger.
+
+The change is a single map rewrite in `HeatmapTab.tsx`. No JS-side ramp computation, no OKLCH interpolation — five token names in a `Record<number, string>`.
 
 ## 7. Theme switching mechanism
 
@@ -196,13 +234,15 @@ Three radio buttons. Selection writes through to the store immediately — no sa
 
 ### 7.4 First-paint
 
-To avoid a flash of cream when the user has `'dark'` saved, the theme attribute is written in a tiny inline `<script>` in `index.html` that reads from localStorage. The script runs before React mounts.
+To avoid a flash of cream when the user has `'dark'` saved, the theme attribute is written in a tiny inline `<script>` in `index.html` that reads from `localStorage` and applies `data-theme` before React mounts.
+
+**Persistence:** `localStorage` only. In the Tauri webview, `localStorage` is persisted under the app's data directory and survives restart, so dual-write to `@tauri-apps/plugin-store` would add complexity (two stores, drift handling) without observable benefit for a single-string preference. If a future requirement needs cross-window or cross-process theme sync, the plugin-store mirror can be layered on then.
 
 **Source-of-truth ordering:**
-1. The Tauri store on disk is the persistent source of truth.
-2. On every `setThemePreference` action, the store writes through to both Tauri (via `@tauri-apps/plugin-store`) and `localStorage.setItem('theme-preference', value)`.
-3. On launch, the inline script reads `localStorage` synchronously (the only sync API available before React mounts), and if the value is `'auto'` it checks `prefers-color-scheme` and applies the resolved theme. If localStorage is empty (first run), it applies `'cream'`.
-4. After mount, the Zustand store hydrates from Tauri (authoritative) and reconciles localStorage if drift is detected.
+1. `localStorage['theme-preference']` is the persistent source of truth (`'cream'` | `'dark'` | `'auto'`).
+2. `setThemePreference()` writes `localStorage` synchronously, then updates the Zustand store.
+3. On launch, the inline `<script>` in `index.html` reads `localStorage` and applies the resolved theme before React mounts. If `localStorage` is empty (first run), it applies `'cream'`.
+4. After mount, the Zustand store reads the same `localStorage` key during initialisation. No reconciliation pass needed — both readers see the same value.
 
 ## 8. File-by-file impact
 
@@ -210,17 +250,21 @@ To avoid a flash of cream when the user has `'dark'` saved, the theme attribute 
 |---|---|
 | `src/styles/tokens.css` | Reorganized: cream values in `@theme`, dark values in `body[data-theme="dark"]` override. Token list per §5.2. |
 | `src/styles/globals.css` | `.glass` mixin scoped to dark; radial-wash gradients dropped on cream; popover root background theme-aware. |
-| `src/lib/store.ts` (Zustand) | Add `themePreference`, `resolvedTheme` selector, `setThemePreference` action. Persist via Tauri store. |
-| `src/lib/chart-palette.ts` | New — `useChartPalette()` hook returning theme-aware Recharts colors. |
-| `src/App.tsx` | Effect writing `resolvedTheme` to `document.body.dataset.theme`; `matchMedia` listener for auto mode; hydrate `themePreference` from Tauri store at mount. |
-| `src/main.tsx` | No changes (verify hydration order matches §7.4). |
-| `index.html` | Inline pre-mount script to set `data-theme` from localStorage. |
-| `src/settings/SettingsPanel.tsx` | New Appearance section with three radio options. |
-| `src/components/ui/ProgressBar.tsx` | Replace gradient fill with token-swap fill (§6.1). |
+| `src/lib/theme.ts` | **New** — `useThemeStore` Zustand slice (`themePreference`, `setThemePreference`) + `resolveTheme(pref, prefersDark)` pure helper. Persists via `localStorage`. |
+| `src/App.tsx` | Effect writing the resolved theme to `document.body.dataset.theme`; `matchMedia` listener for auto mode. |
+| `index.html` | Inline pre-mount script that reads `localStorage['theme-preference']` and writes `data-theme` synchronously. |
+| `src/settings/SettingsPanel.tsx` | New Appearance section with three radio options (Cream / Dark / Auto). |
+| `src/components/ui/ProgressBar.tsx` | Replace 3-stop gradient with flat fill that swaps token at thresholds (§6.1). |
+| `src/popover/UsageBar.test.tsx` | Hard-coded `bg-gradient-to-r` + `from-…/to-…` class assertions must be rewritten for the flat-fill output. |
 | `src/components/ui/Badge.tsx` | `safe`/`accent` collapse; model chip palette wired through (§5.3, §6.2). |
 | `src/popover/UsageBar.tsx` | No code changes — inherits ProgressBar refactor. |
-| `src/report/HeatmapTab.tsx` | Switch ramp endpoints to `--color-bg-card` / `--color-accent`, interpolate via OKLCH. |
-| `src/report/*Tab.tsx` (Models, Trends, Projects, Cache) | Use `useChartPalette()` for Recharts color props. |
+| `src/report/HeatmapTab.tsx` | Rewrite 5-token `levelColors` map (§6.6). |
+| `src/report/ModelsTab.tsx` | Switch donut + bar colors from semantic status tokens to `--color-model-*` (§6.5). |
+| `src/report/TrendsTab.tsx` | Replace 3-stop gradient classes with flat-fill classes matching ProgressBar (§6.5). |
+| `src/report/ProjectsTab.tsx` | No change — already uses `--color-accent` only. |
+| `src/report/CacheTab.tsx` | No change — references resolve through tokens; `--color-safe` keeps working via the alias. |
+| `src/styles/tokens.css` | Reorganised per §5.1–5.3: cream values in `@theme`, dark in `body[data-theme="dark"]` override. |
+| `src/styles/globals.css` | `.glass` mixin scoped to dark; radial-wash gradients dropped on cream; popover root background theme-aware; `color-scheme` theme-aware (§6.4). |
 | `docs/design-system.md` | Replace single-theme color tables with dual-theme tables; document Appearance setting. |
 | `src-tauri/` (Rust) | No changes — theme is a frontend-only concern. The popover window's `transparent: true` flag stays; opaque-on-cream is achieved by `#root` background, not by the OS chrome. |
 
@@ -231,6 +275,8 @@ To avoid a flash of cream when the user has `'dark'` saved, the theme attribute 
 - **Threshold transitions:** dial usage from 70% → 76% → 91% and confirm bar fill swaps cleanly at 75 and 90 with a 200ms color interpolation.
 - **Auto-mode follow:** with theme set to Auto, toggle OS dark mode and confirm the popover updates without restart.
 - **First-paint flash:** set theme to Dark, restart the app, confirm no cream flash on launch (validates §7.4).
+- **Elevated card on cream:** open the warm-up consent modal (or any modal that renders on `--color-bg-elevated`). The elevated card should read as a paper card lifted off the cream backdrop, not as a glaring white overlay. If the contrast feels harsh, drop elevated further toward `oklch(98% 0.004 85)` so it sits closer to the base.
+- **Heatmap signal:** confirm that a peak-usage day in `HeatmapTab` still reads as visually alarming (level-4 cells should be deep coral, not soft terracotta). If they don't, the level→token map in §6.6 has been wired incorrectly.
 - **Accessibility contrast:** primary text on `--color-bg-base` must hit WCAG AA (≥4.5:1) in both themes. Cream values in §5.2 yield ~12:1; dark refined yields ~9:1. Document in design-system.md.
 
 ## 10. Risks & rollback

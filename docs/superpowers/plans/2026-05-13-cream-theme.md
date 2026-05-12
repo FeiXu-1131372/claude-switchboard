@@ -6,7 +6,7 @@
 
 **Architecture:** Token-driven. `tokens.css` declares cream values inside Tailwind v4's `@theme` block (so generated utilities resolve to cream by default) and overrides every token inside `body[data-theme="dark"]`. Theme preference lives in Zustand (frontend-only state) and writes the `data-theme` attribute on `<body>`. A small inline script in `index.html` applies the theme before React mounts to avoid a flash of unstyled content. Components stop hard-coding three-color gradients and instead select one of `--color-accent` / `--color-warn` / `--color-danger` based on threshold.
 
-**Tech Stack:** Tailwind CSS v4 (`@theme`), React 19, Zustand, Tauri v2 store plugin (for persistence), Recharts (chart consumers), vitest + React Testing Library (tests).
+**Tech Stack:** Tailwind CSS v4 (`@theme`), React 19, Zustand, browser `localStorage` (theme persistence), hand-rolled SVG charts (no Recharts despite the package being declared), vitest + React Testing Library (tests).
 
 **Spec:** `docs/superpowers/specs/2026-05-13-cream-theme-design.md`
 
@@ -16,22 +16,21 @@
 
 | File | Status | Responsibility |
 |---|---|---|
-| `src/lib/theme.ts` | **create** | `useThemePreference` Zustand slice + `resolvedTheme` selector + OS `matchMedia` listener attach helper |
-| `src/lib/chart-palette.ts` | **create** | `useChartPalette()` hook returning resolved OKLCH strings for Recharts; OKLCH-interpolation helper for the heatmap ramp |
-| `src/lib/__tests__/theme.test.ts` | **create** | Tests for `resolvedTheme` selector behaviour |
-| `src/lib/__tests__/chart-palette.test.ts` | **create** | Tests for the OKLCH-interpolation helper |
+| `src/lib/theme.ts` | **create** | `useThemeStore` Zustand slice + `resolveTheme(pref, prefersDark)` pure helper; persists via `localStorage` |
+| `src/lib/__tests__/theme.test.ts` | **create** | Tests for `resolveTheme` and the store default/setter |
 | `src/styles/tokens.css` | modify | Cream values in `@theme`; dark overrides in `body[data-theme="dark"]`; model-chip palette |
-| `src/styles/globals.css` | modify | `.glass` mixin scoped to dark; popover root background theme-aware; radial wash dropped on cream |
-| `src/App.tsx` | modify | Effect writing `resolvedTheme` to `document.body.dataset.theme`; matchMedia listener for auto mode |
+| `src/styles/globals.css` | modify | `.glass` mixin scoped to dark; popover root background theme-aware; radial wash dropped on cream; `color-scheme` theme-aware |
+| `src/App.tsx` | modify | Effect writing resolved theme to `document.body.dataset.theme`; `matchMedia` listener for auto mode |
 | `index.html` | modify | Inline pre-mount script reading `localStorage` → applies `data-theme` synchronously |
 | `src/settings/SettingsPanel.tsx` | modify | New Appearance section above General with three radio options |
 | `src/components/ui/ProgressBar.tsx` | modify | Replace 3-stop gradient with flat fill that swaps token at thresholds |
-| `src/components/ui/Badge.tsx` | modify | Collapse `safe`/`accent` visuals; rewire `live`/`opus`/`sonnet`/`haiku` to model-chip palette |
-| `src/report/HeatmapTab.tsx` | modify | Replace hard-coded ramp with 5-stop ramp computed by `chart-palette.ts` |
-| `src/report/ModelsTab.tsx` | modify | Use `useChartPalette()` for Recharts color props |
-| `src/report/TrendsTab.tsx` | modify | Use `useChartPalette()` for Recharts color props |
-| `src/report/ProjectsTab.tsx` | modify | Use `useChartPalette()` for Recharts color props |
-| `src/report/CacheTab.tsx` | modify | Use `useChartPalette()` for Recharts color props |
+| `src/popover/UsageBar.test.tsx` | modify | Rewrite three threshold-test assertions that target the removed gradient classes |
+| `src/components/ui/Badge.tsx` | modify | Collapse `safe`/`accent` visuals (with deprecation note); rewire `live`/`opus`/`sonnet`/`haiku` to model-chip palette |
+| `src/report/ModelsTab.tsx` | modify | Switch donut + bar colors from semantic status tokens to `--color-model-*` |
+| `src/report/TrendsTab.tsx` | modify | Replace 3-stop gradient classes with flat fills (accent / warn / danger) |
+| `src/report/HeatmapTab.tsx` | modify | Rewrite 5-token `levelColors` map: track / accent-muted / accent / warn / danger |
+| `src/report/ProjectsTab.tsx` | unchanged | Already uses only `--color-accent` |
+| `src/report/CacheTab.tsx` | unchanged | References resolve through tokens; `--color-safe` keeps working via the alias |
 | `docs/design-system.md` | modify | Replace single-theme color tables with dual-theme tables; document Appearance setting |
 
 The Rust side (`src-tauri/`) is untouched. The popover window's `transparent: true` flag stays — the cream surface comes from `#root`'s background, not the OS chrome.
@@ -40,7 +39,7 @@ The Rust side (`src-tauri/`) is untouched. The popover window's `transparent: tr
 
 ## Task Order Rationale
 
-State and runtime support land first (Tasks 1–3) so the rest of the work has somewhere to write to. Then tokens (4–5), then components that depend on tokens (6–8), then settings UI (9), then charts (10–12), then docs (13). This ordering keeps the app in a working state after every commit.
+State and runtime support land first (Tasks 1–3) so the rest of the work has somewhere to write to. Then tokens + glass (4–5), then components that depend on tokens (6–7), then settings UI (8), then chart consumers (9–10), then cross-platform smoke (11), then docs (12). This ordering keeps the app in a working state after every commit.
 
 ---
 
@@ -62,7 +61,7 @@ Per CLAUDE.md: **"Cross-platform parity is non-negotiable. Design once, render t
 
 ### Visual checks must happen on both OSes
 
-Every task with a "Visual check" step needs to be performed on both macOS and Windows before that task's commit, or — if the implementer only has one OS available — explicitly noted: "verified on \<OS\>; cross-OS pass pending." A dedicated cross-platform smoke task (Task 14) collects the final verification.
+Every task with a "Visual check" step needs to be performed on both macOS and Windows before that task's commit, or — if the implementer only has one OS available — explicitly noted: "verified on \<OS\>; cross-OS pass pending." A dedicated cross-platform smoke task (Task 11) collects the final verification.
 
 ### Specific cross-platform gotchas
 
@@ -218,7 +217,7 @@ Expected: no errors.
 Run: `pnpm dev`, open the app, open DevTools, evaluate `document.body.dataset.theme`.
 Expected: `"cream"` (the default).
 
-Then in DevTools console, evaluate `useThemeStore.getState().setThemePreference('dark')` (requires the store to be exposed for debugging — if it isn't already, skip this step; the inline test in Task 9 will cover the live toggle).
+Then in DevTools console, evaluate `useThemeStore.getState().setThemePreference('dark')` (requires the store to be exposed for debugging — if it isn't already, skip this step; Task 8's settings UI will cover the live toggle).
 
 - [ ] **Step 4: Commit**
 
@@ -297,7 +296,7 @@ Open `src/styles/tokens.css`. Replace lines 24–161 (the entire `@theme { ... }
   --color-bg-surface-hover: oklch(92% 0.010 80);
   --color-bg-card: oklch(98% 0.004 85);
   --color-bg-card-hover: oklch(99.5% 0.004 85);
-  --color-bg-elevated: oklch(100% 0 0);
+  --color-bg-elevated: oklch(99% 0.003 85);
 
   /* Borders — warm ink at low alpha on cream */
   --color-rule: oklch(40% 0.015 65 / 0.06);
@@ -490,9 +489,19 @@ body[data-theme="dark"] {
 }
 ```
 
-- [ ] **Step 3: Remove the now-outdated comment about light theme**
+- [ ] **Step 3: Make `color-scheme` theme-aware**
 
-In the `:root { color-scheme: dark; ... }` block (currently around line 165), change `color-scheme: dark;` to `color-scheme: light dark;` so the OS draws appropriate form-control widget defaults in both themes.
+In the `:root { color-scheme: dark; ... }` block (currently around line 165), change `color-scheme: dark;` to `color-scheme: light;` so native widgets default to the light palette (matches the new cream default).
+
+Then add — outside the `:root` block, anywhere in the file — an override for dark theme:
+
+```css
+body[data-theme="dark"] {
+  color-scheme: dark;
+}
+```
+
+This is more precise than `color-scheme: light dark`, which leaves widget palette selection to browser heuristics that vary by platform. Tying it directly to the resolved theme ensures macOS Aqua and Windows Fluent native controls render against the actually-applied surface.
 
 Also delete the trailing block comment about the previously-defined light variant (around lines 184–191 of the original file, starting `/* Note: a light-theme variant ...`). It's no longer accurate.
 
@@ -595,7 +604,7 @@ Run: `pnpm dev`. The popover should now render on cream. Toggle theme manually v
 
 **Windows 10:** No Mica, but the inner container still wears the surface. Same check as Win 11.
 
-If you only have one OS available right now: note this in the commit message as "macOS verified; Windows pending Task 14" (or vice versa).
+If you only have one OS available right now: note this in the commit message as "macOS verified; Windows pending Task 11" (or vice versa).
 
 - [ ] **Step 5: Commit**
 
@@ -610,9 +619,9 @@ git commit -m "feat(theme): scope glass + radial-wash to dark; flat cream surfac
 
 **Files:**
 - Modify: `src/components/ui/ProgressBar.tsx`
-- Modify: `src/popover/UsageBar.test.tsx` (existing test may need a snapshot reset)
+- Modify: `src/popover/UsageBar.test.tsx` — three assertions in this file query `.bg-gradient-to-r` and check for `from-[var(--color-X)] to-[var(--color-Y)]` class fragments. They will fail the moment the ProgressBar refactor lands; this task rewrites them at the same time.
 
-- [ ] **Step 1: Replace the gradient maps with token-name maps**
+- [ ] **Step 1: Replace the gradient maps with token-name maps in ProgressBar**
 
 Open `src/components/ui/ProgressBar.tsx`. Replace lines 30–40 (the `gradientMap` and `colorMap` constants) with:
 
@@ -630,9 +639,7 @@ const colorMap: Record<ThresholdLevel, string> = {
 };
 ```
 
-Then in the JSX, change the className that referenced `gradientMap[level]` (line 81) to `fillMap[level]`. Also append `transition-colors duration-[var(--duration-fast)]` to the same className list so the color swap at thresholds animates over 200ms (separate from the bar-length animation which keeps the 700ms spring on `transition-[width]`).
-
-The resulting filled-bar div className list:
+Then in the JSX, change the className that referenced `gradientMap[level]` (line 81) to `fillMap[level]`. The resulting filled-bar div className list:
 
 ```typescript
 className={[
@@ -647,19 +654,67 @@ className={[
 
 (The compound `transition-[width,background-color]` plus the bracketed compound `[transition-duration:...]` lets Tailwind emit a CSS rule that maps to two durations — bar length on the spring duration, color on `--duration-fast`. If Tailwind v4 doesn't honour that arbitrary-value form on this codebase's setup, fall back to inline `style={{ transition: 'width 700ms cubic-bezier(...), background-color 200ms ease' }}` — but try the utility first.)
 
-- [ ] **Step 2: Run the existing UsageBar test to make sure nothing structurally broke**
+- [ ] **Step 2: Run the existing UsageBar test to surface the expected failure**
 
 Run: `pnpm test src/popover/UsageBar.test.tsx`
-Expected: tests still pass. If a test snapshots class names it will need updating — re-read the failure and adjust.
+Expected: **3 failures.** The three threshold cases each look for `.bg-gradient-to-r` and matching `from-…/to-…` class fragments — none of which exist after Step 1.
 
-- [ ] **Step 3: Verify visually**
+This is intentional — confirming the test is the right test to update.
+
+- [ ] **Step 3: Rewrite the test assertions**
+
+Open `src/popover/UsageBar.test.tsx`. Replace the three threshold test cases (the `it('shows safe gradient...')`, `it('shows warn gradient...')`, `it('shows danger gradient...')` blocks at lines 16–41 of the current file) with:
+
+```typescript
+it('shows accent fill when utilization is below warn threshold', () => {
+  const { container } = render(
+    <UsageBar label="5h" data={makeUtil(50)} warnAt={75} dangerAt={90} />,
+  );
+  // The filled bar is the inner div carrying the bg-[var(--color-...)] class.
+  // It sits inside the track (which has `overflow-hidden`).
+  const fill = container.querySelector('[style*="width"]');
+  expect(fill?.className).toContain('bg-[var(--color-accent)]');
+});
+
+it('shows warn fill at warn threshold', () => {
+  const { container } = render(
+    <UsageBar label="5h" data={makeUtil(75)} warnAt={75} dangerAt={90} />,
+  );
+  const fill = container.querySelector('[style*="width"]');
+  expect(fill?.className).toContain('bg-[var(--color-warn)]');
+});
+
+it('shows danger fill above danger threshold', () => {
+  const { container } = render(
+    <UsageBar label="5h" data={makeUtil(95)} warnAt={75} dangerAt={90} />,
+  );
+  const fill = container.querySelector('[style*="width"]');
+  expect(fill?.className).toContain('bg-[var(--color-danger)]');
+});
+```
+
+The fourth test case (`renders without crashing when data is null`, around lines 43–48) does not reference gradient classes — leave it unchanged.
+
+The selector now uses `[style*="width"]` because the filled bar carries an inline `style={{ width: \`${clamped}%\` }}` and that's the most stable way to find it without depending on Tailwind's specific output.
+
+- [ ] **Step 4: Run the tests again to verify they pass**
+
+Run: `pnpm test src/popover/UsageBar.test.tsx`
+Expected: PASS — all four tests green.
+
+- [ ] **Step 5: Run the full test suite to catch any other class-name dependencies**
+
+Run: `pnpm test`
+Expected: all green. If anything else fails, it's likely another test grepping for `from-…`/`to-…` Tailwind classes that no longer exist. Update those assertions the same way.
+
+- [ ] **Step 6: Verify visually**
 
 Run: `pnpm dev`. The 5h / 7d bars should now render as flat-color fills (no gradient). At values <75 the bar is terracotta; if you can mock a higher value (or wait for one), confirm the color swaps at 75 and 90.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/components/ui/ProgressBar.tsx
+git add src/components/ui/ProgressBar.tsx src/popover/UsageBar.test.tsx
 git commit -m "feat(progress-bar): flat fill with threshold-based color swap"
 ```
 
@@ -670,6 +725,8 @@ git commit -m "feat(progress-bar): flat fill with threshold-based color swap"
 **Files:**
 - Modify: `src/components/ui/Badge.tsx`
 
+> **Note on the `safe` variant:** This task collapses `safe` to render identically to `accent`. The variant name is retained for source-compatibility for one release (paired with the `--color-safe` token alias in Task 4), then removed. New callers should use `accent`. Add a JSDoc comment on the variant type to document this.
+
 - [ ] **Step 1: Update the variantClasses map**
 
 In `src/components/ui/Badge.tsx`, replace lines 11–22 (the `variantClasses` object) with:
@@ -678,7 +735,9 @@ In `src/components/ui/Badge.tsx`, replace lines 11–22 (the `variantClasses` ob
 const variantClasses: Record<BadgeVariant, string> = {
   default: 'bg-[var(--color-track)] text-[color:var(--color-text-secondary)]',
   accent: 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)]',
-  safe: 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)]', // collapsed to accent; kept for source compat
+  // `safe` is a deprecated alias of `accent`. Kept for one release alongside
+  // --color-safe so existing call sites don't break; remove both together.
+  safe: 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)]',
   warn: 'bg-[var(--color-warn-dim)] text-[color:var(--color-warn)]',
   danger: 'bg-[var(--color-danger-dim)] text-[color:var(--color-danger)]',
   live: 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)]',
@@ -793,362 +852,154 @@ git commit -m "feat(settings): add Appearance section with cream/dark/auto"
 
 ---
 
-### Task 9: Chart palette helper + OKLCH interpolation (TDD)
-
-**Files:**
-- Create: `src/lib/chart-palette.ts`
-- Create: `src/lib/__tests__/chart-palette.test.ts`
-
-- [ ] **Step 1: Write the failing test**
-
-Create `src/lib/__tests__/chart-palette.test.ts`:
-
-```typescript
-import { describe, it, expect } from 'vitest';
-import { oklchInterpolate, oklchRamp, parseOklch } from '../chart-palette';
-
-describe('parseOklch', () => {
-  it('parses an OKLCH string into components', () => {
-    expect(parseOklch('oklch(56% 0.155 38)')).toEqual({
-      l: 56,
-      c: 0.155,
-      h: 38,
-      alpha: 1,
-    });
-  });
-
-  it('parses an OKLCH string with alpha', () => {
-    expect(parseOklch('oklch(56% 0.155 38 / 0.5)')).toEqual({
-      l: 56,
-      c: 0.155,
-      h: 38,
-      alpha: 0.5,
-    });
-  });
-});
-
-describe('oklchInterpolate', () => {
-  it('returns the start at t=0', () => {
-    const result = oklchInterpolate('oklch(20% 0.05 60)', 'oklch(80% 0.10 60)', 0);
-    expect(result).toBe('oklch(20% 0.05 60)');
-  });
-
-  it('returns the end at t=1', () => {
-    const result = oklchInterpolate('oklch(20% 0.05 60)', 'oklch(80% 0.10 60)', 1);
-    expect(result).toBe('oklch(80% 0.1 60)');
-  });
-
-  it('interpolates linearly at t=0.5', () => {
-    const result = oklchInterpolate('oklch(20% 0.05 60)', 'oklch(80% 0.15 60)', 0.5);
-    expect(result).toBe('oklch(50% 0.1 60)');
-  });
-});
-
-describe('oklchRamp', () => {
-  it('produces n stops from start to end', () => {
-    const ramp = oklchRamp('oklch(20% 0 60)', 'oklch(80% 0 60)', 5);
-    expect(ramp).toHaveLength(5);
-    expect(ramp[0]).toBe('oklch(20% 0 60)');
-    expect(ramp[4]).toBe('oklch(80% 0 60)');
-    expect(ramp[2]).toBe('oklch(50% 0 60)');
-  });
-});
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `pnpm test src/lib/__tests__/chart-palette.test.ts`
-Expected: FAIL with "Cannot find module '../chart-palette'"
-
-- [ ] **Step 3: Write the implementation**
-
-Create `src/lib/chart-palette.ts`:
-
-```typescript
-import { useThemeStore, resolveTheme, type ResolvedTheme } from './theme';
-import { useSyncExternalStore } from 'react';
-
-interface Oklch {
-  l: number; // 0–100
-  c: number; // chroma
-  h: number; // hue 0–360
-  alpha: number; // 0–1
-}
-
-export function parseOklch(input: string): Oklch {
-  const match = input.match(
-    /oklch\(\s*([\d.]+)%\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+))?\s*\)/,
-  );
-  if (!match) throw new Error(`Invalid oklch string: ${input}`);
-  return {
-    l: parseFloat(match[1]),
-    c: parseFloat(match[2]),
-    h: parseFloat(match[3]),
-    alpha: match[4] != null ? parseFloat(match[4]) : 1,
-  };
-}
-
-function formatOklch({ l, c, h, alpha }: Oklch): string {
-  const round = (n: number, places: number) => {
-    const p = 10 ** places;
-    return Math.round(n * p) / p;
-  };
-  const lhc = `${round(l, 2)}% ${round(c, 3)} ${round(h, 2)}`;
-  return alpha === 1 ? `oklch(${lhc})` : `oklch(${lhc} / ${round(alpha, 3)})`;
-}
-
-export function oklchInterpolate(from: string, to: string, t: number): string {
-  const a = parseOklch(from);
-  const b = parseOklch(to);
-  return formatOklch({
-    l: a.l + (b.l - a.l) * t,
-    c: a.c + (b.c - a.c) * t,
-    h: a.h + (b.h - a.h) * t,
-    alpha: a.alpha + (b.alpha - a.alpha) * t,
-  });
-}
-
-export function oklchRamp(from: string, to: string, steps: number): string[] {
-  if (steps < 2) return [from];
-  return Array.from({ length: steps }, (_, i) =>
-    oklchInterpolate(from, to, i / (steps - 1)),
-  );
-}
-
-// ─── Resolved palettes ───────────────────────────────────────────────
-
-interface ChartPalette {
-  accent: string;
-  warn: string;
-  danger: string;
-  text: string;
-  textMuted: string;
-  rule: string;
-  bgCard: string;
-  modelOpus: string;
-  modelSonnet: string;
-  modelHaiku: string;
-  /** 5-step ramp from bgCard (empty) to accent (peak), for the heatmap. */
-  heatmapRamp: string[];
-}
-
-const CREAM: ChartPalette = {
-  accent: 'oklch(56% 0.155 38)',
-  warn: 'oklch(62% 0.150 55)',
-  danger: 'oklch(48% 0.180 28)',
-  text: 'oklch(22% 0.018 50)',
-  textMuted: 'oklch(55% 0.022 60)',
-  rule: 'oklch(40% 0.015 65 / 0.06)',
-  bgCard: 'oklch(98% 0.004 85)',
-  modelOpus: 'oklch(56% 0.155 38)',
-  modelSonnet: 'oklch(60% 0.105 50)',
-  modelHaiku: 'oklch(86% 0.040 70)',
-  heatmapRamp: oklchRamp('oklch(98% 0.004 85)', 'oklch(56% 0.155 38)', 5),
-};
-
-const DARK: ChartPalette = {
-  accent: 'oklch(70% 0.140 38)',
-  warn: 'oklch(76% 0.155 60)',
-  danger: 'oklch(64% 0.195 25)',
-  text: 'oklch(96% 0.010 65)',
-  textMuted: 'oklch(78% 0.025 65)',
-  rule: 'oklch(95% 0.020 65 / 0.06)',
-  bgCard: 'oklch(34% 0.022 65)',
-  modelOpus: 'oklch(70% 0.140 38)',
-  modelSonnet: 'oklch(58% 0.090 50)',
-  modelHaiku: 'oklch(48% 0.045 70)',
-  heatmapRamp: oklchRamp('oklch(34% 0.022 65)', 'oklch(70% 0.140 38)', 5),
-};
-
-/**
- * Subscribes to the Zustand theme preference and OS prefers-color-scheme,
- * returns the appropriate Recharts-ready palette. Re-renders the caller
- * when the resolved theme changes.
- */
-export function useChartPalette(): ChartPalette {
-  const themePreference = useThemeStore((s) => s.themePreference);
-  const prefersDark = useSyncExternalStore(
-    (notify) => {
-      const mql = window.matchMedia('(prefers-color-scheme: dark)');
-      mql.addEventListener('change', notify);
-      return () => mql.removeEventListener('change', notify);
-    },
-    () => window.matchMedia('(prefers-color-scheme: dark)').matches,
-    () => false,
-  );
-  const resolved: ResolvedTheme = resolveTheme(themePreference, prefersDark);
-  return resolved === 'dark' ? DARK : CREAM;
-}
-```
-
-> **Sync note:** The OKLCH values in `CREAM` and `DARK` above duplicate the token values in `src/styles/tokens.css`. Recharts requires concrete color strings (not CSS variables) on its `fill`/`stroke` props. If a token value in `tokens.css` is edited, the corresponding entry here must be updated. A leading comment at the top of both files calls this out.
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `pnpm test src/lib/__tests__/chart-palette.test.ts`
-Expected: PASS — all three describe blocks green.
-
-- [ ] **Step 5: Add the sync-note comment to both files**
-
-At the top of `src/styles/tokens.css` (just below the existing leading comment block), add:
-
-```css
-/* WARNING: chart colors duplicated in src/lib/chart-palette.ts because
- * Recharts requires concrete color strings, not CSS variables. If you edit
- * --color-accent, --color-warn, --color-danger, --color-model-*, or
- * --color-bg-card here, mirror the change in chart-palette.ts. */
-```
-
-At the top of `src/lib/chart-palette.ts`, add:
-
-```typescript
-// WARNING: OKLCH values in CREAM/DARK below duplicate src/styles/tokens.css.
-// Recharts requires concrete color strings, not CSS variables. If a token
-// changes in tokens.css, update the matching field here.
-```
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add src/lib/chart-palette.ts src/lib/__tests__/chart-palette.test.ts src/styles/tokens.css
-git commit -m "feat(chart-palette): theme-aware Recharts palette + OKLCH interp helper"
-```
-
----
-
-### Task 10: Update Recharts consumers — ModelsTab
+### Task 9: Chart consumers — token swap
 
 **Files:**
 - Modify: `src/report/ModelsTab.tsx`
-
-- [ ] **Step 1: Read current state of ModelsTab.tsx**
-
-Open `src/report/ModelsTab.tsx`. Identify every place that passes a `fill=`, `stroke=`, or color prop to a Recharts component (`Cell`, `Bar`, `Line`, `Area`, `XAxis`, `YAxis`, `CartesianGrid`, etc.). Note the current sources — likely inline hex strings or `var(--color-*)`.
-
-- [ ] **Step 2: Import and call the hook**
-
-Add at the top:
-
-```typescript
-import { useChartPalette } from '../lib/chart-palette';
-```
-
-Inside the component, near the top of the function body:
-
-```typescript
-const palette = useChartPalette();
-```
-
-- [ ] **Step 3: Replace hard-coded colors**
-
-For each Recharts prop:
-- Use `palette.modelOpus` for the Opus segment/bar.
-- Use `palette.modelSonnet` for Sonnet.
-- Use `palette.modelHaiku` for Haiku.
-- Use `palette.rule` for `<CartesianGrid stroke=…>`.
-- Use `palette.textMuted` for `<XAxis tick={{ fill: … }}>` / `<YAxis tick={…}>`.
-- Use `palette.text` for any tooltip text.
-
-If a current value reads `var(--color-accent)` etc., that won't work in Recharts — Recharts inserts inline `style` only on the SVG element it owns, and resolving custom properties from arbitrary SVG contexts is unreliable. Replace with the matching palette field.
-
-- [ ] **Step 4: Verify**
-
-Run: `pnpm dev`, open the expanded report, Models tab. The chart should render on cream with terracotta/clay/sand fills. Switch theme to dark — chart re-renders with the dark palette.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/report/ModelsTab.tsx
-git commit -m "feat(report): wire ModelsTab to theme-aware chart palette"
-```
-
----
-
-### Task 11: Update remaining Recharts consumers — Trends, Projects, Cache
-
-**Files:**
 - Modify: `src/report/TrendsTab.tsx`
-- Modify: `src/report/ProjectsTab.tsx`
-- Modify: `src/report/CacheTab.tsx`
 
-- [ ] **Step 1: Apply the same pattern from Task 10 to each tab**
+Hand-rolled SVG charts accept `var(--color-*)` directly in `fill=`/`stroke=` and in Tailwind background utilities — a `data-theme` flip on `<body>` repaints them automatically. No hook, no palette module, no resolved-OKLCH strings. This task is a token-rename pass on two files.
 
-For each of the three files, repeat Steps 1–3 from Task 10:
-1. Import `useChartPalette` from `'../lib/chart-palette'`.
-2. Call `const palette = useChartPalette()` at the top of the component.
-3. Replace every Recharts color prop with the matching `palette.*` field.
+`ProjectsTab.tsx` and `CacheTab.tsx` are surveyed and require no changes (already use `--color-accent` only, or use `--color-safe` which resolves through the alias from Task 4).
 
-Field-to-context mapping:
-- **TrendsTab** (daily token usage bar chart): primary bar fill → `palette.accent`; threshold lines → `palette.warn`, `palette.danger`.
-- **ProjectsTab** (stacked bars with model split): three stack segments → `palette.modelOpus`, `palette.modelSonnet`, `palette.modelHaiku`.
-- **CacheTab** (ring chart for hit rate): filled arc → `palette.accent`; empty arc → `palette.bgCard`.
+- [ ] **Step 1: ModelsTab — swap donut + bar colors to model tokens**
 
-- [ ] **Step 2: Verify each tab**
-
-Run: `pnpm dev`. Click through Trends / Projects / Cache. Each should render correctly on cream, then toggle to dark via Settings to confirm reactivity.
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add src/report/TrendsTab.tsx src/report/ProjectsTab.tsx src/report/CacheTab.tsx
-git commit -m "feat(report): wire remaining chart tabs to theme-aware palette"
-```
-
----
-
-### Task 12: HeatmapTab — 5-stop ramp from palette
-
-**Files:**
-- Modify: `src/report/HeatmapTab.tsx`
-
-- [ ] **Step 1: Find the current ramp**
-
-Open `src/report/HeatmapTab.tsx`. Find the function or constant that maps cell value → fill color (likely an array of hex/oklch strings or a function returning one). Note the current 5 stops.
-
-- [ ] **Step 2: Replace with the palette ramp**
-
-Add at the top:
+Open `src/report/ModelsTab.tsx`. Find the inline `colors` object inside the donut `segments.map(...)` block (around lines 103–107):
 
 ```typescript
-import { useChartPalette } from '../lib/chart-palette';
+const colors: Record<string, string> = {
+  opus: 'var(--color-accent)',
+  sonnet: 'var(--color-warn)',
+  haiku: 'var(--color-safe)',
+};
 ```
 
-Inside the component:
+Replace with:
 
 ```typescript
-const palette = useChartPalette();
-const ramp = palette.heatmapRamp; // [empty, low, mid, high, peak]
+const colors: Record<string, string> = {
+  opus: 'var(--color-model-opus)',
+  sonnet: 'var(--color-model-sonnet)',
+  haiku: 'var(--color-model-haiku)',
+};
 ```
 
-Replace the existing color-bucket logic with a function that picks a stop based on the cell's relative intensity:
+Then find the per-model bar fill (the second use, around lines 151–155, a ternary on `seg.key`):
 
 ```typescript
-function cellFill(value: number, max: number): string {
-  if (max === 0 || value === 0) return ramp[0];
-  const ratio = value / max;
-  if (ratio < 0.25) return ramp[1];
-  if (ratio < 0.5) return ramp[2];
-  if (ratio < 0.75) return ramp[3];
-  return ramp[4];
-}
+background:
+  seg.key === 'opus'
+    ? 'var(--color-accent)'
+    : seg.key === 'sonnet'
+      ? 'var(--color-warn)'
+      : 'var(--color-safe)',
 ```
 
-(If the existing component uses a `useMemo` of `max` already, keep it — `cellFill` is intended to be called inline per cell.)
+Replace with:
 
-- [ ] **Step 3: Verify**
+```typescript
+background:
+  seg.key === 'opus'
+    ? 'var(--color-model-opus)'
+    : seg.key === 'sonnet'
+      ? 'var(--color-model-sonnet)'
+      : 'var(--color-model-haiku)',
+```
 
-Run: `pnpm dev`, expand to report, Heatmap tab. The ramp should go from near-white cream (empty) to terracotta (peak) on cream theme; from card-dark to accent on dark theme.
+The `--color-safe` reference on line 187 (`text-[color:var(--color-safe)]` for the Est. savings figure) **stays as-is** — it resolves through the alias added in Task 4. Removing it is part of the future alias-removal cycle, not this PR.
+
+- [ ] **Step 2: TrendsTab — replace 3-stop gradient classes with flat fills**
+
+Open `src/report/TrendsTab.tsx`. Find the bar className block (around lines 94–104):
+
+```typescript
+className={[
+  'w-full rounded-t-[2px] transition-[height] duration-[var(--duration-normal)]',
+  'bg-gradient-to-t',
+  isDanger
+    ? 'from-[var(--color-warn)] to-[var(--color-danger)]'
+    : isWarn
+      ? 'from-[var(--color-accent)] to-[var(--color-warn)]'
+      : 'from-[var(--color-safe)] to-[var(--color-accent)]',
+  'opacity-80 group-hover:opacity-100',
+].join(' ')}
+```
+
+Replace with:
+
+```typescript
+className={[
+  'w-full rounded-t-[2px] transition-[height,background-color] duration-[var(--duration-normal)]',
+  isDanger
+    ? 'bg-[var(--color-danger)]'
+    : isWarn
+      ? 'bg-[var(--color-warn)]'
+      : 'bg-[var(--color-accent)]',
+  'opacity-80 group-hover:opacity-100',
+].join(' ')}
+```
+
+The `bg-gradient-to-t` utility and both `from-…`/`to-…` classes are removed. The flat fill matches the restrained palette (no green at any level; warn appears only above $1.50 daily cost, danger only above $3 — these thresholds are the existing component logic, untouched).
+
+- [ ] **Step 3: Verify on both themes, both platforms**
+
+Run: `pnpm dev`. Open the expanded report.
+- **Models tab:** the donut should show three terracotta-family arcs (deep terracotta / clay / pale sand). Per-row bar fills match. Switch theme → re-render with darker variants.
+- **Trends tab:** the bar chart should render as flat-color rectangles. Most bars are terracotta accent; bars above the $1.50 cost threshold become warm amber; bars above $3 become deep coral. Switch theme → flat re-render in the dark palette.
+- **Projects tab:** unchanged (terracotta bars only).
+- **Cache tab:** unchanged (accent + warn split, both resolve correctly).
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/report/HeatmapTab.tsx
-git commit -m "feat(report): heatmap ramp from theme-aware chart palette"
+git add src/report/ModelsTab.tsx src/report/TrendsTab.tsx
+git commit -m "feat(report): swap chart colors to model + restrained tokens"
 ```
 
 ---
 
-### Task 13: Cross-platform smoke test
+### Task 10: HeatmapTab — restrained level map
+
+**Files:**
+- Modify: `src/report/HeatmapTab.tsx`
+
+Current behaviour (lines 56–62) uses a 5-token map across the green→red status spectrum. The redesign keeps the **threshold-bucket model** so a peak-usage day still reads as alarming, but drops green to match the restrained palette. No continuous OKLCH ramp, no JS-side interpolation — this is a single map rewrite.
+
+- [ ] **Step 1: Rewrite the levelColors map**
+
+Open `src/report/HeatmapTab.tsx`. Replace lines 56–62 (the `levelColors` constant) with:
+
+```typescript
+const levelColors: Record<number, string> = {
+  0: 'var(--color-track)',
+  1: 'var(--color-accent-muted)',
+  2: 'var(--color-accent)',
+  3: 'var(--color-warn)',
+  4: 'var(--color-danger)',
+};
+```
+
+No other change in this file — every consumer of `levelColors` already does the right thing with the updated values.
+
+- [ ] **Step 2: Verify**
+
+Run: `pnpm dev`, expand to report, Heatmap tab.
+- Empty days: muted warm-ink track.
+- Low days: terracotta at low chroma/alpha (subtle).
+- Mid days: full terracotta.
+- High days: warm amber.
+- Peak days: deep coral.
+
+The progression should feel like "increasing concern" rather than "increasing intensity of an arbitrary palette." If a peak-usage day reads as pale terracotta instead of coral, the values are wired wrong.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add src/report/HeatmapTab.tsx
+git commit -m "feat(report): heatmap level map in restrained palette"
+```
+
+### Task 11: Cross-platform smoke test
 
 **Files:** none modified — verification only.
 
@@ -1168,7 +1019,7 @@ Install and launch the macOS build. For each of {Cream, Dark, Auto}:
 1. Open the popover from the menu bar.
 2. Confirm the surface colour matches expectations (cream = solid `#F0EEE6`; dark = warm-dark with subtle radial wash).
 3. Drag the popover region over a colourful application window — cream must remain colour-stable; dark may pick up a faint vibrancy tint.
-4. Expand to the full report. Click through all tabs (Sessions / Models / Trends / Projects / Heatmap / Cache). All Recharts colours render correctly in the active theme.
+4. Expand to the full report. Click through all tabs (Sessions / Models / Trends / Projects / Heatmap / Cache). All chart colours (SVG `fill`/`stroke` and Tailwind backgrounds) render correctly in the active theme.
 5. Open Settings → Appearance and flip themes. Every screen repaints without artefacts.
 
 Set theme to Dark, fully quit (Cmd-Q), relaunch — no cream flash before the dark surface paints.
@@ -1200,7 +1051,7 @@ If something fails, fix the underlying issue (likely in Task 4 or 5), then re-ru
 
 ---
 
-### Task 14: Update design-system.md
+### Task 12: Update design-system.md
 
 **Files:**
 - Modify: `docs/design-system.md`
