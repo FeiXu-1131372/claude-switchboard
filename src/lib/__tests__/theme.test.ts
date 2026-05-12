@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { useThemeStore, resolveTheme } from '../theme';
+import { useThemeStore, resolveTheme, readStoredPreference } from '../theme';
 
 describe('resolveTheme', () => {
   it('returns the preference when explicit', () => {
@@ -15,6 +15,7 @@ describe('resolveTheme', () => {
 
 describe('useThemeStore', () => {
   beforeEach(() => {
+    localStorage.clear();
     useThemeStore.setState({ themePreference: 'cream' });
   });
 
@@ -25,5 +26,20 @@ describe('useThemeStore', () => {
   it('updates the preference', () => {
     useThemeStore.getState().setThemePreference('dark');
     expect(useThemeStore.getState().themePreference).toBe('dark');
+  });
+});
+
+describe('readStoredPreference', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('returns cream when localStorage is empty', () => {
+    expect(readStoredPreference()).toBe('cream');
+  });
+
+  it('falls back to cream for an unrecognized stored value', () => {
+    localStorage.setItem('theme-preference', 'light');
+    expect(readStoredPreference()).toBe('cream');
   });
 });
