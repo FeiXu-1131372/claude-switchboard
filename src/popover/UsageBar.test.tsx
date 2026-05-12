@@ -17,8 +17,8 @@ describe('UsageBar', () => {
     const { container } = render(
       <UsageBar label="5h" data={makeUtil(50)} warnAt={75} dangerAt={90} />,
     );
-    // The filled bar is the inner div carrying the bg-[var(--color-...)] class.
-    // It sits inside the track (which has `overflow-hidden`).
+    // The filled bar is the inner div carrying the theme-color class.
+    // It sits inside the track (which has overflow-hidden).
     const fill = container.querySelector('[style*="width"]');
     expect(fill?.className).toContain('bg-[var(--color-accent)]');
   });
