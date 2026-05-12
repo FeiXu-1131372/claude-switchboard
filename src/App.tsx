@@ -4,6 +4,7 @@ import { CompactPopover } from './popover/CompactPopover';
 import { ExpandedReport } from './report/ExpandedReport';
 import { AuthPanel } from './settings/AuthPanel';
 import { useAppStore } from './lib/store';
+import { useThemeStore, resolveTheme, type ResolvedTheme } from './lib/theme';
 import { attachUpdateListeners } from './lib/updateEvents';
 import './styles/globals.css';
 import './styles/tokens.css';
@@ -23,6 +24,21 @@ export function App() {
     attachUpdateListeners().then((unlisten) => { teardown = unlisten; });
     return () => { teardown?.(); };
   }, []);
+
+  const themePreference = useThemeStore((s) => s.themePreference);
+
+  useEffect(() => {
+    const mql = window.matchMedia('(prefers-color-scheme: dark)');
+    const apply = () => {
+      const resolved: ResolvedTheme = resolveTheme(themePreference, mql.matches);
+      document.body.dataset.theme = resolved;
+    };
+    apply();
+    if (themePreference === 'auto') {
+      mql.addEventListener('change', apply);
+      return () => mql.removeEventListener('change', apply);
+    }
+  }, [themePreference]);
 
   useEffect(() => {
     document.body.dataset.viewMode = viewMode;
