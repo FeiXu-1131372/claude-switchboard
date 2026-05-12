@@ -377,6 +377,25 @@ pub fn run() {
             poll_loop::spawn(handle.clone(), state.clone());
             crate::updater::run_scheduler(handle.clone());
 
+            // Backfill the SQLite mirror for accounts that were added before
+            // the mirror existed (or before this fix shipped). Without this,
+            // get_warmup_state / set_warmup_enabled / warmup_account_now all
+            // operate on rows that don't exist and silently no-op (or error
+            // on the load path), making the warm-up feature appear broken.
+            // The legacy-migration spawn above runs in a tokio task and we
+            // want this to wait on it, so do the reconcile inside its own
+            // task that runs after the migration future would have completed.
+            {
+                let recon_state = state.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) =
+                        commands::reconcile_sqlite_account_mirror(&recon_state)
+                    {
+                        tracing::warn!("startup SQLite mirror reconcile failed: {e:#}");
+                    }
+                });
+            }
+
             // In-app warm-up dispatcher: wakes every 30 seconds, walks
             // accounts with warmup_enabled = 1, calls tick_for_account per
             // account. Mirrors the poll_loop::spawn pattern above.

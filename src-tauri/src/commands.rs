@@ -245,6 +245,15 @@ pub async fn start_oauth_flow(
                 .await
                 .map_err(err_to_string)?;
 
+            // Mirror the new account into the SQLite `accounts` table so
+            // warm-up commands (which key off SQLite, not accounts.json)
+            // can find a row. Failure here is non-fatal: the add succeeded;
+            // warm-up will just default to disabled until the next mirror
+            // (set_warmup_enabled also INSERT-OR-IGNOREs as a backstop).
+            if let Err(e) = mirror_account_to_sqlite(&state_clone, slot) {
+                tracing::warn!("oauth_complete: SQLite mirror failed: {e:#}");
+            }
+
             state_clone.force_refresh.notify_one();
             Ok(slot)
         }
@@ -523,6 +532,9 @@ pub async fn add_account_from_claude_code(
         .add_from_claude_code()
         .await
         .map_err(err_to_string)?;
+    if let Err(e) = mirror_account_to_sqlite(&state, slot) {
+        tracing::warn!("add_from_claude_code: SQLite mirror failed: {e:#}");
+    }
     state.force_refresh.notify_one();
     Ok(slot)
 }
@@ -533,10 +545,25 @@ pub async fn remove_account(
     slot: u32,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
+    // Look up the account_uuid before removal so we can also drop the
+    // SQLite mirror row. accounts.json holds the canonical mapping
+    // (slot → account_uuid); after .remove() it's gone.
+    let account_uuid = state
+        .accounts
+        .get(slot)
+        .map_err(err_to_string)?
+        .map(|a| a.account_uuid);
+
     state.accounts.remove(slot).map_err(err_to_string)?;
     state.cached_usage_by_slot.write().remove(&slot);
     state.backoff_by_slot.write().remove(&slot);
     state.schedule_by_slot.write().remove(&slot);
+
+    if let Some(uuid) = account_uuid {
+        if let Err(e) = state.db.delete_account(&uuid) {
+            tracing::warn!("remove_account: SQLite delete failed: {e:#}");
+        }
+    }
     Ok(())
 }
 
@@ -670,6 +697,7 @@ pub async fn warmup_account_now(
     state: State<'_, Arc<AppState>>,
     account_id: String,
 ) -> Result<crate::warmup::errors::WarmupOutcome, String> {
+    ensure_sqlite_account_row(&state, &account_id).map_err(|e| e.to_string())?;
     crate::scheduler_glue::manual_warmup(state.inner(), &account_id)
         .await
         .map_err(|e| format!("{e:#}"))
@@ -683,6 +711,7 @@ pub async fn set_account_schedule(
     account_id: String,
     schedule: crate::scheduler::Schedule,
 ) -> Result<(), String> {
+    ensure_sqlite_account_row(&state, &account_id).map_err(|e| e.to_string())?;
     let conn = state.db.conn();
     let json = serde_json::to_string(&schedule).map_err(|e| e.to_string())?;
     conn.execute(
@@ -701,6 +730,7 @@ pub async fn set_warmup_enabled(
     account_id: String,
     enabled: bool,
 ) -> Result<(), String> {
+    ensure_sqlite_account_row(&state, &account_id).map_err(|e| e.to_string())?;
     let conn = state.db.conn();
     conn.execute(
         "UPDATE accounts SET warmup_enabled = ?1 WHERE id = ?2",
@@ -801,6 +831,10 @@ pub async fn get_warmup_state(
     state: State<'_, Arc<AppState>>,
     account_id: String,
 ) -> Result<WarmupAccountState, String> {
+    // Make sure a row exists so a brand-new account doesn't bubble a
+    // "no rows returned" error up to the UI on mount.
+    ensure_sqlite_account_row(&state, &account_id).map_err(|e| e.to_string())?;
+
     let conn = state.db.conn();
     let (enabled, schedule_json, last_warmup_at): (i64, String, Option<i64>) = conn
         .query_row(
@@ -816,4 +850,79 @@ pub async fn get_warmup_state(
         schedule,
         last_warmup_at,
     })
+}
+
+// ---------------------------------------------------------------------------
+// SQLite mirror helpers
+//
+// `accounts.json` (managed by AccountManager) is the canonical source of
+// "which accounts exist." The SQLite `accounts` table is a sidecar that holds
+// warm-up state (warmup_enabled, schedule, last_warmup_at) — split from the
+// JSON store because the transactional claim in scheduler::claim needs SQL,
+// and we deliberately keep credential blobs out of the DB.
+//
+// These helpers keep the two stores in sync.
+// ---------------------------------------------------------------------------
+
+/// Insert (or no-op-update) the SQLite mirror row for a slot. Called after
+/// every successful AccountManager add so warm-up queries can find a row.
+pub(crate) fn mirror_account_to_sqlite(
+    state: &Arc<AppState>,
+    slot: u32,
+) -> anyhow::Result<()> {
+    let acc = state
+        .accounts
+        .get(slot)?
+        .ok_or_else(|| anyhow::anyhow!("slot {slot} not in accounts.json"))?;
+    state.db.upsert_account(&crate::store::StoredAccount {
+        id: acc.account_uuid,
+        email: acc.email,
+        display_name: None,
+    })?;
+    Ok(())
+}
+
+/// Ensure a SQLite row exists for `account_uuid`. Used as a defensive guard
+/// at the top of every warm-up command so a missing mirror row (e.g. account
+/// added before this fix shipped, or mirror failed asynchronously) doesn't
+/// cause `set_warmup_enabled` to silently match 0 rows or `load_schedule` to
+/// return `QueryReturnedNoRows`.
+fn ensure_sqlite_account_row(
+    state: &State<'_, Arc<AppState>>,
+    account_uuid: &str,
+) -> anyhow::Result<()> {
+    let accounts = state.accounts.list()?;
+    let acc = accounts
+        .into_iter()
+        .find(|a| a.account_uuid == account_uuid)
+        .ok_or_else(|| {
+            anyhow::anyhow!("account {account_uuid} not found in accounts.json")
+        })?;
+    state.db.upsert_account(&crate::store::StoredAccount {
+        id: acc.account_uuid,
+        email: acc.email,
+        display_name: None,
+    })?;
+    Ok(())
+}
+
+/// Reconcile every account in accounts.json into the SQLite mirror at
+/// startup. Idempotent — existing rows keep their warm-up state because
+/// upsert_account's ON CONFLICT clause only touches email/display_name/
+/// last_seen_at, not the warm-up columns.
+pub fn reconcile_sqlite_account_mirror(state: &Arc<AppState>) -> anyhow::Result<()> {
+    let accounts = state.accounts.list()?;
+    for acc in accounts {
+        if let Err(e) = state.db.upsert_account(&crate::store::StoredAccount {
+            id: acc.account_uuid.clone(),
+            email: acc.email.clone(),
+            display_name: None,
+        }) {
+            tracing::warn!(
+                "reconcile_sqlite_account_mirror: failed for {}: {e:#}",
+                acc.account_uuid
+            );
+        }
+    }
+    Ok(())
 }

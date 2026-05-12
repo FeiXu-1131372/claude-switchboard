@@ -78,6 +78,17 @@ impl Db {
         Ok(())
     }
 
+    /// Remove the SQLite row for `account_uuid`. Idempotent (no error when
+    /// the row is already absent). Paired with AccountManager::remove so the
+    /// warmup state for a removed account does not linger.
+    pub fn delete_account(&self, account_uuid: &str) -> Result<()> {
+        self.conn().execute(
+            "DELETE FROM accounts WHERE id = ?1",
+            params![account_uuid],
+        )?;
+        Ok(())
+    }
+
     pub fn insert_snapshot(
         &self,
         account_id: &str,
