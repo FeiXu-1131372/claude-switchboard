@@ -128,10 +128,20 @@ pub enum SwapError {
 impl AccountManager {
     /// Atomic two-step swap with rollback:
     ///   a. Snapshot live CC credentials + ~/.claude.json oauthAccount slice.
+    ///   a'. Capture the live snapshot back into the **outgoing** slot's
+    ///       accounts.json entry (the slot that matches the live oauthAccount
+    ///       accountUuid). Without this, CC's silent in-the-background RT
+    ///       rotation while a slot is active is lost when we swap away —
+    ///       resulting in `invalid_grant` the next time that slot tries to
+    ///       refresh, or a 401 if we ever swap back and write the stale AT
+    ///       to CC's live store.
     ///   b. Write target.claude_code_oauth_blob to CC's primary store.
     ///   c. Splice target.oauth_account_blob into ~/.claude.json.
     ///
-    /// On step-b failure: nothing has been mutated; return error.
+    /// On step-b failure: nothing observable has been mutated (the outgoing-
+    /// slot capture only refreshes accounts.json with freshest live values
+    /// for the slot we're leaving, which is independent of the new target);
+    /// return error.
     /// On step-c failure: try to restore step-b. If restore also fails:
     /// return Critical so the UI can surface a hard-error banner.
     pub async fn swap_to(&self, slot: u32) -> Result<(), SwapError> {
@@ -160,6 +170,29 @@ impl AccountManager {
         let prev_oauth_account = oauth_account_io::read_oauth_account(&global)
             .map_err(|e| SwapError::Other(anyhow!("snapshot oauthAccount: {e}")))?;
 
+        // Step a': capture live tokens for the outgoing slot. We do this here
+        // (under the same call) so the read-snapshot-write window is as tight
+        // as possible; if a CC refresh races between snapshot and write, we'd
+        // miss the rotation, but that's no worse than today and the
+        // KeychainGuardian on the next swap-back catches up.
+        if let (Some(prev_cc_blob), Some(prev_oa)) =
+            (prev_cc.as_ref(), prev_oauth_account.as_ref())
+        {
+            if let Some(prev_uuid) = prev_oa.get("accountUuid").and_then(|v| v.as_str()) {
+                if prev_uuid != target.account_uuid {
+                    if let Err(e) =
+                        self.capture_live_into_slot(prev_uuid, prev_cc_blob, prev_oa)
+                    {
+                        // Non-fatal: log and continue. We'd rather complete the
+                        // swap with a slightly stale outgoing entry than abort.
+                        tracing::warn!(
+                            "swap_to: outgoing-slot capture for {prev_uuid} failed: {e:#}"
+                        );
+                    }
+                }
+            }
+        }
+
         // Step b: write CC creds.
         if let Err(e) =
             crate::auth::claude_code_creds::write_full_blob(&target.claude_code_oauth_blob).await
@@ -186,6 +219,37 @@ impl AccountManager {
             };
         }
 
+        Ok(())
+    }
+
+    /// Update the slot whose `account_uuid` matches `live_account_uuid` so
+    /// its stored CC blob and oauthAccount slice reflect the live filesystem
+    /// state. No-op when no managed slot matches. See `swap_to` step a' for
+    /// the motivation. Acquires the accounts.json file lock.
+    fn capture_live_into_slot(
+        &self,
+        live_account_uuid: &str,
+        live_cc_blob: &serde_json::Value,
+        live_oauth_account: &serde_json::Value,
+    ) -> Result<()> {
+        let lock = store::acquire_lock(&self.data_dir)?;
+        let mut data = store::load(&self.data_dir)?;
+        let outgoing_slot = data
+            .accounts
+            .values()
+            .find(|a| a.account_uuid == live_account_uuid)
+            .map(|a| a.slot);
+        let Some(slot) = outgoing_slot else {
+            return Ok(());
+        };
+        if let Some(acc) = data.accounts.get_mut(&slot) {
+            acc.claude_code_oauth_blob = live_cc_blob.clone();
+            acc.oauth_account_blob = live_oauth_account.clone();
+            if let Some(exp) = extract_expires_at(live_cc_blob) {
+                acc.token_expires_at = exp;
+            }
+            store::save(&self.data_dir, &data, &lock)?;
+        }
         Ok(())
     }
 }
@@ -376,6 +440,64 @@ mod tests {
         let acc = mgr.get(1).unwrap().unwrap();
         assert_eq!(acc.claude_code_oauth_blob["accessToken"], "NEW_AT");
         assert_eq!(acc.claude_code_oauth_blob["refreshToken"], "NEW_RT");
+    }
+
+    #[test]
+    fn capture_live_into_slot_overwrites_matching_slot_blob_and_expiry() {
+        // Simulates the swap_to step-a' capture: outgoing slot (u1) gets
+        // its stored blob refreshed from live filesystem state. This is
+        // the fix for the stale-RT bug where CC silently rotated tokens
+        // while the slot was active.
+        use chrono::Duration;
+        let dir = tempdir().unwrap();
+        let mgr = AccountManager::new(dir.path().to_path_buf());
+
+        let now = Utc::now();
+        let stale_exp = (now - Duration::hours(2)).timestamp_millis();
+        let mut stored = cc_blob("u1", stale_exp);
+        stored["refreshToken"] = serde_json::Value::String("STALE_RT".into());
+        stored["accessToken"] = serde_json::Value::String("STALE_AT".into());
+        let id = identity::from_blobs(&oa_slice("u1", "a@x"), Some(&stored)).unwrap();
+        mgr.upsert(id, stored, oa_slice("u1", "a@x"), AddSource::OAuth)
+            .unwrap();
+
+        // Build a "live" snapshot with freshly rotated tokens and a
+        // future expiry — what CC would have written silently.
+        let fresh_exp = (now + Duration::hours(1)).timestamp_millis();
+        let mut live_cc = cc_blob("u1", fresh_exp);
+        live_cc["refreshToken"] = serde_json::Value::String("FRESH_RT".into());
+        live_cc["accessToken"] = serde_json::Value::String("FRESH_AT".into());
+        let live_oa = oa_slice("u1", "a@x");
+
+        mgr.capture_live_into_slot("u1", &live_cc, &live_oa).unwrap();
+
+        let after = mgr.get(1).unwrap().unwrap();
+        assert_eq!(after.claude_code_oauth_blob["refreshToken"], "FRESH_RT");
+        assert_eq!(after.claude_code_oauth_blob["accessToken"], "FRESH_AT");
+        assert_eq!(
+            after.token_expires_at.timestamp_millis(),
+            fresh_exp,
+            "token_expires_at must track the live blob's expiresAt"
+        );
+    }
+
+    #[test]
+    fn capture_live_into_slot_is_noop_when_uuid_unmanaged() {
+        // Live filesystem may belong to an account we don't manage (e.g.
+        // user logged into CC as someone we never imported). Capture must
+        // do nothing — not create rows, not error.
+        let dir = tempdir().unwrap();
+        let mgr = AccountManager::new(dir.path().to_path_buf());
+
+        let id = identity::from_blobs(&oa_slice("u1", "a@x"), Some(&cc_blob("u1", 1))).unwrap();
+        mgr.upsert(id, cc_blob("u1", 1), oa_slice("u1", "a@x"), AddSource::OAuth)
+            .unwrap();
+
+        mgr.capture_live_into_slot("unmanaged-uuid", &cc_blob("x", 1), &oa_slice("x", "x@y"))
+            .unwrap();
+
+        let after = mgr.get(1).unwrap().unwrap();
+        assert_eq!(after.claude_code_oauth_blob["accessToken"], "at-u1");
     }
 
     #[test]
