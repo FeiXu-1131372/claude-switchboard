@@ -18,6 +18,21 @@ export async function handleDragStart(e: ReactPointerEvent<HTMLElement>) {
   if (e.button !== 0) return;
   const target = e.target as HTMLElement;
   if (target.closest('button, input, a, select, textarea')) return;
+
+  // On Windows, startDragging() must be called BEFORE e.preventDefault(),
+  // otherwise the OS never receives the clean mousedown event it needs to
+  // initiate a native window drag. The manual setPosition path used on macOS
+  // requires preventDefault() to suppress text-selection, but Windows does not.
+  if (navigator.userAgent.includes('Windows')) {
+    try {
+      const win = getCurrentWindow();
+      win.startDragging().catch(() => {});
+    } catch {
+      // outside Tauri — no-op
+    }
+    return;
+  }
+
   e.preventDefault();
 
   const pointerId = e.pointerId;
@@ -40,7 +55,7 @@ export async function handleDragStart(e: ReactPointerEvent<HTMLElement>) {
     if (ev.pointerId !== pointerId) return;
     const x = startWinLogical.x + (ev.screenX - startCursor.x);
     const y = startWinLogical.y + (ev.screenY - startCursor.y);
-    win.setPosition(new LogicalPosition(x, y)).catch(() => {});
+    win.setPosition(new LogicalPosition(x, y)).catch(() => { });
   };
 
   const cleanup = () => {
