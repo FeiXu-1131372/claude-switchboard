@@ -476,13 +476,23 @@ pub(crate) fn entry_for(
     let cache = state.cached_usage_by_slot.read();
     let cached = cache.get(&acc.slot).cloned();
     let last_error = cached.as_ref().and_then(|c| c.last_error.clone());
+
+    // Prefer the live subscriptionType from the blob (which capture_live_into_slot
+    // keeps current on every swap) over the snapshot stored at import time —
+    // the latter goes stale when the user upgrades their plan (e.g. pro → max).
+    let live_sub = acc
+        .claude_code_oauth_blob
+        .get("subscriptionType")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+
     AccountListEntry {
         slot: acc.slot,
         email: acc.email.clone(),
         account_uuid: acc.account_uuid.clone(),
         org_name: acc.organization_name.clone(),
         org_uuid: acc.organization_uuid.clone(),
-        subscription_type: acc.subscription_type.clone(),
+        subscription_type: live_sub.or_else(|| acc.subscription_type.clone()),
         source: acc.source,
         is_active: Some(acc.slot) == active,
         cached_usage: cached,
