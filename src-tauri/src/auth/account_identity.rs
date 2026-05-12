@@ -40,6 +40,8 @@ impl IdentityFetcher {
     }
 
     pub async fn fetch(&self, access_token: &str) -> Result<UserInfo> {
+        tracing::debug!(target: "switchboard.http", "GET {} (userinfo) starting", self.endpoint);
+        let start = std::time::Instant::now();
         let resp = self
             .client
             .get(&self.endpoint)
@@ -47,13 +49,28 @@ impl IdentityFetcher {
             .header("anthropic-beta", ANTHROPIC_BETA)
             .send()
             .await?;
-        if !resp.status().is_success() {
-            let status = resp.status();
+        let status = resp.status();
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+        if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            tracing::debug!("userinfo error body: {text}");
+            tracing::warn!(
+                target: "switchboard.http",
+                status = status.as_u16(),
+                elapsed_ms,
+                "GET /userinfo → {status}; body: {text}"
+            );
             return Err(anyhow!("userinfo failed: {status}"));
         }
-        Ok(resp.json().await?)
+        let info: UserInfo = resp.json().await?;
+        tracing::info!(
+            target: "switchboard.http",
+            status = status.as_u16(),
+            elapsed_ms,
+            "GET /userinfo → 200 (sub={}, email={})",
+            info.id,
+            info.email
+        );
+        Ok(info)
     }
 }
 

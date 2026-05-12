@@ -15,19 +15,40 @@ pub fn init(log_dir: PathBuf) -> tracing_appender::non_blocking::WorkerGuard {
     );
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
+    // File always captures rich detail. RUST_LOG overrides if set, otherwise
+    // info baseline plus debug for our own crate so call/response traces
+    // land on disk.
     let file_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,claude_switchboard_lib=debug"));
-    // Only forward warnings and above to stderr — avoids every line being
-    // written twice (file + stderr) in the common case.
-    let stderr_filter = EnvFilter::new("warn");
+
+    // Stderr is the dev experience. In debug builds default to info+debug for
+    // our crate (so `cargo tauri dev` shows what's happening live without
+    // tailing the log file). In release stay quiet at warn — only surface
+    // things the user might need to know. RUST_LOG_STDERR overrides either,
+    // and RUST_LOG falls back if RUST_LOG_STDERR is not set.
+    let stderr_filter = std::env::var("RUST_LOG_STDERR")
+        .ok()
+        .and_then(|s| EnvFilter::try_new(s).ok())
+        .or_else(|| std::env::var("RUST_LOG").ok().and_then(|s| EnvFilter::try_new(s).ok()))
+        .unwrap_or_else(default_stderr_filter);
 
     tracing_subscriber::registry()
         .with(fmt::layer().with_writer(non_blocking).with_ansi(false).with_filter(file_filter))
         .with(fmt::layer().with_writer(std::io::stderr).with_filter(stderr_filter))
         .init();
 
-    tracing::info!("Logging initialized at {:?}", log_dir);
+    tracing::info!(target: "switchboard.boot", "logging initialized at {:?}", log_dir);
     guard
+}
+
+#[cfg(debug_assertions)]
+fn default_stderr_filter() -> EnvFilter {
+    EnvFilter::new("info,claude_switchboard_lib=debug")
+}
+
+#[cfg(not(debug_assertions))]
+fn default_stderr_filter() -> EnvFilter {
+    EnvFilter::new("warn")
 }
 
 pub fn log_dir() -> PathBuf {

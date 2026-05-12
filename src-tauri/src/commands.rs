@@ -199,6 +199,10 @@ pub async fn start_oauth_flow(
     state: State<'_, Arc<AppState>>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
+    tracing::info!(
+        target: "switchboard.auth",
+        "OAuth flow starting (long_lived={long_lived})"
+    );
     use crate::auth::oauth_paste_back::{
         build_authorize_url, generate_pkce, start_local_callback_server,
         LONG_LIVED_EXPIRES_IN_SECS,
@@ -261,9 +265,17 @@ pub async fn start_oauth_flow(
 
         match result {
             Ok(slot) => {
+                tracing::info!(
+                    target: "switchboard.auth",
+                    "OAuth flow complete (slot={slot})"
+                );
                 let _ = app.emit("oauth_complete", slot);
             }
             Err(e) => {
+                tracing::warn!(
+                    target: "switchboard.auth",
+                    "OAuth flow failed: {e}"
+                );
                 let _ = app.emit("oauth_error", e);
             }
         }
@@ -280,6 +292,7 @@ pub async fn force_refresh(
 ) -> Result<(), String> {
     use crate::app_state::ScheduleState;
 
+    tracing::info!(target: "switchboard.poll", "force_refresh scope={scope:?}");
     let now = Instant::now();
     match scope {
         RefreshScope::Active => {
@@ -532,6 +545,10 @@ pub async fn add_account_from_claude_code(
         .add_from_claude_code()
         .await
         .map_err(err_to_string)?;
+    tracing::info!(
+        target: "switchboard.accounts",
+        "added account from upstream-CLI (slot={slot})"
+    );
     if let Err(e) = mirror_account_to_sqlite(&state, slot) {
         tracing::warn!("add_from_claude_code: SQLite mirror failed: {e:#}");
     }
@@ -563,6 +580,15 @@ pub async fn remove_account(
         if let Err(e) = state.db.delete_account(&uuid) {
             tracing::warn!("remove_account: SQLite delete failed: {e:#}");
         }
+        tracing::info!(
+            target: "switchboard.accounts",
+            "removed account slot={slot} account={uuid}"
+        );
+    } else {
+        tracing::info!(
+            target: "switchboard.accounts",
+            "removed account slot={slot}"
+        );
     }
     Ok(())
 }
@@ -573,6 +599,7 @@ pub async fn swap_to_account(
     slot: u32,
     state: State<'_, Arc<AppState>>,
 ) -> Result<SwapReport, String> {
+    tracing::info!(target: "switchboard.swap", "swap_to_account(slot={slot}) starting");
     // Refresh the target slot's token if it's expired or about to expire
     // before handing its blob to swap_to. swap_to writes whatever is
     // stored in accounts.json as the live CC credentials; if the stored
@@ -590,6 +617,10 @@ pub async fn swap_to_account(
         let near_expiry = target.token_expires_at
             <= chrono::Utc::now() + chrono::Duration::minutes(2);
         if near_expiry {
+            tracing::info!(
+                target: "switchboard.swap",
+                "slot {slot} stored AT near expiry; pre-refreshing before swap"
+            );
             if let Err(e) = state
                 .accounts
                 .refresh_inactive(slot, &state.auth.exchange)
@@ -605,6 +636,7 @@ pub async fn swap_to_account(
         .swap_to(slot)
         .await
         .map_err(|e| e.to_string())?;
+    tracing::info!(target: "switchboard.swap", "swap_to_account(slot={slot}) complete");
 
     // swap_to commits both CC creds and the global oauthAccount blob for
     // `slot`; reconcile active_slot eagerly so the next list_accounts call
@@ -719,6 +751,10 @@ pub async fn set_account_schedule(
         rusqlite::params![json, account_id],
     )
     .map_err(|e| e.to_string())?;
+    tracing::info!(
+        target: "switchboard.warmup",
+        "set_account_schedule({account_id}, {schedule:?})"
+    );
     Ok(())
 }
 
@@ -737,6 +773,10 @@ pub async fn set_warmup_enabled(
         rusqlite::params![enabled as i64, account_id],
     )
     .map_err(|e| e.to_string())?;
+    tracing::info!(
+        target: "switchboard.warmup",
+        "set_warmup_enabled({account_id}, {enabled})"
+    );
     Ok(())
 }
 

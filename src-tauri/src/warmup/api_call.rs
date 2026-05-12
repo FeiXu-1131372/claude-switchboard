@@ -64,7 +64,10 @@ pub async fn issue_to(
     oauth_token: &str,
     endpoint: &str,
 ) -> Result<reqwest::Response, reqwest::Error> {
-    http.post(endpoint)
+    tracing::debug!(target: "switchboard.warmup", "POST {} starting (model={WARMUP_MODEL})", endpoint);
+    let start = std::time::Instant::now();
+    let resp = http
+        .post(endpoint)
         .bearer_auth(oauth_token)
         .header("anthropic-version", "2023-06-01")
         .header("anthropic-beta", ANTHROPIC_BETA)
@@ -79,7 +82,16 @@ pub async fn issue_to(
         .json(&build_payload())
         .timeout(Duration::from_secs(WARMUP_HTTP_TIMEOUT_SECS))
         .send()
-        .await
+        .await?;
+    let status = resp.status();
+    tracing::info!(
+        target: "switchboard.warmup",
+        status = status.as_u16(),
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        "POST /v1/messages (warm-up) → {}",
+        status
+    );
+    Ok(resp)
 }
 
 #[cfg(test)]

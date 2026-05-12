@@ -61,14 +61,34 @@ impl TokenExchange {
         if let Some(s) = expires_str.as_deref() {
             params.push(("expires_in", s));
         }
+        tracing::debug!(target: "switchboard.auth", "POST {} (exchange_code) starting", self.endpoint);
+        let start = std::time::Instant::now();
         let resp = self.client.post(&self.endpoint).form(&params).send().await?;
-        if !resp.status().is_success() {
-            let status = resp.status();
+        let status = resp.status();
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+        if !status.is_success() {
+            // Server error body is safe to log — it carries no token. Token
+            // exchange success body, however, contains a refresh_token and
+            // MUST never be logged. We only call resp.text() on the error
+            // path, and we read the success body straight into TokenResponse.
             let text = resp.text().await.unwrap_or_default();
-            tracing::warn!("token exchange error body: {text}");
+            tracing::warn!(
+                target: "switchboard.auth",
+                status = status.as_u16(),
+                elapsed_ms,
+                "token exchange failed: {status}; body: {text}"
+            );
             return Err(anyhow!("token exchange failed: {status}"));
         }
         let tr: TokenResponse = resp.json().await?;
+        tracing::info!(
+            target: "switchboard.auth",
+            status = status.as_u16(),
+            elapsed_ms,
+            "token exchange ok (expires_in={}s, refresh_token={})",
+            tr.expires_in,
+            if tr.refresh_token.is_some() { "present" } else { "absent" }
+        );
         Ok(StoredToken {
             access_token: tr.access_token,
             refresh_token: tr.refresh_token,
@@ -82,14 +102,30 @@ impl TokenExchange {
             ("refresh_token", refresh_token),
             ("client_id", CLIENT_ID),
         ];
+        tracing::debug!(target: "switchboard.auth", "POST {} (refresh) starting", self.endpoint);
+        let start = std::time::Instant::now();
         let resp = self.client.post(&self.endpoint).form(&params).send().await?;
-        if !resp.status().is_success() {
-            let status = resp.status();
+        let status = resp.status();
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+        if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            tracing::warn!("token refresh error body: {text}");
+            tracing::warn!(
+                target: "switchboard.auth",
+                status = status.as_u16(),
+                elapsed_ms,
+                "token refresh failed: {status}; body: {text}"
+            );
             return Err(anyhow!("refresh failed: {status}"));
         }
         let tr: TokenResponse = resp.json().await?;
+        tracing::info!(
+            target: "switchboard.auth",
+            status = status.as_u16(),
+            elapsed_ms,
+            "token refresh ok (expires_in={}s, rotated_rt={})",
+            tr.expires_in,
+            tr.refresh_token.is_some()
+        );
         Ok(StoredToken {
             access_token: tr.access_token,
             refresh_token: tr.refresh_token.or_else(|| Some(refresh_token.to_string())),

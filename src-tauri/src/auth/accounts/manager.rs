@@ -265,6 +265,10 @@ impl AccountManager {
         slot: u32,
         exchange: &crate::auth::exchange::TokenExchange,
     ) -> Result<()> {
+        tracing::info!(
+            target: "switchboard.auth",
+            "refresh_inactive(slot={slot}) starting"
+        );
         let lock = store::acquire_lock(&self.data_dir)?;
         let mut store = store::load(&self.data_dir)?;
         let acc = store
@@ -302,6 +306,11 @@ impl AccountManager {
         acc.token_expires_at = new_token.expires_at;
 
         store::save(&self.data_dir, &store, &lock)?;
+        tracing::info!(
+            target: "switchboard.auth",
+            "refresh_inactive(slot={slot}) ok (new expiry: {})",
+            new_token.expires_at
+        );
         Ok(())
     }
 }

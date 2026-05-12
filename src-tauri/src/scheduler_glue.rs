@@ -117,16 +117,25 @@ pub async fn manual_warmup(
     state: &Arc<AppState>,
     account_uuid: &str,
 ) -> Result<WarmupOutcome> {
+    tracing::info!(target: "switchboard.warmup", "manual warm-up requested for {account_uuid}");
     let schedule = load_schedule(state, account_uuid)?;
 
     let slot = slot_for_account_uuid(state, account_uuid)
         .with_context(|| format!("slot not found for account {account_uuid}"))?;
 
     let resets_at = load_five_hour_resets_at(state, slot);
+    tracing::debug!(
+        target: "switchboard.warmup",
+        "manual warm-up slot={slot} resets_at={resets_at:?} schedule={schedule:?}"
+    );
 
     // Phase A: sync check + claim (guard dropped before any await).
     let claimed = sync_check_and_claim(state, account_uuid, &schedule, true)?;
     if !claimed {
+        tracing::info!(
+            target: "switchboard.warmup",
+            "manual warm-up for slot {slot} skipped (not eligible or already claimed within 60s)"
+        );
         return Ok(WarmupOutcome::SkippedAlreadyActive);
     }
 
@@ -140,6 +149,10 @@ pub async fn manual_warmup(
 
     let outcome = warmup::warmup_account(resets_at, move || Ok(token), &state.http_client)
         .await?;
+    tracing::info!(
+        target: "switchboard.warmup",
+        "manual warm-up slot={slot} outcome={outcome:?}"
+    );
     Ok(outcome)
 }
 
@@ -160,6 +173,12 @@ pub async fn walk_due_accounts(state: &Arc<AppState>) -> Result<()> {
         rows.collect::<rusqlite::Result<_>>()
             .context("collect warmup-eligible account ids")?
     };
+
+    tracing::debug!(
+        target: "switchboard.warmup",
+        "dispatcher tick: {} warm-up-enabled account(s)",
+        account_uuids.len()
+    );
 
     for account_uuid in account_uuids {
         // --- Load schedule (sync, conn dropped inside helper) --------------
@@ -214,10 +233,16 @@ pub async fn walk_due_accounts(state: &Arc<AppState>) -> Result<()> {
 
         match warmup::warmup_account(resets_at, move || Ok(token), &state.http_client).await {
             Ok(outcome) => {
-                tracing::info!("scheduler: {account_uuid} → {outcome:?}");
+                tracing::info!(
+                    target: "switchboard.warmup",
+                    "scheduled warm-up slot={slot} account={account_uuid} → {outcome:?}"
+                );
             }
             Err(e) => {
-                tracing::warn!("scheduler: {account_uuid} warmup failed: {e:#}");
+                tracing::warn!(
+                    target: "switchboard.warmup",
+                    "scheduled warm-up slot={slot} account={account_uuid} failed: {e:#}"
+                );
             }
         }
     }
