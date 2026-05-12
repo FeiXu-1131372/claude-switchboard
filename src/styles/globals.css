@@ -77,6 +77,24 @@ body[data-view-mode="expanded"] #root {
   background: var(--color-bg-base);
 }
 
+/* Windows specific: DOM-based animation requires transparent #root and background on the container */
+body[data-os="windows"] #root {
+  background: transparent !important;
+}
+
+body[data-os="windows"][data-view-mode="compact"] .win-animated-container {
+  background:
+    radial-gradient(120% 80% at 0% 0%, oklch(72% 0.10 55 / 0.08), transparent 55%),
+    radial-gradient(120% 80% at 100% 100%, oklch(67% 0.135 38 / 0.05), transparent 55%),
+    oklch(20% 0.012 65);
+  border-radius: var(--window-radius, var(--radius-lg));
+}
+
+body[data-os="windows"][data-view-mode="expanded"] .win-animated-container {
+  background: var(--color-bg-base);
+  border-radius: var(--window-radius, var(--radius-lg));
+}
+
 /* The drag-region elements get the system "default" cursor so they don't show
  * a text cursor when the user hovers the chrome bar. */
 [data-tauri-drag-region] {

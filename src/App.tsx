@@ -28,6 +28,7 @@ export function App() {
     document.body.dataset.viewMode = viewMode;
     if (navigator.userAgent.includes('Windows')) {
       document.documentElement.style.setProperty('--window-radius', '18px');
+      document.body.dataset.os = 'windows';
     }
     return () => { delete document.body.dataset.viewMode; };
   }, [viewMode]);
@@ -51,33 +52,54 @@ export function App() {
     return <AuthPanel />;
   }
 
+  const isWin = navigator.userAgent.includes('Windows');
+
+  const content = (
+    <AnimatePresence mode="wait" initial={false}>
+      {viewMode === 'expanded' ? (
+        <motion.div
+          key="expanded"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
+          style={{ height: '100%' }}
+        >
+          <ExpandedReport />
+        </motion.div>
+      ) : (
+        <motion.div
+          key="compact"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
+          style={{ height: '100%' }}
+        >
+          <CompactPopover />
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+
   return (
     <>
-      <AnimatePresence mode="wait" initial={false}>
-        {viewMode === 'expanded' ? (
-          <motion.div
-            key="expanded"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
-            style={{ height: '100%' }}
-          >
-            <ExpandedReport />
-          </motion.div>
-        ) : (
-          <motion.div
-            key="compact"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.14, ease: [0.16, 1, 0.3, 1] }}
-            style={{ height: '100%' }}
-          >
-            <CompactPopover />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {isWin ? (
+        <motion.div
+          initial={false}
+          animate={{
+            width: viewMode === 'expanded' ? 960 : 360,
+            height: viewMode === 'expanded' ? 640 : 380,
+          }}
+          transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+          style={{ overflow: 'hidden', margin: 'auto' }}
+          className="win-animated-container"
+        >
+          {content}
+        </motion.div>
+      ) : (
+        content
+      )}
     </>
   );
 }

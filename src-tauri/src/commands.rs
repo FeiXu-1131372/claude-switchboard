@@ -436,32 +436,64 @@ pub async fn resize_window(mode: String, app: tauri::AppHandle) -> Result<(), St
         (cx - target_size.0 / 2.0, cy - target_size.1 / 2.0)
     };
 
-    // ~280ms total over 24 frames ≈ 12ms/frame. Cubic ease-out so the
-    // motion feels native (fast start, gentle settle), matching macOS
-    // Control Center / window-resize timing.
-    const STEPS: u32 = 24;
-    const STEP_MS: u64 = 12;
+    #[cfg(not(target_os = "windows"))]
+    {
+        // Target duration for the animation. Cubic ease-out so the motion
+        // feels native (fast start, gentle settle), matching macOS
+        // Control Center / window-resize timing. Time-based interpolation
+        // ensures smooth animation across OS timer resolution limits.
+        let start_time = std::time::Instant::now();
+        let duration = std::time::Duration::from_millis(280);
 
-    for i in 1..=STEPS {
-        let t = i as f64 / STEPS as f64;
-        let eased = 1.0 - (1.0 - t).powi(3);
-        let nw = from_w + (target_size.0 - from_w) * eased;
-        let nh = from_h + (target_size.1 - from_h) * eased;
-        let nx = from_x + (to_x - from_x) * eased;
-        let ny = from_y + (to_y - from_y) * eased;
+        loop {
+            let elapsed = start_time.elapsed();
+            if elapsed >= duration {
+                break;
+            }
+            let t = elapsed.as_secs_f64() / duration.as_secs_f64();
+            let eased = 1.0 - (1.0 - t).powi(3);
+            let nw = from_w + (target_size.0 - from_w) * eased;
+            let nh = from_h + (target_size.1 - from_h) * eased;
+            let nx = from_x + (to_x - from_x) * eased;
+            let ny = from_y + (to_y - from_y) * eased;
 
-        let _ = w.set_size(Size::Logical(LogicalSize::new(nw, nh)));
-        let _ = w.set_position(Position::Logical(LogicalPosition::new(nx, ny)));
-        tokio::time::sleep(std::time::Duration::from_millis(STEP_MS)).await;
+            let _ = w.set_size(Size::Logical(LogicalSize::new(nw, nh)));
+            let _ = w.set_position(Position::Logical(LogicalPosition::new(nx, ny)));
+            tokio::time::sleep(std::time::Duration::from_millis(8)).await;
+        }
+
+        // Snap exactly to final target at the end.
+        let _ = w.set_size(Size::Logical(LogicalSize::new(target_size.0, target_size.1)));
+        let _ = w.set_position(Position::Logical(LogicalPosition::new(to_x, to_y)));
+
+        // Compact mode re-anchors to the tray after the animation so the
+        // popover lives where the user's eye expects it. Expanded was already
+        // animated to monitor center, no follow-up needed.
+        if mode == "compact" {
+            use tauri_plugin_positioner::{Position as TrayPos, WindowExt};
+            let _ = w.move_window(TrayPos::TrayCenter);
+        }
     }
 
-    // Compact mode re-anchors to the tray after the animation so the
-    // popover lives where the user's eye expects it. Expanded was already
-    // animated to monitor center, no follow-up needed.
-    if mode == "compact" {
-        use tauri_plugin_positioner::{Position as TrayPos, WindowExt};
-        let _ = w.move_window(TrayPos::TrayCenter);
+    #[cfg(target_os = "windows")]
+    {
+        // On Windows, rapid resizing is extremely laggy. We instead animate the DOM.
+        // We just need to ensure the window is large enough for the DOM animation.
+        if mode == "expanded" {
+            let _ = w.set_size(Size::Logical(LogicalSize::new(target_size.0, target_size.1)));
+            let _ = w.set_position(Position::Logical(LogicalPosition::new(to_x, to_y)));
+        } else {
+            // Wait for the DOM animation (280ms) to finish before shrinking the OS window.
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                let _ = w.set_size(Size::Logical(LogicalSize::new(target_size.0, target_size.1)));
+                let _ = w.set_position(Position::Logical(LogicalPosition::new(to_x, to_y)));
+                use tauri_plugin_positioner::{Position as TrayPos, WindowExt};
+                let _ = w.move_window(TrayPos::TrayCenter);
+            });
+        }
     }
+
 
     Ok(())
 }
