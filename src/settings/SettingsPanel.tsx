@@ -5,6 +5,7 @@ import { Slider } from '../components/ui/Slider';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { useAppStore } from '../lib/store';
+import { useThemeStore, type ThemePreference } from '../lib/theme';
 import type { Settings } from '../lib/types';
 import {
   enable as enableAutostart,
@@ -22,6 +23,8 @@ export function SettingsPanel() {
   const setSettings = useAppStore((s) => s.setSettings);
   const usage = useAppStore((s) => s.usage);
   const accounts = useAppStore((s) => s.accounts);
+  const themePreference = useThemeStore((s) => s.themePreference);
+  const setThemePreference = useThemeStore((s) => s.setThemePreference);
   const [local, setLocal] = useState<Settings | null>(() => settings);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -103,6 +106,35 @@ export function SettingsPanel() {
 
   return (
     <div className="flex flex-col gap-[var(--space-lg)]">
+      {/* Appearance */}
+      <section className="flex flex-col gap-[var(--space-sm)]">
+        <h2 className="text-[length:var(--text-label)] font-[var(--weight-semibold)] text-[color:var(--color-text-muted)] uppercase tracking-[0.04em] px-[var(--space-2xs)]">
+          Appearance
+        </h2>
+        <Card className="p-[var(--space-md)] flex flex-col gap-[var(--space-xs)]">
+          {(['cream', 'dark', 'auto'] as ThemePreference[]).map((opt) => (
+            <label
+              key={opt}
+              className="flex items-center gap-[var(--space-sm)] cursor-pointer py-[var(--space-2xs)]"
+            >
+              <input
+                type="radio"
+                name="theme-preference"
+                value={opt}
+                checked={themePreference === opt}
+                onChange={() => setThemePreference(opt)}
+                className="accent-[color:var(--color-accent)]"
+              />
+              <span className="text-[length:var(--text-body)] text-[color:var(--color-text)]">
+                {opt === 'cream' && 'Cream'}
+                {opt === 'dark' && 'Dark'}
+                {opt === 'auto' && 'Auto (follow system)'}
+              </span>
+            </label>
+          ))}
+        </Card>
+      </section>
+
       {/* General */}
       <section className="flex flex-col gap-[var(--space-sm)]">
         <h2 className="text-[length:var(--text-label)] font-[var(--weight-semibold)] text-[color:var(--color-text-muted)] uppercase tracking-[0.04em] px-[var(--space-2xs)]">
@@ -115,14 +147,6 @@ export function SettingsPanel() {
             checked={local.launch_at_login}
             onChange={(e) => update('launch_at_login', e.target.checked)}
           />
-          {/* Theme picker hidden for now — only the dark glass theme is
-           * implemented. The Select used to offer Light/Dark/System options
-           * but selecting any of them did nothing visually, which felt like
-           * a broken control. The setting still lives on `local.theme` for
-           * when light theme is reintroduced as an explicit toggle. */}
-          <p className="text-[length:var(--text-micro)] text-[color:var(--color-text-muted)] py-[var(--space-2xs)]">
-            Theme: dark (light theme coming later)
-          </p>
         </Card>
       </section>
 
