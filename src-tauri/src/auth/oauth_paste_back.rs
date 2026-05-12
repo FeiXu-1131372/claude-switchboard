@@ -34,7 +34,10 @@ pub fn generate_pkce() -> PkcePair {
     let challenge_bytes = Sha256::digest(verifier.as_bytes());
     let challenge = URL_SAFE_NO_PAD.encode(challenge_bytes);
 
-    let mut state_bytes = [0u8; 16];
+    // 32 bytes (43-char base64url) — claude.com's authorize endpoint
+    // rejects shorter state values with "Invalid request format". Matches
+    // claude-code's services/oauth/crypto.ts:generateState (randomBytes(32)).
+    let mut state_bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut state_bytes);
     let state = URL_SAFE_NO_PAD.encode(state_bytes);
 
@@ -60,13 +63,69 @@ pub fn build_authorize_url(
     Ok(url.into())
 }
 
+// Chrome refuses to load `http://localhost:PORT/...` URLs for ports on this
+// list with ERR_UNSAFE_PORT, breaking the OAuth redirect even though the
+// authorize server completes successfully. Mirrors Chromium's
+// `net/base/port_util.cc` kRestrictedPorts. The OS-assigned ephemeral port
+// occasionally lands here (we hit 6697 in the wild) — rebind if so.
+const CHROME_UNSAFE_PORTS: &[u16] = &[
+    1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79, 87, 95, 101, 102,
+    103, 104, 109, 110, 111, 113, 115, 117, 119, 123, 135, 137, 139, 143, 161, 179, 389, 427, 465,
+    512, 513, 514, 515, 526, 530, 531, 532, 540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993,
+    995, 1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668,
+    6669, 6697, 10080,
+];
+
+// Browser-facing callback pages. Self-contained: inline CSS, no external
+// assets. Colors and radii mirror `src/styles/tokens.css` so the page reads
+// as the same product the user just came from. The success variant uses the
+// `--color-safe` (warm mint) accent, the failure variant uses `--color-danger`
+// (warm coral).
+const CALLBACK_SUCCESS_HTML: &str = r#"<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorization complete · Claude Switchboard</title>
+<style>
+:root{--bg:oklch(20% 0.012 65);--surface:oklch(28% 0.018 65 / 0.95);--border:oklch(95% 0.02 65 / 0.18);--rule:oklch(95% 0.02 65 / 0.08);--text:oklch(96% 0.01 65 / 0.96);--muted:oklch(78% 0.025 65 / 0.62);--safe:oklch(76% 0.14 162);--safe-dim:oklch(76% 0.14 162 / 0.16);}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',Inter,system-ui,sans-serif;color:var(--text);background:radial-gradient(120% 80% at 0% 0%,oklch(72% 0.10 55 / 0.10),transparent 55%),radial-gradient(120% 80% at 100% 100%,oklch(67% 0.135 38 / 0.08),transparent 55%),var(--bg);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}
+.card{width:100%;max-width:360px;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:28px 24px 22px;text-align:center}
+.icon{width:48px;height:48px;border-radius:12px;margin:0 auto 18px;display:flex;align-items:center;justify-content:center;background:var(--safe-dim);color:var(--safe)}
+h1{font-size:16px;font-weight:600;letter-spacing:-0.01em;margin-bottom:6px;line-height:1.3}
+p{font-size:13px;color:var(--muted);line-height:1.5}
+.brand{margin-top:22px;padding-top:14px;border-top:1px solid var(--rule);font-size:10.5px;color:var(--muted);letter-spacing:0.08em;text-transform:uppercase}
+</style></head><body><div class="card"><div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></div><h1>Authorization complete</h1><p>You can close this tab and return to Claude Switchboard.</p><div class="brand">Claude Switchboard</div></div></body></html>"#;
+
+const CALLBACK_FAILURE_HTML: &str = r#"<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorization failed · Claude Switchboard</title>
+<style>
+:root{--bg:oklch(20% 0.012 65);--surface:oklch(28% 0.018 65 / 0.95);--border:oklch(95% 0.02 65 / 0.18);--rule:oklch(95% 0.02 65 / 0.08);--text:oklch(96% 0.01 65 / 0.96);--muted:oklch(78% 0.025 65 / 0.62);--danger:oklch(66% 0.20 25);--danger-dim:oklch(66% 0.20 25 / 0.16);}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',Inter,system-ui,sans-serif;color:var(--text);background:radial-gradient(120% 80% at 0% 0%,oklch(72% 0.10 55 / 0.10),transparent 55%),radial-gradient(120% 80% at 100% 100%,oklch(67% 0.135 38 / 0.08),transparent 55%),var(--bg);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}
+.card{width:100%;max-width:360px;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:28px 24px 22px;text-align:center}
+.icon{width:48px;height:48px;border-radius:12px;margin:0 auto 18px;display:flex;align-items:center;justify-content:center;background:var(--danger-dim);color:var(--danger)}
+h1{font-size:16px;font-weight:600;letter-spacing:-0.01em;margin-bottom:6px;line-height:1.3}
+p{font-size:13px;color:var(--muted);line-height:1.5}
+.brand{margin-top:22px;padding-top:14px;border-top:1px solid var(--rule);font-size:10.5px;color:var(--muted);letter-spacing:0.08em;text-transform:uppercase}
+</style></head><body><div class="card"><div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div><h1>Authorization failed</h1><p>Something went wrong handling the redirect. Return to Claude Switchboard and try again.</p><div class="brand">Claude Switchboard</div></div></body></html>"#;
+
 /// Binds an ephemeral HTTP server on a random loopback port. Returns the port
 /// and a receiver that resolves to `(code, state)` when the browser hits
 /// `/callback`. Mirrors how Claude Code handles the OAuth redirect.
 pub async fn start_local_callback_server(
 ) -> Result<(u16, tokio::sync::oneshot::Receiver<Result<(String, String)>>)> {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-    let port = listener.local_addr()?.port();
+    let mut listener_opt = None;
+    for _ in 0..20 {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let p = l.local_addr()?.port();
+        if !CHROME_UNSAFE_PORTS.contains(&p) {
+            listener_opt = Some((l, p));
+            break;
+        }
+        // Drop `l` to release the port, then loop.
+    }
+    let (listener, port) = listener_opt
+        .ok_or_else(|| anyhow!("could not bind a Chrome-safe loopback port after 20 attempts"))?;
     let (tx, rx) = tokio::sync::oneshot::channel();
 
     tokio::spawn(async move {
@@ -77,12 +136,12 @@ pub async fn start_local_callback_server(
             let result = parse_callback_request(&request);
 
             let (status_line, body) = if result.is_ok() {
-                ("200 OK", "<html><body><h2>Authorization complete — you can close this tab.</h2></body></html>")
+                ("200 OK", CALLBACK_SUCCESS_HTML)
             } else {
-                ("400 Bad Request", "<html><body><h2>Authorization failed — please return to the app and try again.</h2></body></html>")
+                ("400 Bad Request", CALLBACK_FAILURE_HTML)
             };
             let response = format!(
-                "HTTP/1.1 {status_line}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                "HTTP/1.1 {status_line}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                 body.len(),
                 body
             );

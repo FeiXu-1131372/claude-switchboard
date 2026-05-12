@@ -43,27 +43,24 @@ impl TokenExchange {
         state: &str,
         expires_in: Option<u64>,
     ) -> Result<StoredToken, anyhow::Error> {
-        // platform.claude.com/v1/oauth/token requires application/x-www-form-urlencoded
-        // (the legacy console.anthropic.com endpoint accepted JSON; the new
-        // platform host returns 400 invalid_grant for JSON bodies). State is
-        // echoed back through the token request — see Claude Code's OAuth
-        // client. `expires_in` requests a long-lived token (only honored for
-        // inference-only scope).
-        let expires_str = expires_in.map(|n| n.to_string());
-        let mut params: Vec<(&str, &str)> = vec![
-            ("grant_type", "authorization_code"),
-            ("code", code),
-            ("redirect_uri", redirect_uri),
-            ("client_id", CLIENT_ID),
-            ("code_verifier", pkce_verifier),
-            ("state", state),
-        ];
-        if let Some(s) = expires_str.as_deref() {
-            params.push(("expires_in", s));
+        // platform.claude.com/v1/oauth/token takes a JSON body — matches
+        // claude-code's services/oauth/client.ts:exchangeCodeForTokens. State
+        // is echoed back through the token request. `expires_in` requests a
+        // long-lived token (only honored for inference-only scope).
+        let mut body = serde_json::json!({
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "client_id": CLIENT_ID,
+            "code_verifier": pkce_verifier,
+            "state": state,
+        });
+        if let Some(n) = expires_in {
+            body["expires_in"] = serde_json::json!(n);
         }
         tracing::debug!(target: "switchboard.auth", "POST {} (exchange_code) starting", self.endpoint);
         let start = std::time::Instant::now();
-        let resp = self.client.post(&self.endpoint).form(&params).send().await?;
+        let resp = self.client.post(&self.endpoint).json(&body).send().await?;
         let status = resp.status();
         let elapsed_ms = start.elapsed().as_millis() as u64;
         if !status.is_success() {

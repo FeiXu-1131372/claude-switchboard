@@ -6,13 +6,18 @@ async fn successful_code_exchange() {
     let mut server = Server::new_async().await;
     let _m = server
         .mock("POST", "/")
-        .match_header("content-type", "application/x-www-form-urlencoded")
-        .match_body(mockito::Matcher::AllOf(vec![
-            mockito::Matcher::UrlEncoded("grant_type".into(), "authorization_code".into()),
-            mockito::Matcher::UrlEncoded("code".into(), "abc".into()),
-            mockito::Matcher::UrlEncoded("code_verifier".into(), "verif".into()),
-            mockito::Matcher::UrlEncoded("state".into(), "st1".into()),
-        ]))
+        .match_header("content-type", "application/json")
+        .match_body(mockito::Matcher::JsonString(
+            serde_json::json!({
+                "grant_type": "authorization_code",
+                "code": "abc",
+                "redirect_uri": "http://localhost:1234/callback",
+                "client_id": claude_switchboard_lib::auth::oauth_paste_back::CLIENT_ID,
+                "code_verifier": "verif",
+                "state": "st1",
+            })
+            .to_string(),
+        ))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(r#"{"access_token":"acc","refresh_token":"ref","expires_in":3600,"token_type":"Bearer"}"#)
@@ -33,11 +38,19 @@ async fn long_lived_exchange_includes_expires_in() {
     let mut server = Server::new_async().await;
     let _m = server
         .mock("POST", "/")
-        .match_header("content-type", "application/x-www-form-urlencoded")
-        .match_body(mockito::Matcher::AllOf(vec![
-            mockito::Matcher::UrlEncoded("grant_type".into(), "authorization_code".into()),
-            mockito::Matcher::UrlEncoded("expires_in".into(), "31536000".into()),
-        ]))
+        .match_header("content-type", "application/json")
+        .match_body(mockito::Matcher::JsonString(
+            serde_json::json!({
+                "grant_type": "authorization_code",
+                "code": "abc",
+                "redirect_uri": "http://localhost:1234/callback",
+                "client_id": claude_switchboard_lib::auth::oauth_paste_back::CLIENT_ID,
+                "code_verifier": "verif",
+                "state": "st1",
+                "expires_in": 31_536_000u64,
+            })
+            .to_string(),
+        ))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(r#"{"access_token":"acc","expires_in":31536000}"#)

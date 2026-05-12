@@ -3,15 +3,32 @@ use anyhow::{anyhow, Result};
 use serde::Deserialize;
 use std::sync::Arc;
 
-pub const USERINFO_URL: &str = "https://api.anthropic.com/api/oauth/userinfo";
+// `/api/oauth/userinfo` (the OIDC convention) returns 404 on
+// api.anthropic.com. Claude Code calls `/api/oauth/profile` instead — see
+// claude-code's services/oauth/getOauthProfile.ts. The profile response is
+// nested `{ account: { uuid, email, display_name }, organization: {...} }`
+// rather than flat OIDC claims, which is why ProfileResponse is separate
+// from the public UserInfo struct.
+pub const PROFILE_URL: &str = "https://api.anthropic.com/api/oauth/profile";
 const ANTHROPIC_BETA: &str = "oauth-2025-04-20";
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct UserInfo {
-    #[serde(rename = "sub")]
     pub id: String,
     pub email: String,
     pub name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ProfileResponse {
+    account: ProfileAccount,
+}
+
+#[derive(Deserialize)]
+struct ProfileAccount {
+    uuid: String,
+    email: String,
+    display_name: Option<String>,
 }
 
 pub struct IdentityFetcher {
@@ -22,7 +39,7 @@ pub struct IdentityFetcher {
 impl IdentityFetcher {
     pub fn new(client: Arc<reqwest::Client>) -> Self {
         Self {
-            endpoint: USERINFO_URL.to_string(),
+            endpoint: PROFILE_URL.to_string(),
             client,
         }
     }
@@ -40,7 +57,7 @@ impl IdentityFetcher {
     }
 
     pub async fn fetch(&self, access_token: &str) -> Result<UserInfo> {
-        tracing::debug!(target: "switchboard.http", "GET {} (userinfo) starting", self.endpoint);
+        tracing::debug!(target: "switchboard.http", "GET {} (profile) starting", self.endpoint);
         let start = std::time::Instant::now();
         let resp = self
             .client
@@ -57,16 +74,21 @@ impl IdentityFetcher {
                 target: "switchboard.http",
                 status = status.as_u16(),
                 elapsed_ms,
-                "GET /userinfo → {status}; body: {text}"
+                "GET /profile → {status}; body: {text}"
             );
-            return Err(anyhow!("userinfo failed: {status}"));
+            return Err(anyhow!("profile failed: {status}"));
         }
-        let info: UserInfo = resp.json().await?;
+        let profile: ProfileResponse = resp.json().await?;
+        let info = UserInfo {
+            id: profile.account.uuid,
+            email: profile.account.email,
+            name: profile.account.display_name,
+        };
         tracing::info!(
             target: "switchboard.http",
             status = status.as_u16(),
             elapsed_ms,
-            "GET /userinfo → 200 (sub={}, email={})",
+            "GET /profile → 200 (sub={}, email={})",
             info.id,
             info.email
         );
