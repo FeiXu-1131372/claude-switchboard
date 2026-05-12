@@ -1,10 +1,10 @@
 # Claude Switchboard
 
-A menu-bar utility that manages multiple Claude subscriptions and tracks rate-limit usage — on macOS and Windows, with the same designed experience.
+**A calm, native control plane for your Claude rate limits.**
 
-> Multi-account control plane: observe, swap, and (soon) schedule warm-ups across every Claude account you sign in to.
+Switchboard lives in your menu bar. One glance tells you where you stand in the 5-hour and 7-day windows. One click swaps which account Claude Code is using. One toggle has Switchboard start your 5-hour window on a schedule that fits your day — instead of whenever you happened to fire your first prompt.
 
-The tray icon shows your active account's live 5-hour percentage as a ring badge; click for the compact popover with all accounts side-by-side; one click swaps which account Claude Code uses.
+Built for developers using Claude — primarily Claude Code — who check their limits dozens of times a day and need the answer in under a second.
 
 ## Screenshots
 
@@ -62,8 +62,10 @@ Click the expand arrow for the full report — Sessions, Models, Trends, Project
 
 ## What makes it different
 
-Most Claude usage trackers fall into one of two shapes — CLI tools you have to remember to run (`ccusage`, terminal monitors), or stock menu-bar widgets with a percent number and not much else. Claude Switchboard is the third shape: a designed app with both visual craft and analytical depth.
+Most Claude usage tools are read-only viewers. Switchboard is a control plane — a menu-bar app that lets you actively shape your rate-limit windows, wrapped in a designed experience with real analytical depth.
 
+- **Deliberate window warm-up.** Start your 5-hour window when *you* want it to start — manually, or on a schedule. A 1-token Haiku ping at 8am gives you a window that ends at 1pm, aligned to your workday instead of trailing into the evening. Solo accounts benefit as much as multi-account setups: the bucket boundary moves to where you want it, not where your first prompt happened to land it.
+- **One-click multi-account swap.** Register every Claude account you have. Pick which one Claude Code uses from the tray; Switchboard rewrites the live OAuth credentials atomically and running sessions pick up the new account within ~30 seconds — no restart, no manual file editing.
 - **Glance, don't query.** The ring badge on the menu bar is the answer. No window to open, no command to run — your 5-hour utilization is always in peripheral vision.
 - **Native feel, not native boring.** macOS vibrancy and Windows 11 Mica (acrylic on Win10), system fonts, monospace numerics, springs not easings. The reference is macOS Control Center and Raycast, not stock SwiftUI. Every color, radius, spacing, and animation comes from one token set.
 - **Real analytics depth.** Six tabs in the expanded report — Sessions, Models, Trends, Projects, Heatmap, and Cache — sourced from your local Claude Code transcripts. Not a single bar with a percent on it.
