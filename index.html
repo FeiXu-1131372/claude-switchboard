@@ -6,6 +6,24 @@
     <title>Claude Limits</title>
   </head>
   <body>
+    <script>
+      (function () {
+        try {
+          var pref = localStorage.getItem('theme-preference') || 'cream';
+          var resolved;
+          if (pref === 'auto') {
+            resolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'cream';
+          } else if (pref === 'dark') {
+            resolved = 'dark';
+          } else {
+            resolved = 'cream';
+          }
+          document.body.dataset.theme = resolved;
+        } catch (e) {
+          document.body.dataset.theme = 'cream';
+        }
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
