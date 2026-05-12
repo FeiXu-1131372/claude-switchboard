@@ -616,6 +616,8 @@ pub async fn swap_to_account(
         let prev = state.keychain_guardian.lock().replace(
             crate::auth::keychain_guardian::KeychainGuardian::arm_with_claude_code_creds(
                 target.claude_code_oauth_blob.clone(),
+                target.oauth_account_blob.clone(),
+                target.account_uuid.clone(),
             ),
         );
         if let Some(p) = prev {
