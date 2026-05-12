@@ -60,7 +60,7 @@ Expanded view becomes a three-region layout:
 
 ### 3.3 Compact view
 
-Compact view's three routes (`home`, `accounts`, `settings`) are unchanged structurally. The only difference: AddAccountChooser and SwapConfirmCard, which used to replace the entire compact pane, will now overlay it as modals. This is a deliberate UX upgrade — full-pane replace is disorienting in a 360-wide popover. See §6.1.
+Compact view's three routes (`home`, `accounts`, `settings`) are unchanged structurally. Settings stays a pane route in compact, becomes a modal in expanded — asymmetry defended in §6.4. The one shift: AddAccountChooser and SwapConfirmCard, which used to replace the entire compact pane, now overlay it as modals. Full-pane replace is disorienting in a 360-wide popover. See §6.1.
 
 ## 4. Architecture
 
@@ -74,6 +74,8 @@ Compact view's three routes (`home`, `accounts`, `settings`) are unchanged struc
 - `chooserOpen: boolean`.
 - `refreshing: boolean` with stagger-aware timeout.
 - `reauthSlot: number | null` and the matching `oauth_complete` / `oauth_error` listeners.
+
+**Reauth listener stability.** Today's `AccountsPanel.tsx:35-53` re-attaches listeners each time `reauthSlot` flips, which races on fast back-to-back re-auths (the unmount-on-null inside the handler can drop the next event). The hook fixes this by mounting a single stable listener whenever `reauthSlot !== null`, reading the current slot from a ref instead of a closure-captured value. Multiple pending re-auths dispatch by slot. Documented here because it's a behavior change, even if invisible in the happy path.
 
 Returns action callbacks:
 
@@ -107,23 +109,33 @@ The hook is the single source of truth for both surfaces.
 
 **`src/components/modals/ModalShell.tsx`**
 - Generic dialog backdrop. Refactored out of WarmupConsentModal so all four modals share it.
-- Props: `{ onDismiss: () => void; size?: 'sm' | 'md' | 'lg'; children }`.
-- `role="dialog"`, `aria-modal="true"`, ESC key handler, click-outside on backdrop, focus trap on the dialog container.
+- Props: `{ onDismiss: () => void; title?: string; size?: 'sm' | 'md' | 'lg'; children }`. Optional `title` renders as the modal's header strip with a close X (replaces the per-child top bars stripped in §4.3).
+- `role="dialog"`, `aria-modal="true"`, focus trap on the dialog container.
+- **Stacking discipline.** A small zustand atom (`modalStack: string[]`) tracks open modals by ID. Each `ModalShell` pushes its ID on mount, pops on unmount. Only the **topmost** modal owns ESC + click-outside dismiss; older ones stay mounted but inert. z-index = `50 + 10 * stackDepth`. This covers the AccountRow→WarmupConsentModal-while-AddAccountChooser-open case in §5.
 - **Token-driven surfaces** (see §10 Dependencies): backdrop uses `var(--color-overlay)`, card uses `var(--color-bg-elevated)` + `var(--color-border)`. No hardcoded `bg-black/55` or `bg-neutral-900/95`. This is what lets the modal layer adapt to whichever theme the cream-theme spec resolves at runtime.
 
 **`src/components/modals/SettingsModal.tsx`**
-- Wraps `<SettingsPanel>` in `<ModalShell size="lg">`.
-- Internal header strip: "SETTINGS" label + close icon.
+- Wraps `<SettingsPanel>` in `<ModalShell size="lg" title="Settings">`.
+- Used only by ExpandedReport. Compact reaches Settings via its existing pane route.
 
 ### 4.3 Modified components
 
+The three flow components (AddAccountChooser, SwapConfirmCard, AuthPanel) all gain a `presentation: 'modal' | 'fullpane'` prop. This is from day one — not a fallback added later — so the §6.1 rollback path stays mechanical. The full-pane branch keeps the chrome (drag handle, close-window button, back link) needed by direct-routed entry points; the modal branch renders content-only.
+
+**Defaults by component:**
+- `AddAccountChooser` → default `'modal'` (only caller after this work is the modal flow).
+- `SwapConfirmCard` → default `'modal'` (same).
+- `AuthPanel` → default `'fullpane'` (App.tsx first-run is the historical caller and remains so).
+
 **`AccountsPanel.tsx`** — Replace inline `useState`/`useEffect`/`useMemo` block with `useAccountManagement()`. AddAccountChooser and SwapConfirmCard rendering swap from full-pane replace to modal overlay. Behavior, copy, callbacks unchanged.
 
-**`AddAccountChooser.tsx`** — Strip outer container (`flex flex-col gap-… px-…`). Becomes content-only; parent owns the surrounding chrome (modal shell or otherwise). The internal `<AuthPanel>` route remains intact.
+**`AddAccountChooser.tsx`** — Add `presentation` prop. In `'modal'`: the `"Add account"` h2 is promoted to `<ModalShell title>`; the footer "Cancel" button is dropped (modal dismiss via X / ESC / backdrop is now the cancel affordance); content gap/padding container is unchanged. In `'fullpane'`: current rendering preserved (unused today after the chooser becomes a modal in both compact and expanded, but kept as a stable fallback). OAuth tile still routes to `<AuthPanel presentation="modal">` *in place* — same single modal shell, child swaps.
 
-**`SwapConfirmCard.tsx`** — Same: strip outer page chrome, parent wraps.
+**`SwapConfirmCard.tsx`** — Add `presentation` prop. In `'modal'`: top `← Cancel` button and top-right `X` are dropped; the "Confirm switch" title is promoted to `<ModalShell title>`. Footer **Cancel** button and **Switch account** button are kept — Cancel remains the explicit "no, go back" affordance, redundant with backdrop dismiss but expected. In `'fullpane'`: current rendering preserved.
 
-**`WarmupConsentModal.tsx`** — Replace its hand-rolled backdrop with `<ModalShell size="sm">`. No behavior change.
+**`AuthPanel.tsx`** — Add `presentation` prop (default `'fullpane'`, since App.tsx first-run is the historical caller). In `'modal'`: skip the top drag-handle header, skip the close-window IconButton (would close the window from inside a modal — see review item #1), drop the outer `flex flex-col h-full`. The inner content (centered 280px column with three Cards) renders directly into the modal body. **No props on the inner content change.**
+
+**`WarmupConsentModal.tsx`** — Replace its hand-rolled backdrop with `<ModalShell size="sm">`. Keep the existing in-body `<h2>` heading (the heading copy is too long for a title-bar strip). No behavior change. Note: this modal is opened from inside `AccountRow`, which itself is inside `AccountsSidebar`/`AccountsPanel` — when a chooser modal is also open, the consent modal stacks on top per §4.2 stacking discipline.
 
 **`ExpandedReport.tsx`** — Wrap the existing body in a flex row, mount `<AccountsSidebar>` on the left. Add `<IconSettings>` button to header between refresh and collapse. Add local `settingsOpen` state; render `<SettingsModal>` when open.
 
@@ -148,11 +160,12 @@ Both surfaces consume the same hook instance per mount. Compact and expanded are
 
 - **Zero accounts in expanded view.** Should not occur — `App.tsx` already routes to `<AuthPanel>` when `accounts.length === 0`. The sidebar's empty-state path is not reachable but renders defensively: "No accounts managed yet." plus the "+ Add account" footer.
 - **Sidebar overflow.** Use `overflow-y-auto` on the row list region; sidebar header and footer stay pinned.
-- **Modal stacking.** AddAccountChooser → OAuth path currently does `if (showOauth) return <AuthPanel />` — swapping its own render output. Keep that branch: the single `<ModalShell>` wrapping the chooser stays mounted, and its child swaps from chooser content to `<AuthPanel>`. No nested modal layer.
+- **In-modal route swap (chooser → OAuth).** AddAccountChooser's `if (showOauth) return <AuthPanel />` branch stays — a single `<ModalShell>` wraps the chooser, and its child swaps from chooser content to `<AuthPanel presentation="modal">`. No nested shell. The `<ModalShell>` `title` prop updates with the active step ("Add account" → "Connect to Claude").
+- **Stacked modals (consent on top of chooser).** `WarmupConsentModal` opens from inside `AccountRow` — itself inside the sidebar/panel. If the user has the chooser modal open and a row's warm-up toggle triggers consent, two modals are mounted. Per §4.2 stacking discipline: consent pushes onto the stack with higher z-index; chooser stays mounted but its ESC/click-outside handlers are inert until consent unmounts. Each modal owns its own focus trap; only the topmost is active.
 - **OAuth completion while a different modal is open.** The hook's listener clears `reauthSlot`; modals are independent of it. No collision.
 - **Refresh-all spinner duration.** The existing stagger calculation `(accounts.length - 1) * 30_000 + 2_000` moves into the hook. Sidebar and compact use the same spinner.
 - **Settings cog and report-header refresh share a tight cluster.** Order: refresh, settings cog, collapse, close. Sizes match existing `<IconButton>`.
-- **Tab content already at 660px.** Heatmap and Trends charts use Recharts with `ResponsiveContainer` — they already adapt. Verify visually during implementation.
+- **Tab content at 660px.** Heatmap and Trends charts use Recharts with `ResponsiveContainer` — they adapt fluidly, but charts with intrinsic axis-tick density (Heatmap day×hour grid, Trends multi-series) can clip ticks at narrow widths. See §7 for the mandatory screenshot gate.
 
 ## 6. Trade-offs
 
@@ -163,7 +176,7 @@ Modal-ifying AddAccountChooser and SwapConfirmCard changes compact behavior: tho
 - Single rendering path for these flows across both surfaces is simpler than a layout fork.
 - The Back-button affordance in compact's swap/chooser flows is replaced by modal dismiss (X / backdrop click / ESC).
 
-If this proves disruptive, the fallback is a `presentation: 'modal' | 'fullpane'` prop on the affected components — additive change, not a redesign.
+**Rollback if disruptive.** The `presentation` prop is baked into each component from day one (§4.3), defaulting to `'modal'`. Reverting compact to full-pane is a one-line callsite change in `AccountsPanel.tsx` — pass `presentation="fullpane"`. No re-stripping of containers, no prop addition, no cliff.
 
 ### 6.2 Sidebar always visible, not collapsible
 
@@ -172,6 +185,17 @@ A collapse-to-rail control was considered. Skipped for v1: the 660px report regi
 ### 6.3 No per-account view scoping
 
 We deliberately chose "click = swap" over "click = re-scope the report". The latter requires the data layer to support per-account historical snapshots, which it currently doesn't, and clutters the mental model. Active-account-only keeps invariant: what the sidebar highlights matches what the report shows.
+
+### 6.4 Settings entry is a modal in expanded, a pane in compact
+
+The cog icon opens different things on different surfaces: a modal in expanded view, a pane route in compact. This creates a "two mental models for one icon" cost — acknowledged. We defend it because:
+
+- **Compact has no room for a real modal.** At 360×380, a settings modal would occupy ≈95% of the surface. The backdrop is invisible, the "click-outside-to-dismiss" gesture has nowhere to land, and the modal's title bar would have to replicate the chrome (close X) that the pane route already provides for free.
+- **Drag affordance.** Compact's pane route keeps the entire window draggable via the `Header` component's drag handle. A near-fullscreen modal in compact would remove or fragment that affordance.
+- **Same content, different chrome.** `SettingsPanel` is the body in both cases — the asymmetry is at the wrapper level only. A user who learns the panel in one surface recognizes it in the other.
+- **Expanded has the space.** At 960×640, a settings modal at ≈560×500 leaves visible context behind it (the sidebar, the report header), which is what makes "modal" feel like the right pattern there.
+
+If users report confusion, the cheapest fix is to make compact's cog also open a modal — `SettingsModal` already exists; one router change in CompactPopover. Not free, but mechanical.
 
 ## 7. Testing
 
@@ -187,7 +211,11 @@ We deliberately chose "click = swap" over "click = re-scope the report". The lat
 - Add account flow from expanded view — OAuth opens browser, paste-back returns to app, account appears in sidebar.
 - Re-auth from sidebar AccountRow with expired token — opens browser, returns, error state clears.
 - Many accounts (≥6) — sidebar scrolls, refresh-all spinner runs for the staggered duration.
-- ESC dismisses any open modal; doesn't propagate to close the window.
+- ESC dismisses any open modal; doesn't propagate to close the window. With two modals stacked (e.g. chooser + consent), ESC dismisses only the topmost.
+- Back-to-back re-auths on two different accounts — both `oauth_complete` events route to the correct slots (verifies the stable-listener-with-ref refactor in §4.1).
+
+**Pre-merge gate**
+- **Screenshot every report tab at the new 660px width.** Sessions, Models, Trends, Projects, Heatmap, Cache. No clipped axis ticks, no broken legends, no horizontal scroll inside tab content. If any tab regresses, fix before merge — do not ship and hope.
 
 ## 8. Open questions
 
@@ -206,12 +234,14 @@ New:
 
 Modified:
 - `src/accounts/AccountsPanel.tsx` — adopt hook, modal overlays
-- `src/accounts/AddAccountChooser.tsx` — strip outer container
-- `src/accounts/SwapConfirmCard.tsx` — strip outer container
+- `src/accounts/AddAccountChooser.tsx` — add `presentation` prop, drop footer Cancel in modal mode, promote title
+- `src/accounts/SwapConfirmCard.tsx` — add `presentation` prop, drop top bar in modal mode, promote title
+- `src/settings/AuthPanel.tsx` — add `presentation` prop, skip drag handle + close-window IconButton in modal mode
 - `src/components/modals/WarmupConsentModal.tsx` — adopt ModalShell
 - `src/report/ExpandedReport.tsx` — flex-row layout, sidebar mount, settings cog, settings modal mount
+- `src/lib/store.ts` — add `modalStack` atom for §4.2 stacking discipline
 
-Unchanged: `AccountRow`, `SettingsPanel`, `AuthPanel`, all warm-up child components, all report tabs.
+Unchanged: `AccountRow`, `SettingsPanel`, all warm-up child components, all report tabs.
 
 ## 10. Dependencies & sequencing
 
