@@ -58,15 +58,16 @@ html:has(body[data-view-mode="expanded"]) {
 }
 
 body[data-view-mode="compact"] #root {
-  /* Round the popover content so it reads as a Control-Center / Raycast-style
-   * widget rather than a square panel. Native vibrancy clips to this radius.
-   *
-   * Fully opaque dark base so text has a stable canvas regardless of wallpaper.
-   * The two warm radial washes add a light-source feel on top. */
+  /* Flat cream surface by default — opaque, wallpaper-independent. */
+  background: var(--color-bg-base);
+}
+
+body[data-theme="dark"][data-view-mode="compact"] #root {
+  /* Dark popover keeps a subtle warm radial wash for a "light source" feel. */
   background:
-    radial-gradient(120% 80% at 0% 0%, oklch(72% 0.10 55 / 0.08), transparent 55%),
-    radial-gradient(120% 80% at 100% 100%, oklch(67% 0.135 38 / 0.05), transparent 55%),
-    oklch(20% 0.012 65);
+    radial-gradient(120% 80% at 0% 0%, oklch(72% 0.10 55 / 0.06), transparent 55%),
+    radial-gradient(120% 80% at 100% 100%, oklch(70% 0.140 38 / 0.04), transparent 55%),
+    var(--color-bg-base);
 }
 
 body[data-view-mode="expanded"] #root {
@@ -83,10 +84,15 @@ body[data-os="windows"] #root {
 }
 
 body[data-os="windows"][data-view-mode="compact"] .win-animated-container {
+  background: var(--color-bg-base);
+  border-radius: var(--window-radius, var(--radius-lg));
+}
+
+body[data-os="windows"][data-theme="dark"][data-view-mode="compact"] .win-animated-container {
   background:
-    radial-gradient(120% 80% at 0% 0%, oklch(72% 0.10 55 / 0.08), transparent 55%),
-    radial-gradient(120% 80% at 100% 100%, oklch(67% 0.135 38 / 0.05), transparent 55%),
-    oklch(20% 0.012 65);
+    radial-gradient(120% 80% at 0% 0%, oklch(72% 0.10 55 / 0.06), transparent 55%),
+    radial-gradient(120% 80% at 100% 100%, oklch(70% 0.140 38 / 0.04), transparent 55%),
+    var(--color-bg-base);
   border-radius: var(--window-radius, var(--radius-lg));
 }
 
@@ -123,14 +129,20 @@ body[data-appearing="true"] #root {
 
 /* ─── Glass mixin (applied to translucent surfaces) ─── */
 
+/* Glass mixin — on cream, this is just a soft surface with a border (no
+ * backdrop-filter, no warm-tint overlay). On dark, backdrop-filter and the
+ * radial tint ::before re-engage to keep the existing depth. */
 .glass {
   background: var(--color-bg-surface);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   border: 1px solid var(--color-border-subtle);
 }
 
-.glass::before {
+body[data-theme="dark"] .glass {
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+body[data-theme="dark"] .glass::before {
   content: '';
   position: absolute;
   top: -30%;
