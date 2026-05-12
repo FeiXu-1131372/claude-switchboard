@@ -109,7 +109,7 @@ The hook is the single source of truth for both surfaces.
 - Generic dialog backdrop. Refactored out of WarmupConsentModal so all four modals share it.
 - Props: `{ onDismiss: () => void; size?: 'sm' | 'md' | 'lg'; children }`.
 - `role="dialog"`, `aria-modal="true"`, ESC key handler, click-outside on backdrop, focus trap on the dialog container.
-- Tailwind classes match the existing WarmupConsentModal aesthetic (orange-tinted border, neutral-900/95 background, backdrop blur).
+- **Token-driven surfaces** (see §10 Dependencies): backdrop uses `var(--color-overlay)`, card uses `var(--color-bg-elevated)` + `var(--color-border)`. No hardcoded `bg-black/55` or `bg-neutral-900/95`. This is what lets the modal layer adapt to whichever theme the cream-theme spec resolves at runtime.
 
 **`src/components/modals/SettingsModal.tsx`**
 - Wraps `<SettingsPanel>` in `<ModalShell size="lg">`.
@@ -212,3 +212,17 @@ Modified:
 - `src/report/ExpandedReport.tsx` — flex-row layout, sidebar mount, settings cog, settings modal mount
 
 Unchanged: `AccountRow`, `SettingsPanel`, `AuthPanel`, all warm-up child components, all report tabs.
+
+## 10. Dependencies & sequencing
+
+This spec composes with the **cream-theme spec** (`2026-05-13-cream-theme-design.md`) — no file-level overlap. Two soft alignments:
+
+1. **Token consumption.** `ModalShell` reads `--color-overlay`, `--color-bg-elevated`, `--color-border`, `--color-border-focus` rather than hardcoded values. The cream-theme spec §5.2 defines these tokens with per-theme resolution; consuming them means the modal layer (this spec's centerpiece) flips with the active theme automatically.
+
+2. **WarmupConsentModal refactor is a small unblock for cream.** That file currently uses hand-rolled `bg-neutral-900/95` + `border-orange-500/12` that don't survive a cream surface. Refactoring it through `ModalShell` (§4.3) tokenizes it as a side effect.
+
+**Ship order (preferred):** cream-theme lands first, then this work consumes the new tokens directly.
+
+**Ship order (fallback, if this work lands first or in parallel):** `ModalShell` uses the current dark-theme values (`bg-black/55` backdrop, `bg-neutral-900/95` card, `border-orange-500/12`) inline. A follow-up patch swaps those four class chains for tokenized equivalents when cream tokens land. Mechanical, single-commit change.
+
+No conflicts with the `SettingsPanel` modification either spec proposes: cream adds an Appearance section to the panel's content; this spec wraps the panel in `<ModalShell>`. The two compose — the Appearance section renders inside the new modal automatically.
