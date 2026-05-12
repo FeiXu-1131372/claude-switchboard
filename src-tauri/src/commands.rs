@@ -546,6 +546,33 @@ pub async fn swap_to_account(
     slot: u32,
     state: State<'_, Arc<AppState>>,
 ) -> Result<SwapReport, String> {
+    // Refresh the target slot's token if it's expired or about to expire
+    // before handing its blob to swap_to. swap_to writes whatever is
+    // stored in accounts.json as the live CC credentials; if the stored
+    // accessToken is already past expiry, the next poll-loop tick reads
+    // those just-written creds, fetches usage, and gets 401 — surfacing
+    // "token expired — re-authenticate" the instant the user switches.
+    //
+    // refresh_inactive is the same routine that keeps inactive slots
+    // current during polling, so reusing it here keeps the refresh story
+    // in one place. We swallow refresh errors: if the stored AT happens
+    // to still be live, the swap still succeeds; if it's also dead, the
+    // post-swap poll will surface auth_required the same way it does
+    // today, and the user can re-authenticate.
+    if let Ok(Some(target)) = state.accounts.get(slot) {
+        let near_expiry = target.token_expires_at
+            <= chrono::Utc::now() + chrono::Duration::minutes(2);
+        if near_expiry {
+            if let Err(e) = state
+                .accounts
+                .refresh_inactive(slot, &state.auth.exchange)
+                .await
+            {
+                tracing::warn!("pre-swap refresh of slot {slot} failed: {e:#}");
+            }
+        }
+    }
+
     state
         .accounts
         .swap_to(slot)
