@@ -94,6 +94,11 @@ export function AccountsPanel({ onBack }: Props) {
     [accounts],
   );
 
+  async function handleRemove(entry: AccountListEntry) {
+    await ipc.removeAccount(entry.slot);
+    await refreshAccounts();
+  }
+
   async function requestSwap(entry: AccountListEntry) {
     if (entry.is_active || swappingSlot !== null) return;
     setConfirmError(null);
@@ -192,6 +197,7 @@ export function AccountsPanel({ onBack }: Props) {
               swapping={swappingSlot === a.slot}
               onReauth={() => handleReauth(a)}
               reauthBusy={reauthSlot === a.slot}
+              onRemove={() => handleRemove(a)}
             />
           );
         })}

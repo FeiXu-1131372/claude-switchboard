@@ -24,6 +24,8 @@ export {
   Maximize2,
   Minimize2,
   Monitor,
+  MoreHorizontal,
+  Trash2,
   Moon,
   RefreshCw,
   Settings,
