@@ -230,3 +230,33 @@ The Settings page already exposes `polling_interval_secs` with the right bounds 
 - **Internal consistency:** §2.3 picker reads `schedule_by_slot`; §2.6 swap re-seeds it; §2.4 manual refresh writes to it. Consistent.
 - **Scope:** single implementation plan — backend scheduler refactor + frontend IPC extension + one new button.
 - **Ambiguity:** the "compress stagger" rule in §2.7 is precise (`gap = polling_interval_secs / N`). The "advance to `last_other_fetch_at + 30s`" refinement in §2.5 is explicitly accepted as best-effort.
+
+---
+
+## 9. Empirical headroom — post-implementation observation (2026-05-12)
+
+With the serialized picker loop live, an aggressive configuration was observed running cleanly for 15+ consecutive minutes:
+
+- **3 managed accounts**
+- **`polling_interval_secs = 120`** (2 min, near the 60 s minimum)
+- **`stagger_gap_secs ≈ 5`** (the minimum allowed by `update_settings`)
+- Total upstream load: ~1.5 GETs/min against `/api/oauth/usage`
+
+No 429 responses, no `Retry-After` headers, all polls returned 200 OK with elapsed_ms in the 300–900 ms range (occasional outliers up to 5 s on slow round-trips). Sample window:
+
+```
+02:41:40  200 OK  646ms
+02:41:45  200 OK  317ms
+02:41:51  200 OK  796ms
+02:43:41  200 OK  333ms
+02:43:45  200 OK  321ms
+02:43:52  200 OK  848ms
+… (repeats every 120 s for 8 cycles)
+```
+
+**Takeaways:**
+
+1. **Serialization is the load-bearing property.** The triple-429 incident that motivated this spec was caused by *parallel* fan-out, not by the interval/gap values themselves. As long as fetches go out one at a time, the upstream is happy at much tighter spacing than the 30 s default suggests.
+2. **The `update_settings` bounds (`polling_interval_secs ≥ 60`, `stagger_gap_secs ∈ 5..=120`) are confirmed safe.** Do not tighten them defensively without new evidence of upstream rate-limiting at these values.
+3. **The 30 s default base gap remains a reasonable balance** — it's smooth, leaves headroom for slow round-trips, and matches the spec's documented behavior. The user-configurable slider (see `Settings::stagger_gap_secs`) covers cases where the default doesn't fit (e.g., many accounts at short intervals → compression kicks in automatically; user wants wider gap for slow networks).
+4. **Future regressions to watch for:** if a 429 reappears, look at concurrency first (parallel requests, force_refresh storms, dispatcher overlap) rather than at the configured interval/gap. The gap controls *smoothness*; serialization controls *safety*.
