@@ -101,9 +101,9 @@ export function ModelsTab() {
               const { strokeLength, offset } = seg;
 
               const colors: Record<string, string> = {
-                opus: 'var(--color-accent)',
-                sonnet: 'var(--color-warn)',
-                haiku: 'var(--color-safe)',
+                opus: 'var(--color-model-opus)',
+                sonnet: 'var(--color-model-sonnet)',
+                haiku: 'var(--color-model-haiku)',
               };
 
               return (
@@ -149,10 +149,10 @@ export function ModelsTab() {
                       width: `${seg.pct}%`,
                       background:
                         seg.key === 'opus'
-                          ? 'var(--color-accent)'
+                          ? 'var(--color-model-opus)'
                           : seg.key === 'sonnet'
-                            ? 'var(--color-warn)'
-                            : 'var(--color-safe)',
+                            ? 'var(--color-model-sonnet)'
+                            : 'var(--color-model-haiku)',
                     }}
                   />
                 </div>

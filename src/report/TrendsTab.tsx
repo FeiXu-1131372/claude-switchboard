@@ -93,13 +93,12 @@ export function TrendsTab() {
               >
                 <div
                   className={[
-                    'w-full rounded-t-[2px] transition-[height] duration-[var(--duration-normal)]',
-                    'bg-gradient-to-t',
+                    'w-full rounded-t-[2px] transition-[height,background-color] duration-[var(--duration-normal)]',
                     isDanger
-                      ? 'from-[var(--color-warn)] to-[var(--color-danger)]'
+                      ? 'bg-[var(--color-danger)]'
                       : isWarn
-                        ? 'from-[var(--color-accent)] to-[var(--color-warn)]'
-                        : 'from-[var(--color-safe)] to-[var(--color-accent)]',
+                        ? 'bg-[var(--color-warn)]'
+                        : 'bg-[var(--color-accent)]',
                     'opacity-80 group-hover:opacity-100',
                   ].join(' ')}
                   style={{ height: `${heightPct}%` }}
