@@ -6,7 +6,11 @@ import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { useAppStore } from '../lib/store';
 import type { Settings } from '../lib/types';
-import { enable as enableAutostart, disable as disableAutostart } from '@tauri-apps/plugin-autostart';
+import {
+  enable as enableAutostart,
+  disable as disableAutostart,
+  isEnabled as isAutostartEnabled,
+} from '@tauri-apps/plugin-autostart';
 import { ipc } from '../lib/ipc';
 import { WarmupSettings } from './WarmupSettings';
 
@@ -64,8 +68,18 @@ export function SettingsPanel() {
       };
       await setSettings(next);
       try {
-        if (next.launch_at_login) await enableAutostart();
-        else await disableAutostart();
+        // Only toggle the OS autostart entry when the desired state
+        // actually differs from the current one. On Windows, calling
+        // disable() against a registry value that doesn't exist returns
+        // ERROR_FILE_NOT_FOUND (os error 2) — which would surface as
+        // "Saved, but autostart toggle failed" on every Save against
+        // a never-enabled state.
+        const currentlyEnabled = await isAutostartEnabled();
+        if (next.launch_at_login && !currentlyEnabled) {
+          await enableAutostart();
+        } else if (!next.launch_at_login && currentlyEnabled) {
+          await disableAutostart();
+        }
       } catch (e) {
         // Autostart toggle is best-effort: surface but don't fail the whole save.
         const msg = e instanceof Error ? e.message : String(e);
