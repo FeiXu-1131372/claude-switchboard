@@ -170,10 +170,10 @@ function LoadingShell({
   const [hint, setHint] = useState(false);
 
   useEffect(() => {
-    ipc.forceRefresh('active').catch(() => {});
+    ipc.forceRefresh('active').catch(() => { });
 
     const tick = setInterval(() => {
-      refreshUsage().catch(() => {});
+      refreshUsage().catch(() => { });
     }, 1000);
 
     const hintTimer = setTimeout(() => setHint(true), 3000);
@@ -193,7 +193,7 @@ function LoadingShell({
         accountEmail={null}
         onRefresh={onRefresh}
         onSettings={onSettings}
-        onAccounts={() => {}}
+        onAccounts={() => { }}
       />
       <div className="flex flex-1 flex-col items-center justify-center gap-[var(--space-sm)] px-[var(--popover-pad)] text-center">
         <span className="text-[length:var(--text-label)] text-[color:var(--color-text-muted)]">
@@ -398,15 +398,15 @@ function VersionFooter() {
 
   const label =
     transient === 'checking' ? 'Checking…'
-    : transient === 'up-to-date' ? 'Up to date'
-    : transient === 'failed' ? "Couldn't check"
-    : 'Check for updates';
+      : transient === 'up-to-date' ? 'Up to date'
+        : transient === 'failed' ? "Couldn't check"
+          : 'Check for updates';
 
   const isChecking = transient === 'checking';
 
   const onClick = () => {
     if (isChecking) return;
-    invoke('check_for_updates_now').catch(() => {/* error arrives via event */});
+    invoke('check_for_updates_now').catch(() => {/* error arrives via event */ });
   };
 
   return (

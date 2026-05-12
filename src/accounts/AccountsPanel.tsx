@@ -40,7 +40,7 @@ export function AccountsPanel({ onBack }: Props) {
     // the next poll-loop tick clears the auth_required marker on its
     // first successful fetch.
     const unlistenComplete = listen<number>('oauth_complete', () => {
-      refreshAccounts().catch(() => {});
+      refreshAccounts().catch(() => { });
       setReauthSlot(null);
     });
     const unlistenError = listen<string>('oauth_error', () => {
