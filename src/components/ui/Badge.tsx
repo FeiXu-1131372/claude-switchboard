@@ -11,14 +11,16 @@ interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
 const variantClasses: Record<BadgeVariant, string> = {
   default: 'bg-[var(--color-track)] text-[color:var(--color-text-secondary)]',
   accent: 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)]',
-  safe: 'bg-[var(--color-safe-dim)] text-[color:var(--color-safe)]',
+  // `safe` is a deprecated alias of `accent`. Kept for one release alongside
+  // --color-safe so existing call sites don't break; remove both together.
+  safe: 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)]',
   warn: 'bg-[var(--color-warn-dim)] text-[color:var(--color-warn)]',
   danger: 'bg-[var(--color-danger-dim)] text-[color:var(--color-danger)]',
-  live: 'bg-[var(--color-safe-dim)] text-[color:var(--color-safe)]',
+  live: 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)]',
   stale: 'bg-[var(--color-track)] text-[color:var(--color-text-muted)]',
-  opus: 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)]',
-  sonnet: 'bg-[var(--color-warn-dim)] text-[color:var(--color-warn)]',
-  haiku: 'bg-[var(--color-safe-dim)] text-[color:var(--color-safe)]',
+  opus: 'bg-[var(--color-model-opus)] text-[color:var(--color-model-opus-text)]',
+  sonnet: 'bg-[var(--color-model-sonnet)] text-[color:var(--color-model-sonnet-text)]',
+  haiku: 'bg-[var(--color-model-haiku)] text-[color:var(--color-model-haiku-text)]',
 };
 
 export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(
