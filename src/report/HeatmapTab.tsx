@@ -55,7 +55,7 @@ function getMonthPositions(cells: HeatmapCell[]): { label: string; x: number }[]
 
 const levelColors: Record<number, string> = {
   0: 'var(--color-track)',
-  1: 'var(--color-safe)',
+  1: 'var(--color-accent-muted)',
   2: 'var(--color-accent)',
   3: 'var(--color-warn)',
   4: 'var(--color-danger)',
