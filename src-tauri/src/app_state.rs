@@ -31,6 +31,11 @@ impl Default for WarmupState {
 #[serde(default)]
 pub struct Settings {
     pub polling_interval_secs: u64,
+    /// Base spacing between consecutive per-slot polls within one round.
+    /// The poll loop compresses below this when (slots × gap) wouldn't fit
+    /// in `polling_interval_secs`. Bounded by the `update_settings` command
+    /// to a safe range (see commands.rs).
+    pub stagger_gap_secs: u64,
     pub thresholds: Vec<u8>,
     pub theme: String,
     pub launch_at_login: bool,
@@ -42,6 +47,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             polling_interval_secs: 300,
+            stagger_gap_secs: crate::poll_loop::DEFAULT_STAGGER_GAP_SECS,
             thresholds: vec![75, 90],
             theme: "system".into(),
             launch_at_login: false,

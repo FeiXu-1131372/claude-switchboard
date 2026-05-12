@@ -372,7 +372,14 @@ export type RunningClaudeCode = { cli_processes: number; vscode_with_extension: 
  * {"type":"Custom","times":[{"hour":7,"minute":30},{"hour":17,"minute":0}]}
  */
 export type Schedule = { type: "Off" } | { type: "Every5h"; anchor: HhMm } | { type: "Custom"; times: HhMm[] }
-export type Settings = { polling_interval_secs: number; thresholds: number[]; theme: string; launch_at_login: boolean; crash_reports: boolean; preferred_auth_source: AuthSource | null }
+export type Settings = { polling_interval_secs: number; 
+/**
+ * Base spacing between consecutive per-slot polls within one round.
+ * The poll loop compresses below this when (slots × gap) wouldn't fit
+ * in `polling_interval_secs`. Bounded by the `update_settings` command
+ * to a safe range (see commands.rs).
+ */
+stagger_gap_secs: number; thresholds: number[]; theme: string; launch_at_login: boolean; crash_reports: boolean; preferred_auth_source: AuthSource | null }
 export type StoredSessionEvent = { ts: string; project: string; model: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_5m_tokens: number; cache_creation_1h_tokens: number; cost_usd: number; source_file: string; source_line: number; 
 /**
  * Stable per-API-call key used for dedup. Format: "{requestId}:{message.id}"

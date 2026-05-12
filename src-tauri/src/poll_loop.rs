@@ -14,21 +14,34 @@ use tauri::{AppHandle, Emitter};
 
 static STALE_EMITTED: AtomicBool = AtomicBool::new(false);
 
-/// Default gap between consecutive slot polls in a staggered round.
-/// Compressed automatically when (slots * STAGGER_GAP_SECS) > polling_interval_secs.
-pub const STAGGER_GAP_SECS: u64 = 30;
+/// Default gap between consecutive slot polls in a staggered round when
+/// the user hasn't customised `Settings::stagger_gap_secs`. Mirrors the
+/// `Settings::default()` value so a non-test caller that bypasses settings
+/// still gets the historical behaviour.
+pub const DEFAULT_STAGGER_GAP_SECS: u64 = 30;
 
-/// Compute the per-slot stagger gap. Compresses below 30 s when the
-/// configured polling interval can't fit (slots * 30 s).
-pub fn stagger_gap(slot_count: usize, interval: Duration) -> Duration {
+/// Pull the polling interval + base stagger gap from settings as Durations,
+/// clamping each to a safe lower bound that mirrors the validation in
+/// `update_settings` (defends against any settings row written before that
+/// validation existed).
+fn settings_durations(state: &crate::app_state::AppState) -> (Duration, Duration) {
+    let s = state.settings.read();
+    (
+        Duration::from_secs(s.polling_interval_secs.max(60)),
+        Duration::from_secs(s.stagger_gap_secs.clamp(5, 120)),
+    )
+}
+
+/// Compute the per-slot stagger gap. Compresses below `base_gap` when the
+/// configured polling interval can't fit (`slots * base_gap`).
+pub fn stagger_gap(slot_count: usize, interval: Duration, base_gap: Duration) -> Duration {
     if slot_count == 0 {
-        return Duration::from_secs(STAGGER_GAP_SECS);
+        return base_gap;
     }
-    let default_gap = Duration::from_secs(STAGGER_GAP_SECS);
     let max_total = interval;
-    let needed_total = default_gap * (slot_count.saturating_sub(1) as u32);
+    let needed_total = base_gap * (slot_count.saturating_sub(1) as u32);
     if needed_total <= max_total {
-        default_gap
+        base_gap
     } else {
         max_total / slot_count as u32
     }
@@ -42,10 +55,11 @@ pub fn seed_schedules(
     active_slot: Option<u32>,
     now: Instant,
     interval: Duration,
+    base_gap: Duration,
 ) -> HashMap<u32, crate::app_state::ScheduleState> {
     use crate::app_state::ScheduleState;
 
-    let gap = stagger_gap(slots.len(), interval);
+    let gap = stagger_gap(slots.len(), interval, base_gap);
     let mut ordered: Vec<u32> = match active_slot {
         Some(active) if slots.contains(&active) => {
             let mut v = vec![active];
@@ -360,21 +374,23 @@ async fn poll_all(
         sched.retain(|slot, _| current_slots.contains(slot));
 
         if sched.is_empty() && !accounts.is_empty() {
-            let interval = Duration::from_secs(
-                state.settings.read().polling_interval_secs.max(60),
-            );
+            let (interval, base_gap) = settings_durations(state);
             let slot_ids: Vec<u32> = accounts.iter().map(|a| a.slot).collect();
-            *sched = seed_schedules(&slot_ids, active_slot, Instant::now(), interval);
+            *sched = seed_schedules(
+                &slot_ids,
+                active_slot,
+                Instant::now(),
+                interval,
+                base_gap,
+            );
         } else {
             // Append newly added slots so they trail the existing
             // schedule (one stagger gap behind the latest deadline).
             // This avoids placing a new slot ahead of an existing slot's
-            // next fetch, which would break the 30 s gap.
+            // next fetch, which would break the configured base gap.
             let now = Instant::now();
-            let interval = Duration::from_secs(
-                state.settings.read().polling_interval_secs.max(60),
-            );
-            let gap = stagger_gap(current_slots.len(), interval);
+            let (interval, base_gap) = settings_durations(state);
+            let gap = stagger_gap(current_slots.len(), interval, base_gap);
             let latest = sched
                 .values()
                 .map(|s| s.next_poll_at)
@@ -472,64 +488,81 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    fn d(secs: u64) -> Duration {
+        Duration::from_secs(secs)
+    }
+
     #[test]
-    fn stagger_gap_default_30s_when_interval_fits() {
-        // 3 slots, 300 s interval → needs 60 s for stagger, fits comfortably.
-        let gap = stagger_gap(3, Duration::from_secs(300));
-        assert_eq!(gap, Duration::from_secs(30));
+    fn stagger_gap_returns_base_when_interval_fits() {
+        // 3 slots, 300 s interval, 30 s base → needs 60 s for stagger, fits.
+        let gap = stagger_gap(3, d(300), d(30));
+        assert_eq!(gap, d(30));
     }
 
     #[test]
     fn stagger_gap_compresses_when_interval_too_short() {
-        // 4 slots, 60 s interval → 90 s needed > 60 s → compress to 60/4 = 15 s.
-        let gap = stagger_gap(4, Duration::from_secs(60));
-        assert_eq!(gap, Duration::from_secs(15));
+        // 4 slots, 60 s interval, 30 s base → 90 s needed > 60 s → 60/4 = 15 s.
+        let gap = stagger_gap(4, d(60), d(30));
+        assert_eq!(gap, d(15));
     }
 
     #[test]
-    fn stagger_gap_zero_slots_returns_default() {
-        let gap = stagger_gap(0, Duration::from_secs(60));
-        assert_eq!(gap, Duration::from_secs(30));
+    fn stagger_gap_honors_custom_base() {
+        // 3 slots, 300 s interval, 60 s base → 2*60 = 120 ≤ 300, gap stays 60.
+        let gap = stagger_gap(3, d(300), d(60));
+        assert_eq!(gap, d(60));
+    }
+
+    #[test]
+    fn stagger_gap_zero_slots_returns_base() {
+        assert_eq!(stagger_gap(0, d(60), d(30)), d(30));
+        assert_eq!(stagger_gap(0, d(60), d(15)), d(15));
     }
 
     #[test]
     fn seed_schedules_active_first_then_inactive_in_slot_id_order() {
         let now = Instant::now();
-        let interval = Duration::from_secs(300);
-        let sched = seed_schedules(&[3, 1, 2], Some(2), now, interval);
+        let sched = seed_schedules(&[3, 1, 2], Some(2), now, d(300), d(30));
 
         assert_eq!(sched[&2].next_poll_at, now);
-        assert_eq!(sched[&1].next_poll_at, now + Duration::from_secs(30));
-        assert_eq!(sched[&3].next_poll_at, now + Duration::from_secs(60));
+        assert_eq!(sched[&1].next_poll_at, now + d(30));
+        assert_eq!(sched[&3].next_poll_at, now + d(60));
     }
 
     #[test]
     fn seed_schedules_no_active_slot_orders_by_slot_id() {
         let now = Instant::now();
-        let interval = Duration::from_secs(300);
-        let sched = seed_schedules(&[3, 1, 2], None, now, interval);
+        let sched = seed_schedules(&[3, 1, 2], None, now, d(300), d(30));
 
         assert_eq!(sched[&1].next_poll_at, now);
-        assert_eq!(sched[&2].next_poll_at, now + Duration::from_secs(30));
-        assert_eq!(sched[&3].next_poll_at, now + Duration::from_secs(60));
+        assert_eq!(sched[&2].next_poll_at, now + d(30));
+        assert_eq!(sched[&3].next_poll_at, now + d(60));
     }
 
     #[test]
     fn seed_schedules_active_not_in_slots_ignored() {
-        // Active is 99 but only slots 1, 2 are managed: fall back to id order.
         let now = Instant::now();
-        let interval = Duration::from_secs(300);
-        let sched = seed_schedules(&[1, 2], Some(99), now, interval);
+        let sched = seed_schedules(&[1, 2], Some(99), now, d(300), d(30));
 
         assert_eq!(sched[&1].next_poll_at, now);
-        assert_eq!(sched[&2].next_poll_at, now + Duration::from_secs(30));
+        assert_eq!(sched[&2].next_poll_at, now + d(30));
         assert_eq!(sched.contains_key(&99), false);
     }
 
     #[test]
     fn seed_schedules_empty_slots_returns_empty_map() {
         let now = Instant::now();
-        let sched = seed_schedules(&[], Some(1), now, Duration::from_secs(300));
+        let sched = seed_schedules(&[], Some(1), now, d(300), d(30));
         assert!(sched.is_empty());
+    }
+
+    #[test]
+    fn seed_schedules_custom_base_gap_propagates_to_offsets() {
+        // 3 slots, 300 s interval, 60 s base → offsets at 0, 60, 120.
+        let now = Instant::now();
+        let sched = seed_schedules(&[1, 2, 3], None, now, d(300), d(60));
+        assert_eq!(sched[&1].next_poll_at, now);
+        assert_eq!(sched[&2].next_poll_at, now + d(60));
+        assert_eq!(sched[&3].next_poll_at, now + d(120));
     }
 }

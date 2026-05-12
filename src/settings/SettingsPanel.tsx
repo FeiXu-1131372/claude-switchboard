@@ -131,21 +131,45 @@ export function SettingsPanel() {
         <h2 className="text-[length:var(--text-label)] font-[var(--weight-semibold)] text-[color:var(--color-text-muted)] uppercase tracking-[0.04em] px-[var(--space-2xs)]">
           Polling
         </h2>
-        <Card className="p-[var(--space-md)]">
-          <Slider
-            label="Poll interval"
-            min={1}
-            max={30}
-            step={1}
-            value={pollingMinutes}
-            onChange={(e) => update('polling_interval_secs', Number(e.target.value) * 60)}
-            formatValue={(v) => `${v}m`}
-          />
-          {pollingMinutes <= 2 && (
-            <p className="text-[length:var(--text-micro)] text-[color:var(--color-warn)] mt-[var(--space-xs)]">
-              Frequent polling may cause rate limiting
+        <Card className="p-[var(--space-md)] flex flex-col gap-[var(--space-md)]">
+          <div>
+            <Slider
+              label="Poll interval"
+              min={1}
+              max={30}
+              step={1}
+              value={pollingMinutes}
+              onChange={(e) => update('polling_interval_secs', Number(e.target.value) * 60)}
+              formatValue={(v) => `${v}m`}
+            />
+            {pollingMinutes <= 2 && (
+              <p className="text-[length:var(--text-micro)] text-[color:var(--color-warn)] mt-[var(--space-xs)]">
+                Frequent polling may cause rate limiting
+              </p>
+            )}
+          </div>
+          <div>
+            <Slider
+              label="Stagger gap"
+              min={5}
+              max={120}
+              step={5}
+              value={local.stagger_gap_secs}
+              onChange={(e) => update('stagger_gap_secs', Number(e.target.value))}
+              formatValue={(v) => `${v}s`}
+            />
+            <p className="text-[length:var(--text-micro)] text-[color:var(--color-text-muted)] mt-[var(--space-xs)]">
+              Spacing between consecutive account polls in one round.
             </p>
-          )}
+            {accounts.length > 1 &&
+              accounts.length * local.stagger_gap_secs > local.polling_interval_secs && (
+                <p className="text-[length:var(--text-micro)] text-[color:var(--color-warn)] mt-[var(--space-xs)]">
+                  {accounts.length} accounts × {local.stagger_gap_secs}s won't fit in{' '}
+                  {Math.round(local.polling_interval_secs / 60)}m — gap will compress to{' '}
+                  {Math.floor(local.polling_interval_secs / accounts.length)}s per slot.
+                </p>
+              )}
+          </div>
         </Card>
       </section>
 

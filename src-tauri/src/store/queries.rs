@@ -406,6 +406,7 @@ mod tests {
         // Write non-default settings.
         let s = Settings {
             polling_interval_secs: 60,
+            stagger_gap_secs: 45,
             thresholds: vec![50, 80, 95],
             theme: "dark".into(),
             launch_at_login: true,
@@ -417,6 +418,7 @@ mod tests {
         // Read back and assert every field survived the round-trip.
         let loaded = db.load_settings().unwrap().expect("settings row");
         assert_eq!(loaded.polling_interval_secs, s.polling_interval_secs);
+        assert_eq!(loaded.stagger_gap_secs, s.stagger_gap_secs);
         assert_eq!(loaded.thresholds, s.thresholds);
         assert_eq!(loaded.theme, s.theme);
         assert_eq!(loaded.launch_at_login, s.launch_at_login);

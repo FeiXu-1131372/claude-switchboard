@@ -306,12 +306,17 @@ pub async fn force_refresh(
         RefreshScope::All => {
             let accounts = state.accounts.list().map_err(err_to_string)?;
             let active = *state.active_slot.read();
-            let interval = std::time::Duration::from_secs(
-                state.settings.read().polling_interval_secs.max(60),
-            );
+            let (interval, base_gap) = {
+                let s = state.settings.read();
+                (
+                    std::time::Duration::from_secs(s.polling_interval_secs.max(60)),
+                    std::time::Duration::from_secs(s.stagger_gap_secs.clamp(5, 120)),
+                )
+            };
             let slot_ids: Vec<u32> = accounts.iter().map(|a| a.slot).collect();
-            *state.schedule_by_slot.write() =
-                crate::poll_loop::seed_schedules(&slot_ids, active, now, interval);
+            *state.schedule_by_slot.write() = crate::poll_loop::seed_schedules(
+                &slot_ids, active, now, interval, base_gap,
+            );
         }
     }
     state.force_refresh.notify_one();
@@ -329,6 +334,12 @@ pub async fn has_claude_code_creds() -> Result<bool, String> {
 pub async fn update_settings(s: Settings, state: State<'_, Arc<AppState>>) -> Result<(), String> {
     if s.polling_interval_secs < 60 {
         return Err("polling_interval_secs must be at least 60".to_string());
+    }
+    // 5s lower bound prevents thrashing the upstream usage endpoint when many
+    // slots are present; 120s upper bound keeps the round-trip across all
+    // slots inside the polling interval at reasonable account counts.
+    if !(5..=120).contains(&s.stagger_gap_secs) {
+        return Err("stagger_gap_secs must be between 5 and 120".to_string());
     }
     if s.thresholds.iter().any(|&t| t > 100) {
         return Err("threshold values must be between 0 and 100".to_string());
@@ -659,15 +670,20 @@ pub async fn swap_to_account(
     // wait out whatever deadline was set when it was inactive.
     {
         let accounts = state.accounts.list().map_err(err_to_string)?;
-        let interval = std::time::Duration::from_secs(
-            state.settings.read().polling_interval_secs.max(60),
-        );
+        let (interval, base_gap) = {
+            let s = state.settings.read();
+            (
+                std::time::Duration::from_secs(s.polling_interval_secs.max(60)),
+                std::time::Duration::from_secs(s.stagger_gap_secs.clamp(5, 120)),
+            )
+        };
         let slot_ids: Vec<u32> = accounts.iter().map(|a| a.slot).collect();
         *state.schedule_by_slot.write() = crate::poll_loop::seed_schedules(
             &slot_ids,
             Some(slot),
             std::time::Instant::now(),
             interval,
+            base_gap,
         );
     }
 
