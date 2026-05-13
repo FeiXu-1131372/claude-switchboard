@@ -22,18 +22,13 @@ impl HhMm {
 ///   {"type":"Off"}
 ///   {"type":"Every5h","anchor":{"hour":6,"minute":0}}
 ///   {"type":"Custom","times":[{"hour":7,"minute":30},{"hour":17,"minute":0}]}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "type")]
 pub enum Schedule {
+    #[default]
     Off,
     Every5h { anchor: HhMm },
     Custom { times: Vec<HhMm> },
-}
-
-impl Default for Schedule {
-    fn default() -> Self {
-        Schedule::Off
-    }
 }
 
 #[cfg(test)]

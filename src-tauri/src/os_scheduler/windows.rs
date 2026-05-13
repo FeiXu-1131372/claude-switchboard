@@ -10,6 +10,12 @@ const TASK_NAME: &str = "Claude Switchboard Tick";
 
 pub struct SchTasksScheduler;
 
+impl Default for SchTasksScheduler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SchTasksScheduler {
     pub fn new() -> Self {
         Self

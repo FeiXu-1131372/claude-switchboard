@@ -1,10 +1,9 @@
 //! CLI entry points for headless modes.
-//! - `claude-switchboard --tick`    : run scheduler dispatcher for all
-//!                                    eligible accounts and exit. Future
-//!                                    Plan B tasks fill in the per-account
-//!                                    walk; this stub validates the path.
-//! - `claude-switchboard --migrate` : re-launch the GUI which re-runs
-//!                                    migration idempotently.
+//! - `claude-switchboard --tick`: run scheduler dispatcher for all eligible
+//!   accounts and exit. Future Plan B tasks fill in the per-account walk;
+//!   this stub validates the path.
+//! - `claude-switchboard --migrate`: re-launch the GUI which re-runs
+//!   migration idempotently.
 
 use anyhow::Result;
 use std::path::Path;

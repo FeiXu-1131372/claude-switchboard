@@ -17,14 +17,9 @@ use tokio::sync::Notify;
 /// Tauri commands. Kept as a named struct so future tasks (T22+) can add
 /// UI-visible state here (e.g. `last_outcome_by_account`) without churning
 /// AppState's field layout.
+#[derive(Default)]
 pub struct WarmupState {
     // Reserved for future per-account status badges (Plan B T22+).
-}
-
-impl Default for WarmupState {
-    fn default() -> Self {
-        Self {}
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

@@ -11,7 +11,7 @@ pub fn init(log_dir: PathBuf) -> tracing_appender::non_blocking::WorkerGuard {
     let file_appender = RollingFileAppender::new(
         Rotation::DAILY,
         &log_dir,
-        &format!("{}.log", crate::branding::USER_AGENT_PREFIX),
+        format!("{}.log", crate::branding::USER_AGENT_PREFIX),
     );
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 

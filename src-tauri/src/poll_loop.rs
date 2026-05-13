@@ -546,7 +546,7 @@ mod tests {
 
         assert_eq!(sched[&1].next_poll_at, now);
         assert_eq!(sched[&2].next_poll_at, now + d(30));
-        assert_eq!(sched.contains_key(&99), false);
+        assert!(!sched.contains_key(&99));
     }
 
     #[test]

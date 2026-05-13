@@ -257,11 +257,14 @@ mod tests {
     fn default_dir_uses_branding_constants() {
         let path = default_dir();
         let path_str = path.to_string_lossy();
-        // The macOS path is ~/Library/Application Support/com.claude-switchboard.ClaudeSwitchboard
-        // Linux/Windows produce platform-specific paths but always include the org+app strings.
+        // macOS: ~/Library/Application Support/com.claude-switchboard.ClaudeSwitchboard
+        // Windows: %LOCALAPPDATA%\claude-switchboard\ClaudeSwitchboard\data
+        // Linux: ~/.local/share/claudeswitchboard (directories crate lowercases
+        // and strips hyphens for the XDG project name).
         assert!(
             path_str.contains("claude-switchboard")
-                || path_str.contains("ClaudeSwitchboard"),
+                || path_str.contains("ClaudeSwitchboard")
+                || path_str.contains("claudeswitchboard"),
             "default_dir should reference branding constants, got: {path_str}",
         );
         assert!(

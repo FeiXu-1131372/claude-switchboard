@@ -12,6 +12,12 @@ pub struct LaunchdScheduler {
     plist_path: PathBuf,
 }
 
+impl Default for LaunchdScheduler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LaunchdScheduler {
     pub fn new() -> Self {
         let home = directories::UserDirs::new()
