@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { UsageBar } from '../popover/UsageBar';
-import { ResetCountdown } from '../popover/ResetCountdown';
 import { ipc } from '../lib/ipc';
 import type { AccountListEntry, Schedule } from '../lib/generated/bindings';
 import { WarmupToggle } from './WarmupToggle';
@@ -404,30 +403,24 @@ export function AccountRow({
         </div>
       ) : (
         <div className="flex flex-col gap-[var(--space-2xs)]">
-          {fiveHour && (
-            <div className="flex items-center gap-[var(--space-sm)]">
-              <span className="w-[20px] text-[length:var(--text-micro)] text-[color:var(--color-text-muted)] mono">
-                5h
-              </span>
-              <UsageBar value={fiveHour.utilization} warnAt={thresholds[0]} dangerAt={thresholds[1]} compact />
-              <span className="w-[36px] text-[length:var(--text-micro)] mono text-right">
-                {Math.round(fiveHour.utilization)}%
-              </span>
-              {fiveHour.resets_at && <ResetCountdown resetsAt={fiveHour.resets_at} compact />}
-            </div>
-          )}
-          {sevenDay && (
-            <div className="flex items-center gap-[var(--space-sm)]">
-              <span className="w-[20px] text-[length:var(--text-micro)] text-[color:var(--color-text-muted)] mono">
-                7d
-              </span>
-              <UsageBar value={sevenDay.utilization} warnAt={thresholds[0]} dangerAt={thresholds[1]} compact />
-              <span className="w-[36px] text-[length:var(--text-micro)] mono text-right">
-                {Math.round(sevenDay.utilization)}%
-              </span>
-              {sevenDay.resets_at && <ResetCountdown resetsAt={sevenDay.resets_at} compact />}
-            </div>
-          )}
+          <div className="grid grid-cols-2 gap-[var(--space-xl)]">
+            {fiveHour && (
+              <UsageBar
+                label="5h"
+                data={fiveHour}
+                warnAt={thresholds[0]}
+                dangerAt={thresholds[1]}
+              />
+            )}
+            {sevenDay && (
+              <UsageBar
+                label="7d"
+                data={sevenDay}
+                warnAt={thresholds[0]}
+                dangerAt={thresholds[1]}
+              />
+            )}
+          </div>
           {shareHint && (
             <span className="text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]">
               shares quota with {shareHint}
