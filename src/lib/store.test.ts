@@ -25,6 +25,7 @@ vi.mock('./ipc', () => ({
     getCurrentUsage: vi.fn().mockResolvedValue(null),
     getSettings: vi.fn().mockResolvedValue(null),
     hasClaudeCodeCreds: vi.fn().mockResolvedValue(false),
+    listAccounts: vi.fn().mockResolvedValue([]),
   },
 }));
 
