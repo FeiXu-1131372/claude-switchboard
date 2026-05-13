@@ -11,8 +11,10 @@ import { CacheTab } from './CacheTab';
 import { useAppStore } from '../lib/store';
 import { ipc } from '../lib/ipc';
 import { tabSlide } from '../lib/motion';
-import { IconRefresh, IconCollapse, X } from '../lib/icons';
+import { IconRefresh, IconCollapse, IconSettings, X } from '../lib/icons';
 import { handleDragStart, closeWindow } from '../lib/window-chrome';
+import { AccountsSidebar } from '../accounts/AccountsSidebar';
+import { SettingsModal } from '../components/modals/SettingsModal';
 
 const TAB_CONFIG = [
   { id: 'sessions', label: 'Sessions' },
@@ -36,6 +38,7 @@ export function ExpandedReport() {
   const [activeTab, setActiveTab] = useState<string>('sessions');
   const [refreshing, setRefreshing] = useState(false);
   const [tabKey, setTabKey] = useState(0);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const prevTabRef = useRef<string>('sessions');
   const stale = useAppStore((s) => s.stale);
   const usage = useAppStore((s) => s.usage);
@@ -65,83 +68,92 @@ export function ExpandedReport() {
   }
 
   return (
-    <div
-      className="flex h-full flex-col overflow-hidden"
-      style={{
-        width: '100%',
-        minHeight: 'var(--report-min-height)',
-        background: 'var(--color-bg-base)',
-      }}
-    >
-      {/* Header — generous padding, brand-warm tinted strip with hairline below */}
-      <header
-        onPointerDown={handleDragStart}
-        className="
-          relative flex items-center justify-between gap-[var(--space-md)]
-          px-[var(--space-2xl)] pt-[var(--space-xl)] pb-[var(--space-lg)]
-          shrink-0 cursor-default select-none
-        "
+    <>
+      <div
+        className="flex h-full overflow-hidden"
+        style={{
+          width: '100%',
+          minHeight: 'var(--report-min-height)',
+          background: 'var(--color-bg-base)',
+        }}
       >
-        <div className="flex items-center gap-[var(--space-xs)] pointer-events-none">
-          <span className="text-[length:var(--text-label)] font-[var(--weight-semibold)] text-[color:var(--color-text-secondary)] tracking-[var(--tracking-label)] uppercase">
-            Claude
-          </span>
-          <span className="text-[length:var(--text-label)] tracking-[var(--tracking-label)] uppercase text-[color:var(--color-text-muted)]">
-            · {stale ? 'Stale' : 'Live'} · last 30 days
-          </span>
-        </div>
-        <div className="flex items-center gap-[2px]">
-          <IconButton label="Refresh" onClick={handleRefresh}>
-            <motion.span
-              animate={refreshing ? { rotate: 360 } : { rotate: 0 }}
-              transition={
-                refreshing
-                  ? { duration: 0.7, ease: 'linear', repeat: Infinity }
-                  : { duration: 0.2 }
-              }
-              style={{ display: 'inline-flex' }}
+        <AccountsSidebar />
+        <div className="flex flex-1 flex-col overflow-hidden min-w-0">
+          {/* Header — generous padding, brand-warm tinted strip with hairline below */}
+          <header
+            onPointerDown={handleDragStart}
+            className="
+              relative flex items-center justify-between gap-[var(--space-md)]
+              px-[var(--space-2xl)] pt-[var(--space-xl)] pb-[var(--space-lg)]
+              shrink-0 cursor-default select-none
+            "
+          >
+            <div className="flex items-center gap-[var(--space-xs)] pointer-events-none">
+              <span className="text-[length:var(--text-label)] font-[var(--weight-semibold)] text-[color:var(--color-text-secondary)] tracking-[var(--tracking-label)] uppercase">
+                Claude
+              </span>
+              <span className="text-[length:var(--text-label)] tracking-[var(--tracking-label)] uppercase text-[color:var(--color-text-muted)]">
+                · {stale ? 'Stale' : 'Live'} · last 30 days
+              </span>
+            </div>
+            <div className="flex items-center gap-[2px]">
+              <IconButton label="Refresh" onClick={handleRefresh}>
+                <motion.span
+                  animate={refreshing ? { rotate: 360 } : { rotate: 0 }}
+                  transition={
+                    refreshing
+                      ? { duration: 0.7, ease: 'linear', repeat: Infinity }
+                      : { duration: 0.2 }
+                  }
+                  style={{ display: 'inline-flex' }}
+                >
+                  <IconRefresh size={13} />
+                </motion.span>
+              </IconButton>
+              <IconButton label="Settings" onClick={() => setSettingsOpen(true)}>
+                <IconSettings size={13} />
+              </IconButton>
+              <IconButton label="Collapse details" onClick={toggleViewMode}>
+                <IconCollapse size={13} />
+              </IconButton>
+              <IconButton label="Close" onClick={closeWindow}>
+                <X size={13} />
+              </IconButton>
+            </div>
+          </header>
+
+          {/* Condensed usage summary — compact readout at the top of expanded view */}
+          {usage && (
+            <>
+              <UsageSummary usage={usage} thresholds={[warn, danger]} condensed />
+              <div className="mx-[var(--space-2xl)] border-t border-[var(--color-rule)]" />
+            </>
+          )}
+
+          {/* Tab bar — text-only, with a single sliding underline indicator */}
+          <TabBar
+            activeId={activeTab}
+            onSelect={setActiveTab}
+            tabs={TAB_CONFIG.map((t) => ({ id: t.id, label: t.label }))}
+          />
+
+          {/* Tab content */}
+          <div className="flex-1 overflow-y-auto px-[var(--space-2xl)] pb-[var(--space-2xl)] pt-[var(--space-lg)]">
+            <motion.div
+              key={`${activeTab}-${tabKey}`}
+              variants={tabSlide}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              custom={slideDir}
             >
-              <IconRefresh size={13} />
-            </motion.span>
-          </IconButton>
-          <IconButton label="Collapse details" onClick={toggleViewMode}>
-            <IconCollapse size={13} />
-          </IconButton>
-          <IconButton label="Close" onClick={closeWindow}>
-            <X size={13} />
-          </IconButton>
+              <TabComponent />
+            </motion.div>
+          </div>
         </div>
-      </header>
-
-      {/* Condensed usage summary — compact readout at the top of expanded view */}
-      {usage && (
-        <>
-          <UsageSummary usage={usage} thresholds={[warn, danger]} condensed />
-          <div className="mx-[var(--space-2xl)] border-t border-[var(--color-rule)]" />
-        </>
-      )}
-
-      {/* Tab bar — text-only, with a single sliding underline indicator */}
-      <TabBar
-        activeId={activeTab}
-        onSelect={setActiveTab}
-        tabs={TAB_CONFIG.map((t) => ({ id: t.id, label: t.label }))}
-      />
-
-      {/* Tab content */}
-      <div className="flex-1 overflow-y-auto px-[var(--space-2xl)] pb-[var(--space-2xl)] pt-[var(--space-lg)]">
-        <motion.div
-          key={`${activeTab}-${tabKey}`}
-          variants={tabSlide}
-          initial="enter"
-          animate="center"
-          exit="exit"
-          custom={slideDir}
-        >
-          <TabComponent />
-        </motion.div>
       </div>
-    </div>
+      {settingsOpen && <SettingsModal onDismiss={() => setSettingsOpen(false)} />}
+    </>
   );
 }
 
