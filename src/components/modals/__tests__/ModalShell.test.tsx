@@ -117,4 +117,34 @@ describe('ModalShell', () => {
     expect(fn).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: /close/i })).toBeNull();
   });
+
+  it('focuses the card on mount', () => {
+    render(
+      <ModalShell onDismiss={() => {}} id="m1">
+        <button>inside</button>
+      </ModalShell>,
+    );
+    // The card itself should receive focus (tabIndex=-1 makes it programmatically focusable).
+    expect(document.activeElement?.getAttribute('data-testid')).not.toBe('modal-backdrop');
+    // Either the card or the first focusable inside is active.
+    const active = document.activeElement;
+    expect(active).not.toBe(document.body);
+  });
+
+  it('restores focus to previous element on unmount', () => {
+    const prev = document.createElement('button');
+    prev.textContent = 'outside';
+    document.body.appendChild(prev);
+    prev.focus();
+    expect(document.activeElement).toBe(prev);
+
+    const { unmount } = render(
+      <ModalShell onDismiss={() => {}} id="m1">
+        <button>inside</button>
+      </ModalShell>,
+    );
+    unmount();
+    expect(document.activeElement).toBe(prev);
+    document.body.removeChild(prev);
+  });
 });

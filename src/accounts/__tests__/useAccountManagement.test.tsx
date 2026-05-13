@@ -92,6 +92,16 @@ describe('useAccountManagement', () => {
     expect(result.current.pending).toBe(null);
   });
 
+  it('confirmSwap sets confirmError when ipc.swapToAccount rejects', async () => {
+    // Override the mock to reject for this test
+    ipcMock.swapToAccount.mockRejectedValueOnce(new Error('network down'));
+    const { result } = renderHook(() => useAccountManagement());
+    await act(async () => { await result.current.requestSwap(ACCOUNTS[1] as any); });
+    await act(async () => { await result.current.confirmSwap(); });
+    expect(result.current.confirmError).toBe('network down');
+    expect(result.current.swappingSlot).toBe(null);
+  });
+
   it('handleReauth opens browser and records the pending slot', async () => {
     const { result } = renderHook(() => useAccountManagement());
     await act(async () => { await result.current.handleReauth(ACCOUNTS[1] as any); });

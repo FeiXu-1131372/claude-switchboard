@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { useAppStore } from '../../lib/store';
 import { IconButton } from '../ui/IconButton';
 import { X } from '../../lib/icons';
@@ -33,6 +33,8 @@ export function ModalShell({
   const isTopmost = useAppStore((s) => s.isTopmost);
   const stackDepth = useAppStore((s) => s.modalStack.indexOf(id));
 
+  const cardRef = useRef<HTMLDivElement>(null);
+
   // useLayoutEffect commits before paint so the z-index calculation reflects
   // stack position on the first painted frame. useEffect would leave one
   // pre-commit frame at the wrong z when two modals mount in the same tick.
@@ -40,6 +42,15 @@ export function ModalShell({
     pushModal(id);
     return () => popModal(id);
   }, [id, pushModal, popModal]);
+
+  // Focus trap: capture previously-focused element, focus the card on mount,
+  // restore on unmount. Spec §4.2 requires a focus trap so keyboard users
+  // can't Tab off the modal into underlying content.
+  useLayoutEffect(() => {
+    const prev = document.activeElement as HTMLElement | null;
+    cardRef.current?.focus();
+    return () => prev?.focus();
+  }, []);
 
   useEffect(() => {
     if (!dismissable) return;
@@ -51,6 +62,33 @@ export function ModalShell({
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
   }, [id, isTopmost, onDismiss, dismissable]);
+
+  // Tab/Shift+Tab wrap. Only the topmost modal traps focus so a stacked
+  // modal-on-top owns the trap.
+  useEffect(() => {
+    function handleTab(e: KeyboardEvent) {
+      if (e.key !== 'Tab') return;
+      if (!isTopmost(id)) return;
+      const card = cardRef.current;
+      if (!card) return;
+      const focusables = card.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+    window.addEventListener('keydown', handleTab);
+    return () => window.removeEventListener('keydown', handleTab);
+  }, [id, isTopmost]);
 
   const z = 50 + 10 * Math.max(0, stackDepth);
   const titleId = title ? `${id}-title` : undefined;
@@ -71,12 +109,15 @@ export function ModalShell({
       }}
     >
       <div
+        ref={cardRef}
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         className={`
           w-full ${SIZE_CLASSES[size]} max-h-full overflow-y-auto
           rounded-[var(--radius-lg)]
           border
           shadow-[0_12px_36px_oklch(0%_0_0_/_0.4)]
+          outline-none
         `}
         style={{
           background: 'var(--color-bg-elevated)',
