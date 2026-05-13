@@ -1,0 +1,102 @@
+import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useAppStore } from '../../lib/store';
+import { IconButton } from '../ui/IconButton';
+import { X } from '../../lib/icons';
+
+interface Props {
+  id: string;
+  onDismiss: () => void;
+  title?: string;
+  size?: 'sm' | 'md' | 'lg';
+  /** When false, ESC, backdrop click, and the title-bar X are all disabled.
+   *  Used by forced-decision dialogs like WarmupConsentModal. Default true. */
+  dismissable?: boolean;
+  children: React.ReactNode;
+}
+
+const SIZE_CLASSES: Record<NonNullable<Props['size']>, string> = {
+  sm: 'max-w-[320px]',
+  md: 'max-w-[480px]',
+  lg: 'max-w-[640px]',
+};
+
+export function ModalShell({
+  id,
+  onDismiss,
+  title,
+  size = 'md',
+  dismissable = true,
+  children,
+}: Props) {
+  const pushModal = useAppStore((s) => s.pushModal);
+  const popModal = useAppStore((s) => s.popModal);
+  const isTopmost = useAppStore((s) => s.isTopmost);
+  const stackDepth = useAppStore((s) => s.modalStack.indexOf(id));
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  // useLayoutEffect commits before paint so the z-index calculation reflects
+  // stack position on the first painted frame. useEffect would leave one
+  // pre-commit frame at the wrong z when two modals mount in the same tick.
+  useLayoutEffect(() => {
+    pushModal(id);
+    return () => popModal(id);
+  }, [id, pushModal, popModal]);
+
+  useEffect(() => {
+    if (!dismissable) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape' && isTopmost(id)) {
+        onDismiss();
+      }
+    }
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [id, isTopmost, onDismiss, dismissable]);
+
+  const z = 50 + 10 * Math.max(0, stackDepth);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      data-testid="modal-backdrop"
+      onClick={() => {
+        if (dismissable && isTopmost(id)) onDismiss();
+      }}
+      className="fixed inset-0 flex items-center justify-center p-4"
+      style={{
+        zIndex: z,
+        background: 'var(--color-overlay, oklch(0% 0 0 / 0.55))',
+      }}
+    >
+      <div
+        ref={cardRef}
+        onClick={(e) => e.stopPropagation()}
+        className={`
+          w-full ${SIZE_CLASSES[size]} max-h-full overflow-y-auto
+          rounded-[var(--radius-lg)]
+          border
+          shadow-[0_12px_36px_oklch(0%_0_0_/_0.4)]
+        `}
+        style={{
+          background: 'var(--color-bg-elevated)',
+          borderColor: 'var(--color-border)',
+        }}
+      >
+        {title && (
+          <div className="flex items-center justify-between px-[var(--space-md)] py-[var(--space-sm)] border-b border-[var(--color-rule)]">
+            <span className="text-[length:var(--text-label)] font-[var(--weight-semibold)] uppercase tracking-[var(--tracking-label)] text-[color:var(--color-text-secondary)]">
+              {title}
+            </span>
+            {dismissable && (
+              <IconButton label="Close" onClick={onDismiss}>
+                <X size={13} />
+              </IconButton>
+            )}
+          </div>
+        )}
+        {children}
+      </div>
+    </div>
+  );
+}
