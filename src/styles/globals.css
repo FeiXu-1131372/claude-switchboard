@@ -113,6 +113,12 @@ body[data-os="windows"][data-view-mode="expanded"] .win-animated-container {
   50%      { transform: scale(2.4); opacity: 0; }
 }
 
+/* Fade-in for transient confirmation messages (e.g. "Settings saved"). */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 /* One-shot appear animation triggered when the popover/window becomes
  * visible from the tray. Driven by body[data-appearing="true"] which
  * the store sets for ~240ms after a popover_shown event. Subtle scale

@@ -28,6 +28,7 @@ export function SettingsPanel() {
   const [local, setLocal] = useState<Settings | null>(() => settings);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [savedOk, setSavedOk] = useState(false);
   const [consentGranted, setConsentGranted] = useState(false);
   const [osRegistered, setOsRegistered] = useState(false);
 
@@ -64,6 +65,7 @@ export function SettingsPanel() {
     if (!local) return;
     setSaving(true);
     setSaveError(null);
+    setSavedOk(false);
     try {
       const next: Settings = {
         ...local,
@@ -87,7 +89,10 @@ export function SettingsPanel() {
         // Autostart toggle is best-effort: surface but don't fail the whole save.
         const msg = e instanceof Error ? e.message : String(e);
         setSaveError(`Saved, but autostart toggle failed: ${msg}`);
+        return;
       }
+      setSavedOk(true);
+      setTimeout(() => setSavedOk(false), 2000);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setSaveError(`Save failed: ${msg}`);
@@ -271,7 +276,15 @@ export function SettingsPanel() {
         {saveError && (
           <span className="text-[length:var(--text-micro)] text-[color:var(--color-danger)]">{saveError}</span>
         )}
-        <div className="flex justify-end">
+        <div className="flex items-center justify-end gap-[var(--space-sm)]">
+          {savedOk && (
+            <span
+              className="text-[length:var(--text-label)] font-[var(--weight-medium)] text-[color:var(--color-accent)]"
+              style={{ animation: 'fadeIn 150ms ease-out' }}
+            >
+              ✓ Settings saved
+            </span>
+          )}
           <Button variant="primary" onClick={save} disabled={saving}>
             {saving ? 'Saving…' : 'Save'}
           </Button>
