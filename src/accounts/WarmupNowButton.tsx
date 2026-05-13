@@ -34,8 +34,8 @@ export function WarmupNowButton({ enabled, onClick, busy = false, status = "idle
             : status === "error"
               ? "bg-[var(--color-danger-dim)] text-[color:var(--color-danger)] hover:bg-[var(--color-danger)] hover:text-white"
               : busy
-                ? "bg-teal-500/15 text-teal-200 cursor-progress"
-                : "bg-teal-500/15 hover:bg-teal-500/25 text-teal-200",
+                ? "bg-[var(--color-teal-dim)] text-[color:var(--color-teal)] cursor-progress"
+                : "bg-[var(--color-teal-dim)] hover:bg-teal-500/25 text-[color:var(--color-teal)]",
       ].join(" ")}
     >
       {busy ? (

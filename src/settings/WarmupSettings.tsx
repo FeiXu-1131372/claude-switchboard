@@ -23,7 +23,7 @@ export function WarmupSettings({
           <button
             type="button"
             onClick={onRevoke}
-            className="px-2 py-0.5 rounded bg-red-500/15 hover:bg-red-500/25 text-red-200 text-[11px]"
+            className="px-2 py-0.5 rounded bg-[var(--color-danger-dim)] hover:bg-[var(--color-danger)] hover:text-white text-[color:var(--color-danger)] text-[11px]"
           >
             Revoke
           </button>
@@ -38,7 +38,7 @@ export function WarmupSettings({
           <button
             type="button"
             onClick={onUnregisterOs}
-            className="px-2 py-0.5 rounded bg-neutral-700/40 hover:bg-neutral-700/60 text-neutral-200 text-[11px]"
+            className="px-2 py-0.5 rounded bg-[var(--color-bg-surface-hover)] hover:bg-[var(--color-border-hover)] text-[color:var(--color-text)] text-[11px]"
           >
             Unregister
           </button>
@@ -46,7 +46,7 @@ export function WarmupSettings({
           <button
             type="button"
             onClick={onRegisterOs}
-            className="px-2 py-0.5 rounded bg-teal-500/15 hover:bg-teal-500/25 text-teal-200 text-[11px]"
+            className="px-2 py-0.5 rounded bg-[var(--color-teal-dim)] hover:bg-teal-500/25 text-[color:var(--color-teal)] text-[11px]"
           >
             Register
           </button>

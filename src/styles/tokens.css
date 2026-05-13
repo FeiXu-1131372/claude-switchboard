@@ -55,6 +55,9 @@
   --color-warn-dim: oklch(62% 0.150 55 / 0.10);
   --color-danger: oklch(48% 0.180 28);
   --color-danger-dim: oklch(48% 0.180 28 / 0.10);
+  
+  --color-teal: oklch(48% 0.12 180);
+  --color-teal-dim: oklch(68% 0.14 180 / 0.15);
 
   /* Deprecated — alias kept one release for backward compat with consumers
    * that still reference --color-safe. Slated for removal. */
@@ -199,6 +202,9 @@ body[data-theme="dark"] {
   --color-warn-dim: oklch(76% 0.155 60 / 0.14);
   --color-danger: oklch(64% 0.195 25);
   --color-danger-dim: oklch(64% 0.195 25 / 0.14);
+
+  --color-teal: oklch(90% 0.10 180);
+  --color-teal-dim: oklch(68% 0.14 180 / 0.15);
 
   /* Aliases */
   --color-safe: var(--color-accent);
