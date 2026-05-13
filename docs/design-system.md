@@ -8,37 +8,58 @@ Calm, premium, scannable. The interface uses a warm glassy aesthetic inspired by
 
 ### Foundation
 
-The palette is built on an **Anthropic warm orange/terracotta** foundation. Surfaces use warm neutrals with an orange undertone — never cool gray, never pure black/white. The primary interactive accent is **teal/cyan**.
+The palette is built on an Anthropic warm cream/bone foundation (cream theme, default) or a refined warm-dark base (dark theme). Surfaces use warm neutrals with an orange undertone in both themes — never cool gray, never pure black/white. The single accent is terracotta. Status color is used sparingly: most data lives in warm-neutral or terracotta; amber and coral only appear at the 75% and 90% thresholds.
 
 ### Semantic tokens
 
-| Token | Dark | Light | Usage |
+| Token | Cream | Dark | Role |
 |---|---|---|---|
-| `--color-bg-base` | `#1a1714` | `#faf6f1` | Page background |
-| `--color-bg-surface` | `rgba(38,34,30,0.72)` | `rgba(255,252,247,0.72)` | Popover / window surface |
-| `--color-bg-card` | `rgba(50,44,38,0.45)` | `rgba(255,255,255,0.55)` | Card backgrounds |
-| `--color-border` | `rgba(255,235,210,0.08)` | `rgba(120,90,60,0.1)` | Card borders |
-| `--color-text` | `rgba(255,248,240,0.92)` | `rgba(30,22,15,0.92)` | Primary text |
-| `--color-text-secondary` | `rgba(255,235,210,0.55)` | `rgba(60,45,30,0.6)` | Labels, secondary info |
-| `--color-text-muted` | `rgba(255,235,210,0.3)` | `rgba(60,45,30,0.35)` | Timestamps, tertiary text |
-| `--color-accent` | `#2dd4bf` | `#0d9488` | Interactive elements, links |
-| `--color-safe` | `#34d399` | `#059669` | Normal usage, Opus model |
-| `--color-warn` | `#fb923c` | `#d97706` | Approaching limit, Sonnet |
-| `--color-danger` | `#f87171` | `#dc2626` | Over limit, errors |
+| `--color-bg-base` | `oklch(94% 0.008 85)` | `oklch(24% 0.014 65)` | Page/window background |
+| `--color-bg-surface` | `oklch(96% 0.006 85)` | `oklch(28% 0.016 65)` | Popover canvas |
+| `--color-bg-surface-hover` | `oklch(92% 0.010 80)` | `oklch(32% 0.018 65)` | Surface hover |
+| `--color-bg-card` | `oklch(98% 0.004 85)` | `oklch(34% 0.022 65)` | Card backgrounds |
+| `--color-bg-card-hover` | `oklch(99.5% 0.004 85)` | `oklch(38% 0.024 65)` | Card hover |
+| `--color-bg-elevated` | `oklch(99% 0.003 85)` | `oklch(42% 0.026 65)` | Elevated surfaces (modal cards, popovers within popover) |
+| `--color-rule` | `oklch(40% 0.015 65 / 0.06)` | `oklch(95% 0.020 65 / 0.06)` | Hairline rules |
+| `--color-rule-strong` | `oklch(40% 0.015 65 / 0.14)` | `oklch(95% 0.020 65 / 0.14)` | Stronger hairlines |
+| `--color-border` | `oklch(40% 0.015 65 / 0.12)` | `oklch(95% 0.020 65 / 0.20)` | Card outlines |
+| `--color-border-subtle` | `oklch(40% 0.015 65 / 0.06)` | `oklch(95% 0.020 65 / 0.10)` | Subtle borders |
+| `--color-border-hover` | `oklch(40% 0.015 65 / 0.22)` | `oklch(95% 0.020 65 / 0.30)` | Border on hover |
+| `--color-border-focus` | `oklch(56% 0.155 38 / 0.55)` | `oklch(70% 0.140 38 / 0.50)` | Focus ring |
+| `--color-text` | `oklch(22% 0.018 50)` | `oklch(96% 0.010 65 / 0.96)` | Primary text |
+| `--color-text-secondary` | `oklch(38% 0.020 55)` | `oklch(86% 0.020 65 / 0.78)` | Labels, secondary |
+| `--color-text-muted` | `oklch(55% 0.022 60)` | `oklch(78% 0.025 65 / 0.62)` | Timestamps, tertiary |
+| `--color-accent` | `oklch(56% 0.155 38)` | `oklch(70% 0.140 38)` | Interactive, terracotta |
+| `--color-accent-dim` | `oklch(56% 0.155 38 / 0.10)` | `oklch(70% 0.140 38 / 0.14)` | Hover wash, selection bg |
+| `--color-accent-muted` | `oklch(56% 0.155 38 / 0.24)` | `oklch(70% 0.140 38 / 0.28)` | Subdued accent surfaces |
+| `--color-warn` | `oklch(62% 0.150 55)` | `oklch(76% 0.155 60)` | ≥75% threshold |
+| `--color-warn-dim` | `oklch(62% 0.150 55 / 0.10)` | `oklch(76% 0.155 60 / 0.14)` | Warn-tinted backgrounds |
+| `--color-danger` | `oklch(48% 0.180 28)` | `oklch(64% 0.195 25)` | ≥90% threshold |
+| `--color-danger-dim` | `oklch(48% 0.180 28 / 0.10)` | `oklch(64% 0.195 25 / 0.14)` | Danger backgrounds |
+| `--color-safe` | `var(--color-accent)` (alias) | `var(--color-accent)` (alias) | Deprecated; alias kept one release, removed in the next |
+| `--color-safe-dim` | `var(--color-accent-dim)` (alias) | `var(--color-accent-dim)` (alias) | Deprecated; same deprecation path as `--color-safe` |
+| `--color-track` | `oklch(40% 0.015 65 / 0.10)` | `oklch(95% 0.020 65 / 0.18)` | Progress bar empty track |
+| `--color-overlay` | `oklch(20% 0.010 60 / 0.35)` | `oklch(10% 0.010 65 / 0.55)` | Modal overlay |
 
 ### Status color mapping
 
-Progress bars use gradient fills that shift at 75% and 90% thresholds:
+Progress bars use a flat fill that swaps color at thresholds:
 
-- **Safe (0–74%):** green-to-teal gradient (`--color-safe` → `--color-accent`)
-- **Warning (75–89%):** teal-to-orange gradient (`--color-accent` → `--color-warn`)
-- **Danger (90–100%):** orange-to-red gradient (`--color-warn` → `--color-danger`)
+- **Safe (0–74%):** terracotta accent (`--color-accent`).
+- **Warning (75–89%):** warm amber (`--color-warn`).
+- **Danger (90–100%):** deep coral (`--color-danger`).
+
+The 200ms color transition is separate from the bar-length spring (700ms). There is no longer a "green" safe state — color is reserved for actionable signals.
 
 ### Model colors
 
-- **Opus:** teal/cyan (`--color-accent`)
-- **Sonnet:** amber-orange (`--color-warn`)
-- **Haiku:** green (`--color-safe`)
+Model chips use tonal variations on the warm family:
+
+- **Opus:** deep terracotta (`--color-model-opus`)
+- **Sonnet:** clay (`--color-model-sonnet`)
+- **Haiku:** pale sand (`--color-model-haiku`)
+
+Text on each chip uses the paired `--color-model-*-text` token to maintain ≥4.5:1 contrast in both themes.
 
 ## Typography
 
@@ -191,6 +212,7 @@ Sectioned settings within the popover:
 - **Polling:** Interval slider (1–30m), warning about frequent polling
 - **Notifications:** Warning and danger threshold sliders
 - **Account:** Connection status badge, sign out button
+- **Appearance:** Three radio options — Cream (default), Dark, Auto (follow OS). Selection writes through to local storage immediately; no Save button.
 
 ### AuthPanel
 
