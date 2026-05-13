@@ -11,7 +11,6 @@ vi.mock('../../lib/ipc', () => ({
 vi.mock('../../lib/store', () => ({
   useAppStore: (sel: (s: any) => any) =>
     sel({
-      accounts: [],
       refreshAccounts: vi.fn(),
     }),
 }));

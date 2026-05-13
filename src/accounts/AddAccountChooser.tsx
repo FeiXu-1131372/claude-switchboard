@@ -5,11 +5,11 @@ import { AuthPanel } from '../settings/AuthPanel';
 
 interface Props {
   onClose: () => void;
+  /** 'modal' hides the in-body heading and Cancel — parent ModalShell provides them. Default 'modal'. */
   presentation?: 'modal' | 'fullpane';
 }
 
 export function AddAccountChooser({ onClose, presentation = 'modal' }: Props) {
-  const accounts = useAppStore((s) => s.accounts);
   const refreshAccounts = useAppStore((s) => s.refreshAccounts);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,8 +33,6 @@ export function AddAccountChooser({ onClose, presentation = 'modal' }: Props) {
     return <AuthPanel presentation={presentation} onBack={() => setShowOauth(false)} />;
   }
 
-  const showImportTile = true;
-
   return (
     <div className="flex flex-col gap-[var(--space-md)] px-[var(--popover-pad)] py-[var(--space-md)]">
       {presentation === 'fullpane' && (
@@ -42,19 +40,17 @@ export function AddAccountChooser({ onClose, presentation = 'modal' }: Props) {
           Add account
         </h2>
       )}
-      {showImportTile && (
-        <button
-          type="button"
-          onClick={importLive}
-          disabled={busy}
-          className="rounded-[var(--radius-sm)] border border-[var(--color-border)] px-[var(--space-md)] py-[var(--space-sm)] text-left hover:bg-[var(--color-track)]"
-        >
-          <div className="text-[length:var(--text-body)]">Use upstream's current login</div>
-          <div className="text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]">
-            Imports the account the CLI is signed into right now
-          </div>
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={importLive}
+        disabled={busy}
+        className="rounded-[var(--radius-sm)] border border-[var(--color-border)] px-[var(--space-md)] py-[var(--space-sm)] text-left hover:bg-[var(--color-track)]"
+      >
+        <div className="text-[length:var(--text-body)]">Use upstream's current login</div>
+        <div className="text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]">
+          Imports the account the CLI is signed into right now
+        </div>
+      </button>
       <button
         type="button"
         onClick={() => setShowOauth(true)}
@@ -79,7 +75,6 @@ export function AddAccountChooser({ onClose, presentation = 'modal' }: Props) {
           Cancel
         </button>
       )}
-      <span hidden>{accounts.length}</span>
     </div>
   );
 }

@@ -128,7 +128,8 @@ export function AccountsPanel({ onBack }: Props) {
   }
 
   if (chooserOpen) {
-    return <AddAccountChooser onClose={() => setChooserOpen(false)} />;
+    // Bridge: until Task 8 wraps this in ModalShell, render fullpane chrome.
+    return <AddAccountChooser presentation="fullpane" onClose={() => setChooserOpen(false)} />;
   }
 
   if (pending) {
