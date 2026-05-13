@@ -241,10 +241,14 @@ export const useAppStore = create<AppStore>((set, _get) => ({
   },
 
   pushModal(id) {
-    set((s) => ({ modalStack: [...s.modalStack, id] }));
+    set((s) => (s.modalStack.includes(id) ? {} : { modalStack: [...s.modalStack, id] }));
   },
   popModal(id) {
-    set((s) => ({ modalStack: s.modalStack.filter((x) => x !== id) }));
+    set((s) => {
+      const i = s.modalStack.lastIndexOf(id);
+      if (i === -1) return {};
+      return { modalStack: [...s.modalStack.slice(0, i), ...s.modalStack.slice(i + 1)] };
+    });
   },
   isTopmost(id) {
     const stack = _get().modalStack;

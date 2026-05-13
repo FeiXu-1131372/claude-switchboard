@@ -41,4 +41,14 @@ describe('modalStack', () => {
     expect(useAppStore.getState().isTopmost('b')).toBe(true);
     expect(useAppStore.getState().isTopmost('a')).toBe(false);
   });
+
+  it('push of same id is idempotent (no-op on duplicate)', () => {
+    useAppStore.getState().pushModal('a');
+    useAppStore.getState().pushModal('a');
+    expect(useAppStore.getState().modalStack).toEqual(['a']);
+  });
+
+  it('isTopmost returns false on empty stack', () => {
+    expect(useAppStore.getState().isTopmost('a')).toBe(false);
+  });
 });
