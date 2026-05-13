@@ -21,7 +21,7 @@
         "shadow": false,
         "alwaysOnTop": true,
         "visible": false,
-        "skipTaskbar": true
+        "skipTaskbar": false
       }
     ],
     "trayIcon": {

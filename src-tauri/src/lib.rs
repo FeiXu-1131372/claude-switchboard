@@ -206,14 +206,13 @@ pub fn run() {
             let handle = app.handle().clone();
             let state: Arc<AppState> = app.state::<Arc<AppState>>().inner().clone();
 
-            // Make this a menubar-only app on macOS — no Dock icon, no app
-            // switcher entry. Without this, NSStatusItem can fail to register
-            // visibly (the icon ends up at an off-screen position macOS picks
-            // for "regular" apps). With Accessory policy, the tray icon is
-            // the app's only UI surface and macOS places it correctly.
+            // Regular activation policy on macOS: the app shows up in
+            // Cmd+Tab and gets a Dock icon, alongside the tray icon. The
+            // earlier `Accessory` policy made this a menubar-only utility,
+            // but the user wants it switchable like a normal app.
             #[cfg(target_os = "macos")]
             {
-                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                app.set_activation_policy(tauri::ActivationPolicy::Regular);
             }
 
             // Force the popover to its configured fixed size on every launch.
@@ -336,6 +335,45 @@ pub fn run() {
                 tracing::error!(
                     "tray_by_id('main') returned None — tauri.conf.json `trayIcon` block missing?"
                 );
+            }
+
+            // First-run UX: a tray-only launch on a fresh install looks like
+            // nothing happened — the user can't find the menubar icon and
+            // assumes the app didn't open. Auto-show the popover the very
+            // first time we boot on this machine, then drop a marker so every
+            // subsequent launch is silent (tray-only, as designed).
+            //
+            // Trigger on EITHER signal:
+            //   - Sentinel file missing → first launch after install/upgrade.
+            //   - No managed accounts → user needs the AuthPanel anyway.
+            let first_run_marker = data_dir.join(".first_run_done");
+            let no_marker = !first_run_marker.exists();
+            let no_accounts = state
+                .accounts
+                .list()
+                .map(|v| v.is_empty())
+                .unwrap_or(true);
+            if no_marker || no_accounts {
+                if let Some(popover) = app.get_webview_window("popover") {
+                    use tauri::Emitter;
+                    use tauri_plugin_positioner::{Position, WindowExt};
+                    // Position::TrayCenter would panic here — the positioner
+                    // plugin caches the tray rect from `on_tray_event` calls,
+                    // and no tray event has fired yet during `setup`. Use
+                    // TopRight, which only needs the monitor work-area and is
+                    // visually close to the menubar tray icon anyway.
+                    let _ = popover.move_window(Position::TopRight);
+                    let _ = popover.show();
+                    let _ = popover.set_focus();
+                    let _ = popover.app_handle().emit("popover_shown", ());
+                }
+                if no_marker {
+                    if let Err(e) = std::fs::write(&first_run_marker, b"") {
+                        tracing::warn!(
+                            "could not write first-run marker {first_run_marker:?}: {e}"
+                        );
+                    }
+                }
             }
 
             // Emit db_reset if the DB was corrupt and had to be recreated.
@@ -469,6 +507,22 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Dock-click (macOS) / taskbar-click on a hidden window (Windows):
+            // when the user activates the app while no window is visible, the
+            // popover stays hidden and the click looks broken. Re-show it.
+            if let tauri::RunEvent::Reopen { has_visible_windows, .. } = event {
+                if !has_visible_windows {
+                    use tauri::Manager;
+                    if let Some(w) = app.get_webview_window("popover") {
+                        use tauri::Emitter;
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                        let _ = w.app_handle().emit("popover_shown", ());
+                    }
+                }
+            }
+        });
 }
