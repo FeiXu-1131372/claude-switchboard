@@ -5,9 +5,10 @@ import { AuthPanel } from '../settings/AuthPanel';
 
 interface Props {
   onClose: () => void;
+  presentation?: 'modal' | 'fullpane';
 }
 
-export function AddAccountChooser({ onClose }: Props) {
+export function AddAccountChooser({ onClose, presentation = 'modal' }: Props) {
   const accounts = useAppStore((s) => s.accounts);
   const refreshAccounts = useAppStore((s) => s.refreshAccounts);
   const [busy, setBusy] = useState(false);
@@ -28,16 +29,19 @@ export function AddAccountChooser({ onClose }: Props) {
     }
   }
 
-  if (showOauth) return <AuthPanel onBack={() => setShowOauth(false)} />;
+  if (showOauth) {
+    return <AuthPanel presentation={presentation} onBack={() => setShowOauth(false)} />;
+  }
 
-  const liveAlreadyManaged = false;
-  const showImportTile = !liveAlreadyManaged;
+  const showImportTile = true;
 
   return (
     <div className="flex flex-col gap-[var(--space-md)] px-[var(--popover-pad)] py-[var(--space-md)]">
-      <h2 className="text-[length:var(--text-label)] uppercase tracking-[var(--tracking-label)] text-[color:var(--color-text-secondary)]">
-        Add account
-      </h2>
+      {presentation === 'fullpane' && (
+        <h2 className="text-[length:var(--text-label)] uppercase tracking-[var(--tracking-label)] text-[color:var(--color-text-secondary)]">
+          Add account
+        </h2>
+      )}
       {showImportTile && (
         <button
           type="button"
@@ -66,14 +70,15 @@ export function AddAccountChooser({ onClose }: Props) {
           {error}
         </span>
       )}
-      <button
-        type="button"
-        onClick={onClose}
-        className="self-start text-[length:var(--text-micro)] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
-      >
-        Cancel
-      </button>
-      {/* Suppress unused-var lint */}
+      {presentation === 'fullpane' && (
+        <button
+          type="button"
+          onClick={onClose}
+          className="self-start text-[length:var(--text-micro)] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
+        >
+          Cancel
+        </button>
+      )}
       <span hidden>{accounts.length}</span>
     </div>
   );
