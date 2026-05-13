@@ -5,7 +5,8 @@ import { AccountRow } from './AccountRow';
 import { AddAccountChooser } from './AddAccountChooser';
 import { SwapConfirmCard } from './SwapConfirmCard';
 import { ModalShell } from '../components/modals/ModalShell';
-import { IconRefresh } from '../lib/icons';
+import { IconRefresh, X } from '../lib/icons';
+import { closeWindow } from '../lib/window-chrome';
 import { useAccountManagement } from './useAccountManagement';
 
 interface Props {
@@ -50,19 +51,24 @@ export function AccountsPanel({ onBack }: Props) {
         <span className="text-[length:var(--text-label)] uppercase tracking-[var(--tracking-label)] text-[color:var(--color-text-secondary)]">
           Accounts
         </span>
-        <IconButton label="Refresh all" onClick={handleRefreshAll}>
-          <motion.span
-            animate={refreshing ? { rotate: 360 } : { rotate: 0 }}
-            transition={
-              refreshing
-                ? { duration: 0.7, ease: 'linear', repeat: Infinity }
-                : { duration: 0.2 }
-            }
-            style={{ display: 'inline-flex' }}
-          >
-            <IconRefresh size={13} />
-          </motion.span>
-        </IconButton>
+        <div className="flex items-center gap-[2px]">
+          <IconButton label="Refresh all" onClick={handleRefreshAll}>
+            <motion.span
+              animate={refreshing ? { rotate: 360 } : { rotate: 0 }}
+              transition={
+                refreshing
+                  ? { duration: 0.7, ease: 'linear', repeat: Infinity }
+                  : { duration: 0.2 }
+              }
+              style={{ display: 'inline-flex' }}
+            >
+              <IconRefresh size={13} />
+            </motion.span>
+          </IconButton>
+          <IconButton label="Close" onClick={closeWindow}>
+            <X size={13} />
+          </IconButton>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto">
