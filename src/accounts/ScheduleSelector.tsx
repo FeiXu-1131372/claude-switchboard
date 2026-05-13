@@ -27,7 +27,7 @@ const parseHm = (s: string): HhMm | null => {
 export function ScheduleSelector({ value, onChange }: Props) {
   return (
     <div className="space-y-2 text-[12px]">
-      <fieldset className="flex flex-col gap-1">
+      <fieldset className="flex items-center gap-3">
         <label className="flex items-center gap-2">
           <input
             type="radio"
