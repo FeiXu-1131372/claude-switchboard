@@ -2,7 +2,7 @@
 
 ## Visual Language
 
-Calm, premium, scannable. The interface uses a warm glassy aesthetic inspired by macOS Control Center and Raycast — translucent surfaces with soft blur, warm orange-tinted neutrals, and teal accents. Every element is designed to be understood in under one second. Numbers use monospace type for instant parsing. Color communicates status (safe / warning / danger) through a warm-shifted traffic-light palette. The design avoids decoration that doesn't serve the data.
+Calm, premium, scannable. The interface uses a warm glassy aesthetic inspired by macOS Control Center and Raycast — translucent surfaces with soft blur, warm orange-tinted neutrals, and a single terracotta accent. Every element is designed to be understood in under one second. Numbers use monospace type for instant parsing. Color communicates status (safe / warning / danger) through a warm-shifted traffic-light palette. The design avoids decoration that doesn't serve the data.
 
 ## Color System
 
@@ -36,6 +36,12 @@ The palette is built on an Anthropic warm cream/bone foundation (cream theme, de
 | `--color-warn-dim` | `oklch(62% 0.150 55 / 0.10)` | `oklch(76% 0.155 60 / 0.14)` | Warn-tinted backgrounds |
 | `--color-danger` | `oklch(48% 0.180 28)` | `oklch(64% 0.195 25)` | ≥90% threshold |
 | `--color-danger-dim` | `oklch(48% 0.180 28 / 0.10)` | `oklch(64% 0.195 25 / 0.14)` | Danger backgrounds |
+| `--color-model-opus` | `oklch(56% 0.155 38)` | `oklch(70% 0.140 38)` | Opus chip background — deep terracotta |
+| `--color-model-opus-text` | `oklch(98% 0.005 85)` | `oklch(20% 0.012 65)` | Text on Opus chip |
+| `--color-model-sonnet` | `oklch(60% 0.105 50)` | `oklch(58% 0.090 50)` | Sonnet chip background — clay |
+| `--color-model-sonnet-text` | `oklch(98% 0.005 85)` | `oklch(20% 0.012 65)` | Text on Sonnet chip |
+| `--color-model-haiku` | `oklch(86% 0.040 70)` | `oklch(48% 0.045 70)` | Haiku chip background — pale sand |
+| `--color-model-haiku-text` | `var(--color-text)` | `var(--color-text)` | Text on Haiku chip |
 | `--color-safe` | `var(--color-accent)` (alias) | `var(--color-accent)` (alias) | Deprecated; alias kept one release, removed in the next |
 | `--color-safe-dim` | `var(--color-accent-dim)` (alias) | `var(--color-accent-dim)` (alias) | Deprecated; same deprecation path as `--color-safe` |
 | `--color-track` | `oklch(40% 0.015 65 / 0.10)` | `oklch(95% 0.020 65 / 0.18)` | Progress bar empty track |
@@ -109,7 +115,7 @@ Based on a 4px grid. Named steps:
 
 ### Button
 
-Three variants: **primary** (filled teal), **ghost** (transparent), **destructive** (filled red). Two sizes: `sm` (11px text) and `md` (13px text). Always includes focus-visible ring.
+Three variants: **primary** (filled terracotta), **ghost** (transparent), **destructive** (filled red). Two sizes: `sm` (11px text) and `md` (13px text). Always includes focus-visible ring.
 
 ### IconButton
 
@@ -289,4 +295,4 @@ See `concepts/popover-final.html` and `concepts/report-final.html` for browser-r
 
 ## Design Philosophy
 
-The system is built around one idea: **the data is the interface**. The glassy translucent surface exists only to hold the data — it should disappear from conscious attention. Warm colors keep the tool feeling human despite being fundamentally about numbers and limits. The teal accent provides clear action affordances without competing with the status colors that carry the actual meaning. Every component traces back to the token set — there are no hard-coded visual values anywhere in the codebase. The result is a tool that feels like it belongs in the OS while being recognizably more crafted than the generic utilities it replaces.
+The system is built around one idea: **the data is the interface**. The glassy translucent surface exists only to hold the data — it should disappear from conscious attention. Warm colors keep the tool feeling human despite being fundamentally about numbers and limits. The terracotta accent provides clear action affordances without competing with the status colors that carry the actual meaning. Every component traces back to the token set — there are no hard-coded visual values anywhere in the codebase. The result is a tool that feels like it belongs in the OS while being recognizably more crafted than the generic utilities it replaces.
