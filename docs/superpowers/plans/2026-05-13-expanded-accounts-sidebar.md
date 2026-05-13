@@ -278,6 +278,19 @@ describe('ModalShell', () => {
     fireEvent.click(screen.getByRole('button', { name: /close/i }));
     expect(fn).toHaveBeenCalledTimes(1);
   });
+
+  it('dismissable=false: ESC, backdrop click, and title-X are all no-ops', () => {
+    const fn = vi.fn();
+    render(
+      <ModalShell onDismiss={fn} id="m1" title="Hi" dismissable={false}>
+        <p>x</p>
+      </ModalShell>,
+    );
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.click(screen.getByTestId('modal-backdrop'));
+    expect(fn).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /close/i })).toBeNull();
+  });
 });
 ```
 
@@ -291,7 +304,7 @@ Expected: FAIL — module not found.
 Create `src/components/modals/ModalShell.tsx`:
 
 ```tsx
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { useAppStore } from '../../lib/store';
 import { IconButton } from '../ui/IconButton';
 import { X } from '../../lib/icons';
@@ -301,6 +314,9 @@ interface Props {
   onDismiss: () => void;
   title?: string;
   size?: 'sm' | 'md' | 'lg';
+  /** When false, ESC, backdrop click, and the title-bar X are all disabled.
+   *  Used by forced-decision dialogs like WarmupConsentModal. Default true. */
+  dismissable?: boolean;
   children: React.ReactNode;
 }
 
@@ -310,19 +326,30 @@ const SIZE_CLASSES: Record<NonNullable<Props['size']>, string> = {
   lg: 'max-w-[640px]',
 };
 
-export function ModalShell({ id, onDismiss, title, size = 'md', children }: Props) {
+export function ModalShell({
+  id,
+  onDismiss,
+  title,
+  size = 'md',
+  dismissable = true,
+  children,
+}: Props) {
   const pushModal = useAppStore((s) => s.pushModal);
   const popModal = useAppStore((s) => s.popModal);
   const isTopmost = useAppStore((s) => s.isTopmost);
   const stackDepth = useAppStore((s) => s.modalStack.indexOf(id));
   const cardRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  // useLayoutEffect commits before paint so the z-index calculation reflects
+  // stack position on the first painted frame. useEffect would leave one
+  // pre-commit frame at the wrong z when two modals mount in the same tick.
+  useLayoutEffect(() => {
     pushModal(id);
     return () => popModal(id);
   }, [id, pushModal, popModal]);
 
   useEffect(() => {
+    if (!dismissable) return;
     function handleKey(e: KeyboardEvent) {
       if (e.key === 'Escape' && isTopmost(id)) {
         onDismiss();
@@ -330,7 +357,7 @@ export function ModalShell({ id, onDismiss, title, size = 'md', children }: Prop
     }
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [id, isTopmost, onDismiss]);
+  }, [id, isTopmost, onDismiss, dismissable]);
 
   const z = 50 + 10 * Math.max(0, stackDepth);
 
@@ -340,7 +367,7 @@ export function ModalShell({ id, onDismiss, title, size = 'md', children }: Prop
       aria-modal="true"
       data-testid="modal-backdrop"
       onClick={() => {
-        if (isTopmost(id)) onDismiss();
+        if (dismissable && isTopmost(id)) onDismiss();
       }}
       className="fixed inset-0 flex items-center justify-center p-4"
       style={{
@@ -367,9 +394,11 @@ export function ModalShell({ id, onDismiss, title, size = 'md', children }: Prop
             <span className="text-[length:var(--text-label)] font-[var(--weight-semibold)] uppercase tracking-[var(--tracking-label)] text-[color:var(--color-text-secondary)]">
               {title}
             </span>
-            <IconButton label="Close" onClick={onDismiss}>
-              <X size={13} />
-            </IconButton>
+            {dismissable && (
+              <IconButton label="Close" onClick={onDismiss}>
+                <X size={13} />
+              </IconButton>
+            )}
           </div>
         )}
         {children}
@@ -425,7 +454,7 @@ interface Props {
 
 export function WarmupConsentModal({ onAccept, onDismiss }: Props) {
   return (
-    <ModalShell id="warmup-consent" onDismiss={onDismiss} size="sm">
+    <ModalShell id="warmup-consent" onDismiss={onDismiss} size="sm" dismissable={false}>
       <div className="p-[var(--space-md)] text-[length:var(--text-label)] text-[color:var(--color-text)]">
         <h2 className="text-[length:var(--text-body)] font-[var(--weight-semibold)] mb-[var(--space-xs)] leading-tight">
           Warm-up sends messages on your behalf
@@ -436,7 +465,7 @@ export function WarmupConsentModal({ onAccept, onDismiss }: Props) {
           whenever you trigger it manually or a schedule fires.
         </p>
         <p className="text-[color:var(--color-text-secondary)] leading-snug mb-[var(--space-xs)]">
-          Same API surface the upstream CLI uses. Cost: rounding-error against your
+          Same API surface Claude Code uses. Cost: rounding-error against your
           subscription. Effect: starts the 5-hour window deliberately.
         </p>
         <p className="text-[color:var(--color-text-muted)] leading-snug text-[length:var(--text-micro)] mb-[var(--space-md)]">
@@ -464,21 +493,61 @@ export function WarmupConsentModal({ onAccept, onDismiss }: Props) {
 }
 ```
 
-- [ ] **Step 3: Run existing tests**
+- [ ] **Step 3: Update tests for the refactored modal**
+
+Open `src/components/modals/__tests__/WarmupConsentModal.test.tsx`. Add an import + a `beforeEach` that resets the modal stack (so tests don't pollute each other through the shared store), and append two new tests verifying the forced-decision behavior.
+
+Add this import at the top:
+
+```tsx
+import { useAppStore } from "../../../lib/store";
+```
+
+Add `beforeEach` to the `describe` block:
+
+```tsx
+describe("WarmupConsentModal", () => {
+  beforeEach(() => {
+    useAppStore.getState().resetModalStack();
+  });
+  // … existing tests
+```
+
+(Add `beforeEach` to the vitest import too: `import { describe, it, expect, vi, beforeEach } from "vitest";`.)
+
+Append these tests after the existing ones:
+
+```tsx
+  it("ESC does NOT dismiss (consent is forced)", () => {
+    const onDismiss = vi.fn();
+    render(<WarmupConsentModal onAccept={() => {}} onDismiss={onDismiss} />);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  it("backdrop click does NOT dismiss (consent is forced)", () => {
+    const onDismiss = vi.fn();
+    render(<WarmupConsentModal onAccept={() => {}} onDismiss={onDismiss} />);
+    fireEvent.click(screen.getByTestId("modal-backdrop"));
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+```
+
+- [ ] **Step 4: Run all tests for this file**
 
 Run: `pnpm test src/components/modals/__tests__/WarmupConsentModal.test.tsx`
-Expected: All existing tests still PASS. If a selector regressed (e.g. exact text or class), update the test to match the new tokens — but only when the test was asserting class strings; behavioral assertions must be preserved.
+Expected: All existing tests + the two new forced-decision tests PASS. If an existing selector regressed (e.g. exact text or class), update the test to match the new tokens — but only when the test was asserting class strings; behavioral assertions must be preserved.
 
-- [ ] **Step 4: Typecheck**
+- [ ] **Step 5: Typecheck**
 
 Run: `pnpm lint`
 Expected: Exit 0.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add src/components/modals/WarmupConsentModal.tsx src/components/modals/__tests__/WarmupConsentModal.test.tsx
-git commit -m "refactor(modals): warmup consent adopts ModalShell"
+git commit -m "refactor(modals): warmup consent adopts ModalShell, forced decision preserved"
 ```
 
 ---
@@ -698,8 +767,9 @@ describe('SwapConfirmCard', () => {
         presentation="fullpane"
       />,
     );
-    // There are two Cancel buttons in fullpane (top + footer); ≥1 is enough.
-    expect(screen.getAllByRole('button', { name: /cancel/i }).length).toBeGreaterThanOrEqual(1);
+    // Fullpane has THREE Cancel-named affordances: top ← Cancel button,
+    // top-right <X> with aria-label="Cancel", and footer Cancel button.
+    expect(screen.getAllByRole('button', { name: /cancel/i }).length).toBe(3);
   });
 
   it('drops the top bar in modal mode', () => {
@@ -785,7 +855,32 @@ export function SwapConfirmCard({
 }: Props) {
 ```
 
-Then wrap the top-bar JSX (the block containing the `← Cancel` button + title + top `<X>`) in `{presentation === 'fullpane' && (...)}`. The footer Cancel + Switch buttons stay unchanged.
+Find the top-bar block at the start of the component's return statement. It looks like:
+
+```tsx
+<div className="flex items-center justify-between gap-... px-... pt-... pb-...">
+  <button onClick={onCancel}>
+    <ChevronRight ... className="rotate-180" />
+    Cancel
+  </button>
+  <span ...>Confirm switch</span>
+  <IconButton aria-label="Cancel" onClick={onCancel}>
+    <X size={13} />
+  </IconButton>
+</div>
+```
+
+This entire `<div>` (containing all three Cancel-named affordances + the "Confirm switch" title) must be wrapped:
+
+```tsx
+{presentation === 'fullpane' && (
+  <div className="flex items-center justify-between gap-... px-... pt-... pb-...">
+    {/* … unchanged children … */}
+  </div>
+)}
+```
+
+The footer Cancel + Switch buttons further down the file stay unchanged.
 
 - [ ] **Step 5: Run tests to verify they pass**
 
@@ -839,6 +934,19 @@ describe('AuthPanel presentation', () => {
     rerender(<AuthPanel presentation="modal" />);
     expect(screen.getByRole('heading', { name: /connect to claude/i })).toBeInTheDocument();
   });
+
+  it('renders the Back button in modal mode when onBack is provided', () => {
+    // The chooser → OAuth flow inside the modal needs a way back to the
+    // chooser tile list. Dropping the close-window chrome must not also
+    // drop the Back affordance.
+    render(<AuthPanel presentation="modal" onBack={() => {}} />);
+    expect(screen.getByRole('button', { name: /back/i })).toBeInTheDocument();
+  });
+
+  it('does NOT render Back when onBack is omitted', () => {
+    render(<AuthPanel presentation="modal" />);
+    expect(screen.queryByRole('button', { name: /back/i })).toBeNull();
+  });
 });
 ```
 
@@ -864,24 +972,74 @@ Update the signature:
 export function AuthPanel({ onBack, presentation = 'fullpane' }: Props) {
 ```
 
-Wrap the top header `<div onPointerDown={handleDragStart} ...>` block (lines ~85-102) in `{presentation === 'fullpane' && (...)}`.
-
-If `presentation === 'modal'`, the outer wrapper should drop `flex flex-col h-full` and instead use `flex flex-col`. The simplest implementation: keep the outer `<div>` but change its className conditionally:
+Replace the entire `return (...)` block. **Before** (current — lines 83-219 of `AuthPanel.tsx`):
 
 ```tsx
 return (
-  <div className={presentation === 'fullpane' ? 'relative flex flex-col h-full' : 'relative flex flex-col'}>
-    {presentation === 'fullpane' && (
-      <div onPointerDown={handleDragStart} className={...}>
-        {/* existing back + close header */}
-      </div>
-    )}
+  <div className="relative flex flex-col h-full">
+    <div
+      onPointerDown={handleDragStart}
+      className={`flex items-center ${onBack ? 'justify-between' : 'justify-end'} gap-[var(--space-sm)] px-[var(--popover-pad)] pt-[var(--space-md)] pb-[var(--space-sm)] cursor-default select-none`}
+    >
+      {onBack && (
+        <button type="button" onClick={onBack} className="inline-flex items-center gap-[var(--space-2xs)] text-[length:var(--text-label)] ...">
+          <ChevronRight size={11} className="rotate-180" />
+          Back
+        </button>
+      )}
+      <IconButton label="Close" onClick={closeWindow}>
+        <X size={13} />
+      </IconButton>
+    </div>
     <div className="flex items-center justify-center flex-1 min-h-0 overflow-y-auto px-[var(--space-2xl)] pb-[var(--space-2xl)]">
-      {/* existing motion.div content */}
+      <motion.div ...>{/* cards */}</motion.div>
     </div>
   </div>
 );
 ```
+
+**After:**
+
+```tsx
+const outerClass = presentation === 'fullpane' ? 'relative flex flex-col h-full' : 'relative flex flex-col';
+
+return (
+  <div className={outerClass}>
+    {presentation === 'fullpane' && (
+      <div
+        onPointerDown={handleDragStart}
+        className={`flex items-center ${onBack ? 'justify-between' : 'justify-end'} gap-[var(--space-sm)] px-[var(--popover-pad)] pt-[var(--space-md)] pb-[var(--space-sm)] cursor-default select-none`}
+      >
+        {onBack && (
+          <button type="button" onClick={onBack} className="inline-flex items-center gap-[var(--space-2xs)] text-[length:var(--text-label)] text-[color:var(--color-text-secondary)] tracking-[var(--tracking-label)] uppercase transition-colors duration-[var(--duration-fast)] hover:text-[color:var(--color-text)] focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] focus-visible:outline-offset-2 rounded">
+            <ChevronRight size={11} className="rotate-180" />
+            Back
+          </button>
+        )}
+        <IconButton label="Close" onClick={closeWindow}>
+          <X size={13} />
+        </IconButton>
+      </div>
+    )}
+    {presentation === 'modal' && onBack && (
+      <div className="flex items-center px-[var(--popover-pad)] pt-[var(--space-sm)] pb-[var(--space-2xs)]">
+        <button type="button" onClick={onBack} className="inline-flex items-center gap-[var(--space-2xs)] text-[length:var(--text-label)] text-[color:var(--color-text-secondary)] tracking-[var(--tracking-label)] uppercase transition-colors duration-[var(--duration-fast)] hover:text-[color:var(--color-text)] focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] focus-visible:outline-offset-2 rounded">
+          <ChevronRight size={11} className="rotate-180" />
+          Back
+        </button>
+      </div>
+    )}
+    <div className="flex items-center justify-center flex-1 min-h-0 overflow-y-auto px-[var(--space-2xl)] pb-[var(--space-2xl)]">
+      <motion.div ...>{/* unchanged cards block */}</motion.div>
+    </div>
+  </div>
+);
+```
+
+Key points:
+- Modal mode drops the drag handle + close-window button (review item #1).
+- Modal mode renders a slim Back-only header when `onBack` is provided — so the chooser → OAuth → back-to-chooser path still works inside the modal.
+- The `<motion.div>` with the three Cards inside is the existing content; copy it over unchanged.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1067,14 +1225,18 @@ export function useAccountManagement() {
   const [refreshing, setRefreshing] = useState(false);
   const [reauthSlot, setReauthSlot] = useState<number | null>(null);
 
-  // Stable-listener pattern: listener mounts once when reauthSlot becomes
-  // non-null and stays until it returns to null. The handler reads the
-  // current slot from a ref so back-to-back re-auths don't race.
+  // Stable-listener pattern: the listener mounts once when *any* reauth
+  // becomes pending and stays mounted until none are. The dep is the
+  // boolean `reauthPending`, not `reauthSlot` itself — switching slots
+  // (e.g. user starts slot 2, then quickly slot 3) does NOT re-mount the
+  // listener and so cannot race the pending listen() promise. The handler
+  // reads the current slot from a ref.
   const reauthSlotRef = useRef<number | null>(null);
   useEffect(() => { reauthSlotRef.current = reauthSlot; }, [reauthSlot]);
 
+  const reauthPending = reauthSlot !== null;
   useEffect(() => {
-    if (reauthSlot === null) return;
+    if (!reauthPending) return;
     let unlistenComplete: (() => void) | undefined;
     let unlistenError: (() => void) | undefined;
     listen<number>('oauth_complete', () => {
@@ -1090,7 +1252,7 @@ export function useAccountManagement() {
       unlistenComplete?.();
       unlistenError?.();
     };
-  }, [reauthSlot, refreshAccounts]);
+  }, [reauthPending, refreshAccounts]);
 
   const orgGroups = useMemo(() => {
     const map = new Map<string, AccountListEntry>();
@@ -1765,7 +1927,14 @@ Change to:
 ```tsx
 return (
   <>
-    <div className="flex h-full overflow-hidden" style={{ width: '100%', minHeight: 'var(--report-min-height)', background: 'var(--color-bg-base)' }}>
+    <div
+      className="flex h-full overflow-hidden"
+      style={{
+        width: '100%',
+        minHeight: 'var(--report-min-height)',
+        background: 'var(--color-bg-base)',
+      }}
+    >
       <AccountsSidebar />
       <div className="flex flex-1 flex-col overflow-hidden min-w-0">
         <header ...>{/* existing, unchanged except settings cog added */}</header>
@@ -1779,7 +1948,11 @@ return (
 );
 ```
 
-Key points: outermost is now `flex h-full overflow-hidden` (row direction). `min-w-0` on the inner column lets the report shrink correctly when the sidebar reserves its 300px.
+Key points:
+- **Preserve the existing `style` props.** The current outer `<div>` carries `width: '100%'`, `minHeight: 'var(--report-min-height)'`, `background: 'var(--color-bg-base)'` (lines ~70-74). These move to the new outer row container, NOT to the inner column.
+- Outermost is now `flex h-full overflow-hidden` (row direction, dropped `flex-col`).
+- `min-w-0` on the inner column lets the report shrink correctly when the sidebar reserves its 300px.
+- **Two `aria-label="Close"` buttons will coexist** once SettingsModal mounts: the existing window-close button in the report header (calls `closeWindow`), and the ModalShell's title-bar Close (calls `setSettingsOpen(false)`). Functionally fine — ModalShell stops propagation. But any future E2E test using `getByRole('button', { name: /close/i })` while the modal is open will be ambiguous. Use `getAllByRole` + position-based selection in such tests.
 
 - [ ] **Step 3: Typecheck**
 
