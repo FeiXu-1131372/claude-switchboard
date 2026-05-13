@@ -25,6 +25,7 @@ interface AppStore {
   sessionDataVersion: number;
   viewMode: 'compact' | 'expanded';
   pendingSwapReport: SwapReport | null;
+  modalStack: string[];
 
   init: () => Promise<void>;
   cleanup: () => void;
@@ -38,6 +39,10 @@ interface AppStore {
   toggleViewMode: () => void;
   setPendingSwapReport: (report: SwapReport) => void;
   consumeSwapReport: () => void;
+  pushModal: (id: string) => void;
+  popModal: (id: string) => void;
+  isTopmost: (id: string) => boolean;
+  resetModalStack: () => void;
 }
 
 export const useAppStore = create<AppStore>((set, _get) => ({
@@ -53,6 +58,7 @@ export const useAppStore = create<AppStore>((set, _get) => ({
   sessionDataVersion: 0,
   viewMode: 'compact',
   pendingSwapReport: null,
+  modalStack: [],
 
   async init() {
     if (_unlisteners.length > 0) {
@@ -232,5 +238,19 @@ export const useAppStore = create<AppStore>((set, _get) => ({
   },
   consumeSwapReport() {
     set({ pendingSwapReport: null });
+  },
+
+  pushModal(id) {
+    set((s) => ({ modalStack: [...s.modalStack, id] }));
+  },
+  popModal(id) {
+    set((s) => ({ modalStack: s.modalStack.filter((x) => x !== id) }));
+  },
+  isTopmost(id) {
+    const stack = _get().modalStack;
+    return stack.length > 0 && stack[stack.length - 1] === id;
+  },
+  resetModalStack() {
+    set({ modalStack: [] });
   },
 }));
