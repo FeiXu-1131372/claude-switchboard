@@ -9,6 +9,8 @@ interface Props {
   errorMessage: string | null;
   onConfirm: () => void;
   onCancel: () => void;
+  /** 'modal' drops the top bar — parent ModalShell provides the title. Default 'modal'. */
+  presentation?: 'modal' | 'fullpane';
 }
 
 function PlanTag({ plan }: { plan: string | null }) {
@@ -53,6 +55,7 @@ export function SwapConfirmCard({
   errorMessage,
   onConfirm,
   onCancel,
+  presentation = 'modal',
 }: Props) {
   const cli = running.cli_processes;
   const code = running.vscode_with_extension.length;
@@ -60,35 +63,37 @@ export function SwapConfirmCard({
 
   return (
     <div className="flex h-full w-full flex-col">
-      <div className="flex items-center justify-between gap-[var(--space-sm)] px-[var(--popover-pad)] pt-[var(--space-md)] pb-[var(--space-sm)]">
-        <button
-          type="button"
-          onClick={onCancel}
-          disabled={busy}
-          className="
-            inline-flex items-center gap-[var(--space-2xs)]
-            text-[length:var(--text-label)] text-[color:var(--color-text-secondary)]
-            tracking-[var(--tracking-label)] uppercase
-            hover:text-[color:var(--color-text)]
-            disabled:opacity-50
-          "
-        >
-          <ChevronRight size={11} className="rotate-180" />
-          Cancel
-        </button>
-        <span className="text-[length:var(--text-label)] uppercase tracking-[var(--tracking-label)] text-[color:var(--color-text-secondary)]">
-          Confirm switch
-        </span>
-        <button
-          type="button"
-          aria-label="Cancel"
-          onClick={onCancel}
-          disabled={busy}
-          className="text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] disabled:opacity-50"
-        >
-          <X size={13} />
-        </button>
-      </div>
+      {presentation === 'fullpane' && (
+        <div className="flex items-center justify-between gap-[var(--space-sm)] px-[var(--popover-pad)] pt-[var(--space-md)] pb-[var(--space-sm)]">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="
+              inline-flex items-center gap-[var(--space-2xs)]
+              text-[length:var(--text-label)] text-[color:var(--color-text-secondary)]
+              tracking-[var(--tracking-label)] uppercase
+              hover:text-[color:var(--color-text)]
+              disabled:opacity-50
+            "
+          >
+            <ChevronRight size={11} className="rotate-180" />
+            Cancel
+          </button>
+          <span className="text-[length:var(--text-label)] uppercase tracking-[var(--tracking-label)] text-[color:var(--color-text-secondary)]">
+            Confirm switch
+          </span>
+          <button
+            type="button"
+            aria-label="Cancel"
+            onClick={onCancel}
+            disabled={busy}
+            className="text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)] disabled:opacity-50"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto px-[var(--popover-pad)] pb-[var(--space-md)]">
         <div className="flex flex-col gap-[var(--space-md)]">

@@ -135,6 +135,8 @@ export function AccountsPanel({ onBack }: Props) {
   if (pending) {
     return (
       <SwapConfirmCard
+        // Bridge: until Task 8 wraps this in ModalShell, render fullpane chrome.
+        presentation="fullpane"
         current={currentActive}
         target={pending.target}
         running={pending.running}
