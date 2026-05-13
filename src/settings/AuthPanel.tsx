@@ -24,9 +24,12 @@ function toMessage(e: unknown, fallback: string): string {
 
 interface Props {
   onBack?: () => void;
+  /** 'fullpane' renders the drag handle + close-window chrome (first-run callers).
+   *  'modal' skips that chrome and renders a slim Back-only header when onBack is provided. */
+  presentation?: 'modal' | 'fullpane';
 }
 
-export function AuthPanel({ onBack }: Props) {
+export function AuthPanel({ onBack, presentation = 'fullpane' }: Props) {
   const [step, setStep] = useState<Step>('choose');
   const [error, setError] = useState<string | null>(null);
   const refreshAccounts = useAppStore((s) => s.refreshAccounts);
@@ -80,13 +83,32 @@ export function AuthPanel({ onBack }: Props) {
     }
   }
 
+  const outerClass = presentation === 'fullpane' ? 'relative flex flex-col h-full' : 'relative flex flex-col';
+
   return (
-    <div className="relative flex flex-col h-full">
-      <div
-        onPointerDown={handleDragStart}
-        className={`flex items-center ${onBack ? 'justify-between' : 'justify-end'} gap-[var(--space-sm)] px-[var(--popover-pad)] pt-[var(--space-md)] pb-[var(--space-sm)] cursor-default select-none`}
-      >
-        {onBack && (
+    <div className={outerClass}>
+      {presentation === 'fullpane' && (
+        <div
+          onPointerDown={handleDragStart}
+          className={`flex items-center ${onBack ? 'justify-between' : 'justify-end'} gap-[var(--space-sm)] px-[var(--popover-pad)] pt-[var(--space-md)] pb-[var(--space-sm)] cursor-default select-none`}
+        >
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="inline-flex items-center gap-[var(--space-2xs)] text-[length:var(--text-label)] text-[color:var(--color-text-secondary)] tracking-[var(--tracking-label)] uppercase transition-colors duration-[var(--duration-fast)] hover:text-[color:var(--color-text)] focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] focus-visible:outline-offset-2 rounded"
+            >
+              <ChevronRight size={11} className="rotate-180" />
+              Back
+            </button>
+          )}
+          <IconButton label="Close" onClick={closeWindow}>
+            <X size={13} />
+          </IconButton>
+        </div>
+      )}
+      {presentation === 'modal' && onBack && (
+        <div className="flex items-center px-[var(--popover-pad)] pt-[var(--space-sm)] pb-[var(--space-2xs)]">
           <button
             type="button"
             onClick={onBack}
@@ -95,11 +117,8 @@ export function AuthPanel({ onBack }: Props) {
             <ChevronRight size={11} className="rotate-180" />
             Back
           </button>
-        )}
-        <IconButton label="Close" onClick={closeWindow}>
-          <X size={13} />
-        </IconButton>
-      </div>
+        </div>
+      )}
       <div className="flex items-center justify-center flex-1 min-h-0 overflow-y-auto px-[var(--space-2xl)] pb-[var(--space-2xl)]">
         <motion.div
           className="flex flex-col gap-[var(--space-xl)] max-w-[280px]"
