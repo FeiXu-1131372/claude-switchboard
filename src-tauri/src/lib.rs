@@ -509,14 +509,17 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app, event| {
-            // Dock-click (macOS) / taskbar-click on a hidden window (Windows):
+        .run(|_app, _event| {
+            // Dock-click on macOS (NSApplicationDelegate applicationShouldHandleReopen):
             // when the user activates the app while no window is visible, the
             // popover stays hidden and the click looks broken. Re-show it.
-            if let tauri::RunEvent::Reopen { has_visible_windows, .. } = event {
+            // RunEvent::Reopen is macOS-only; Windows taskbar activation is
+            // handled separately by the single-instance plugin.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { has_visible_windows, .. } = _event {
                 if !has_visible_windows {
                     use tauri::Manager;
-                    if let Some(w) = app.get_webview_window("popover") {
+                    if let Some(w) = _app.get_webview_window("popover") {
                         use tauri::Emitter;
                         let _ = w.show();
                         let _ = w.set_focus();
