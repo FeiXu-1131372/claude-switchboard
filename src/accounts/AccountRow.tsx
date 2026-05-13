@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { UsageBar } from '../popover/UsageBar';
+import { ResetCountdown } from '../popover/ResetCountdown';
 import { ipc } from '../lib/ipc';
 import type { AccountListEntry, Schedule } from '../lib/generated/bindings';
 import { WarmupToggle } from './WarmupToggle';
@@ -61,6 +61,56 @@ function PlanBadge({ plan }: { plan: string | null }) {
     >
       {plan}
     </span>
+  );
+}
+
+function CompactMeter({
+  label,
+  data,
+  warnAt,
+  dangerAt,
+}: {
+  label: string;
+  data: { utilization: number; resets_at?: string | null } | null;
+  warnAt: number;
+  dangerAt: number;
+}) {
+  if (!data) return null;
+  const clamped = Math.max(0, Math.min(100, data.utilization));
+  const isDanger = clamped >= dangerAt;
+  const isWarn = clamped >= warnAt;
+  const colorClass = isDanger
+    ? 'text-[color:var(--color-danger)]'
+    : isWarn
+      ? 'text-[color:var(--color-warn)]'
+      : 'text-[color:var(--color-text)]';
+
+  const barColor = isDanger
+    ? 'bg-[var(--color-danger)]'
+    : isWarn
+      ? 'bg-[var(--color-warn)]'
+      : 'bg-[var(--color-accent)]';
+
+  return (
+    <div className="flex flex-col gap-[4px] min-w-0">
+      <div className="flex items-baseline justify-between gap-1 min-w-0">
+        <span className="text-[length:var(--text-micro)] font-[var(--weight-medium)] text-[color:var(--color-text-muted)] uppercase tracking-[var(--tracking-label)] truncate shrink-0">
+          {label}
+        </span>
+        <span className={`mono text-[length:var(--text-pct)] font-[var(--weight-semibold)] tabular-nums leading-none shrink-0 ${colorClass}`}>
+          {Math.round(clamped)}%
+        </span>
+      </div>
+      <div className="h-[var(--bar-height-md)] w-full rounded-[var(--radius-pill)] bg-[var(--color-track)] overflow-hidden">
+        <div
+          className={`h-full rounded-[var(--radius-pill)] ${barColor} transition-[width,background-color] duration-[var(--duration-bar)] ease-[var(--ease-spring)]`}
+          style={{ width: `${clamped}%` }}
+        />
+      </div>
+      <div className="min-h-[14px]">
+        {data.resets_at && <ResetCountdown resetsAt={data.resets_at} />}
+      </div>
+    </div>
   );
 }
 
@@ -404,22 +454,18 @@ export function AccountRow({
       ) : (
         <div className="flex flex-col gap-[var(--space-2xs)]">
           <div className="grid grid-cols-2 gap-[var(--space-xl)]">
-            {fiveHour && (
-              <UsageBar
-                label="5h"
-                data={fiveHour}
-                warnAt={thresholds[0]}
-                dangerAt={thresholds[1]}
-              />
-            )}
-            {sevenDay && (
-              <UsageBar
-                label="7d"
-                data={sevenDay}
-                warnAt={thresholds[0]}
-                dangerAt={thresholds[1]}
-              />
-            )}
+            <CompactMeter
+              label="5h"
+              data={fiveHour}
+              warnAt={thresholds[0]}
+              dangerAt={thresholds[1]}
+            />
+            <CompactMeter
+              label="7d"
+              data={sevenDay}
+              warnAt={thresholds[0]}
+              dangerAt={thresholds[1]}
+            />
           </div>
           {shareHint && (
             <span className="text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]">
