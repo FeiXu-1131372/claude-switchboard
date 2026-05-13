@@ -24,12 +24,13 @@ function toMessage(e: unknown, fallback: string): string {
 
 interface Props {
   onBack?: () => void;
+  onSuccess?: () => void;
   /** 'fullpane' renders the drag handle + close-window chrome (first-run callers).
    *  'modal' skips that chrome and renders a slim Back-only header when onBack is provided. */
   presentation?: 'modal' | 'fullpane';
 }
 
-export function AuthPanel({ onBack, presentation = 'fullpane' }: Props) {
+export function AuthPanel({ onBack, onSuccess, presentation = 'fullpane' }: Props) {
   const [step, setStep] = useState<Step>('choose');
   const [error, setError] = useState<string | null>(null);
   const refreshAccounts = useAppStore((s) => s.refreshAccounts);
@@ -39,8 +40,12 @@ export function AuthPanel({ onBack, presentation = 'fullpane' }: Props) {
 
     const unlistenComplete = listen<number>('oauth_complete', async () => {
       await refreshAccounts();
-      setStep('choose');
-      setError(null);
+      if (onSuccess) {
+        onSuccess();
+      } else {
+        setStep('choose');
+        setError(null);
+      }
     });
 
     const unlistenError = listen<string>('oauth_error', (event) => {

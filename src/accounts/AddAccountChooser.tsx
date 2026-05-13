@@ -30,7 +30,7 @@ export function AddAccountChooser({ onClose, presentation = 'modal' }: Props) {
   }
 
   if (showOauth) {
-    return <AuthPanel presentation={presentation} onBack={() => setShowOauth(false)} />;
+    return <AuthPanel presentation={presentation} onBack={() => setShowOauth(false)} onSuccess={onClose} />;
   }
 
   return (
