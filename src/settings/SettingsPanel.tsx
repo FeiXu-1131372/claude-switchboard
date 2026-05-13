@@ -112,7 +112,7 @@ export function SettingsPanel() {
           Appearance
         </h2>
         <Card className="p-[var(--space-md)] flex flex-col gap-[var(--space-xs)]">
-          {(['cream', 'dark', 'auto'] as ThemePreference[]).map((opt) => (
+          {(['light', 'dark', 'auto'] as ThemePreference[]).map((opt) => (
             <label
               key={opt}
               className="flex items-center gap-[var(--space-sm)] cursor-pointer py-[var(--space-2xs)]"
@@ -126,7 +126,7 @@ export function SettingsPanel() {
                 className="accent-[color:var(--color-accent)]"
               />
               <span className="text-[length:var(--text-body)] text-[color:var(--color-text)]">
-                {opt === 'cream' && 'Cream'}
+                {opt === 'light' && 'Light'}
                 {opt === 'dark' && 'Dark'}
                 {opt === 'auto' && 'Auto (follow system)'}
               </span>

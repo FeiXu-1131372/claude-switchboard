@@ -9,18 +9,20 @@
     <script>
       (function () {
         try {
-          var pref = localStorage.getItem('theme-preference') || 'cream';
+          var pref = localStorage.getItem('theme-preference') || 'light';
+          // Legacy migration: previous releases stored 'cream' for the light theme.
+          if (pref === 'cream') pref = 'light';
           var resolved;
           if (pref === 'auto') {
-            resolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'cream';
+            resolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
           } else if (pref === 'dark') {
             resolved = 'dark';
           } else {
-            resolved = 'cream';
+            resolved = 'light';
           }
           document.body.dataset.theme = resolved;
         } catch (e) {
-          document.body.dataset.theme = 'cream';
+          document.body.dataset.theme = 'light';
         }
       })();
     </script>

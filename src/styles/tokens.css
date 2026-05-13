@@ -22,15 +22,17 @@
  */
 
 @theme {
-  /* Surfaces — cream defaults (Anthropic Bone ~#F0EEE6) */
-  --color-bg-base: oklch(94% 0.008 85);
-  --color-bg-surface: oklch(96% 0.006 85);
-  --color-bg-surface-hover: oklch(92% 0.010 80);
-  --color-bg-card: oklch(98% 0.004 85);
-  --color-bg-card-hover: oklch(99.5% 0.004 85);
-  --color-bg-elevated: oklch(99% 0.003 85);
+  /* Surfaces — light defaults, warmer than Anthropic Bone (hue shifted from
+   * 85° yellow toward 70° terracotta-cream, chroma lifted ~1.5× for
+   * perceptible warmth without saturation). */
+  --color-bg-base: oklch(94% 0.013 70);
+  --color-bg-surface: oklch(96% 0.011 70);
+  --color-bg-surface-hover: oklch(92% 0.018 65);
+  --color-bg-card: oklch(98% 0.008 70);
+  --color-bg-card-hover: oklch(99.5% 0.006 70);
+  --color-bg-elevated: oklch(99% 0.006 70);
 
-  /* Borders — warm ink at low alpha on cream */
+  /* Borders — warm ink at low alpha on the light surface */
   --color-rule: oklch(40% 0.015 65 / 0.06);
   --color-rule-strong: oklch(40% 0.015 65 / 0.14);
   --color-border: oklch(40% 0.015 65 / 0.12);
@@ -43,7 +45,7 @@
   --color-text-secondary: oklch(38% 0.020 55);
   --color-text-muted: oklch(55% 0.022 60);
 
-  /* Terracotta accent — darkened for cream contrast */
+  /* Terracotta accent — darkened for light-surface contrast */
   --color-accent: oklch(56% 0.155 38);
   --color-accent-dim: oklch(56% 0.155 38 / 0.10);
   --color-accent-muted: oklch(56% 0.155 38 / 0.24);
@@ -71,7 +73,7 @@
   --color-track: oklch(40% 0.015 65 / 0.10);
   --color-overlay: oklch(20% 0.010 60 / 0.35);
 
-  /* Glass — kept for dark theme only; on cream the mixin no-ops */
+  /* Glass — kept for dark theme only; on the light theme the mixin no-ops */
   --glass-blur: 32px;
   --glass-saturate: 1.3;
   --glass-tint: oklch(72% 0.10 55 / 0.04);

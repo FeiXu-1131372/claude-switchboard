@@ -1,19 +1,22 @@
 import { create } from 'zustand';
 
-export type ThemePreference = 'cream' | 'dark' | 'auto';
-export type ResolvedTheme = 'cream' | 'dark';
+export type ThemePreference = 'light' | 'dark' | 'auto';
+export type ResolvedTheme = 'light' | 'dark';
 
 // Also referenced as a literal in index.html's pre-mount script — keep in sync.
 const STORAGE_KEY = 'theme-preference';
 
 export function readStoredPreference(): ThemePreference {
-  if (typeof localStorage === 'undefined') return 'cream';
+  if (typeof localStorage === 'undefined') return 'light';
   const raw = localStorage.getItem(STORAGE_KEY);
-  return raw === 'cream' || raw === 'dark' || raw === 'auto' ? raw : 'cream';
+  // Legacy value 'cream' was the previous name for the light theme; migrate
+  // silently so existing users keep their preference across the rename.
+  if (raw === 'cream') return 'light';
+  return raw === 'light' || raw === 'dark' || raw === 'auto' ? raw : 'light';
 }
 
 export function resolveTheme(pref: ThemePreference, prefersDark: boolean): ResolvedTheme {
-  if (pref === 'auto') return prefersDark ? 'dark' : 'cream';
+  if (pref === 'auto') return prefersDark ? 'dark' : 'light';
   return pref;
 }
 
