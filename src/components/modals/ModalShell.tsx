@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect } from 'react';
 import { useAppStore } from '../../lib/store';
 import { IconButton } from '../ui/IconButton';
 import { X } from '../../lib/icons';
@@ -32,7 +32,6 @@ export function ModalShell({
   const popModal = useAppStore((s) => s.popModal);
   const isTopmost = useAppStore((s) => s.isTopmost);
   const stackDepth = useAppStore((s) => s.modalStack.indexOf(id));
-  const cardRef = useRef<HTMLDivElement>(null);
 
   // useLayoutEffect commits before paint so the z-index calculation reflects
   // stack position on the first painted frame. useEffect would leave one
@@ -54,11 +53,13 @@ export function ModalShell({
   }, [id, isTopmost, onDismiss, dismissable]);
 
   const z = 50 + 10 * Math.max(0, stackDepth);
+  const titleId = title ? `${id}-title` : undefined;
 
   return (
     <div
       role="dialog"
       aria-modal="true"
+      aria-labelledby={titleId}
       data-testid="modal-backdrop"
       onClick={() => {
         if (dismissable && isTopmost(id)) onDismiss();
@@ -66,11 +67,10 @@ export function ModalShell({
       className="fixed inset-0 flex items-center justify-center p-4"
       style={{
         zIndex: z,
-        background: 'var(--color-overlay, oklch(0% 0 0 / 0.55))',
+        background: 'var(--color-overlay)',
       }}
     >
       <div
-        ref={cardRef}
         onClick={(e) => e.stopPropagation()}
         className={`
           w-full ${SIZE_CLASSES[size]} max-h-full overflow-y-auto
@@ -85,7 +85,10 @@ export function ModalShell({
       >
         {title && (
           <div className="flex items-center justify-between px-[var(--space-md)] py-[var(--space-sm)] border-b border-[var(--color-rule)]">
-            <span className="text-[length:var(--text-label)] font-[var(--weight-semibold)] uppercase tracking-[var(--tracking-label)] text-[color:var(--color-text-secondary)]">
+            <span
+              id={titleId}
+              className="text-[length:var(--text-label)] font-[var(--weight-semibold)] uppercase tracking-[var(--tracking-label)] text-[color:var(--color-text-secondary)]"
+            >
               {title}
             </span>
             {dismissable && (
