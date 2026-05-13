@@ -102,7 +102,7 @@ Three tonal variations on the warm family, theme-aware:
 | Chip | Cream | Dark | Text on chip |
 |---|---|---|---|
 | Opus | `oklch(56% 0.155 38)` deep terracotta | `oklch(70% 0.140 38)` | `oklch(98% 0.005 85)` cream |
-| Sonnet | `oklch(60% 0.105 50)` clay | `oklch(58% 0.090 50)` | `oklch(98% 0.005 85)` cream |
+| Sonnet | `oklch(60% 0.105 50)` clay | `oklch(64% 0.090 50)` | `oklch(98% 0.005 85)` cream |
 | Haiku | `oklch(86% 0.040 70)` pale sand | `oklch(48% 0.045 70)` | `--color-text` |
 
 On cream, Opus and Sonnet chips carry their fill as background with cream text (both ≥4.5:1 contrast); Haiku is light enough that its label uses dark ink (`--color-text`). On dark, all three darken so light-on-dark text reads cleanly.

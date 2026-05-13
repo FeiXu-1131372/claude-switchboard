@@ -38,7 +38,7 @@ The palette is built on an Anthropic warm cream/bone foundation (cream theme, de
 | `--color-danger-dim` | `oklch(48% 0.180 28 / 0.10)` | `oklch(64% 0.195 25 / 0.14)` | Danger backgrounds |
 | `--color-model-opus` | `oklch(56% 0.155 38)` | `oklch(70% 0.140 38)` | Opus chip background — deep terracotta |
 | `--color-model-opus-text` | `oklch(98% 0.005 85)` | `oklch(20% 0.012 65)` | Text on Opus chip |
-| `--color-model-sonnet` | `oklch(60% 0.105 50)` | `oklch(58% 0.090 50)` | Sonnet chip background — clay |
+| `--color-model-sonnet` | `oklch(60% 0.105 50)` | `oklch(64% 0.090 50)` | Sonnet chip background — clay |
 | `--color-model-sonnet-text` | `oklch(98% 0.005 85)` | `oklch(20% 0.012 65)` | Text on Sonnet chip |
 | `--color-model-haiku` | `oklch(86% 0.040 70)` | `oklch(48% 0.045 70)` | Haiku chip background — pale sand |
 | `--color-model-haiku-text` | `var(--color-text)` | `var(--color-text)` | Text on Haiku chip |
@@ -79,10 +79,10 @@ Text on each chip uses the paired `--color-model-*-text` token to maintain ≥4.
 | Name | Size | Weight | Line-height | Usage |
 |---|---|---|---|---|
 | Display | 28px | 600 | 1.1 | Hero numbers (not used in current screens) |
-| Title | 15px | 600 | 1.3 | Percentage values, card headings |
+| Title | 14px | 600 | 1.3 | Percentage values, card headings |
 | Body | 13px | 400 | 1.5 | General text, project names |
 | Label | 11px | 500 | 1.4 | Section labels, tab text |
-| Micro | 10px | 400 | 1.3 | Timestamps, secondary meta |
+| Micro | 10.5px | 400 | 1.3 | Timestamps, secondary meta |
 
 ## Spacing
 
@@ -127,7 +127,7 @@ Two variants: **solid** (default glass card) and **glass** (full backdrop-filter
 
 ### ProgressBar
 
-The primary data visualization. Accepts `value` (0–100), `warnThreshold` (default 75), `dangerThreshold` (default 90). Three sizes: `sm` (3px), `md` (5px), `lg` (8px). Gradient fill shifts at thresholds. Optional percentage label.
+The primary data visualization. Accepts `value` (0–100), `warnThreshold` (default 75), `dangerThreshold` (default 90). Three sizes: `sm` (3px), `md` (4px), `lg` (6px). Flat fill swaps token at thresholds. Optional percentage label.
 
 ### UsageBar
 
@@ -155,7 +155,7 @@ Alert banner with four variants: `info`, `warning`, `error`, `stale`. Optional i
 
 ### Badge
 
-Status pill with semantic variants: `default`, `accent`, `safe`, `warn`, `danger`, `live` (with pulse dot), `opus`, `sonnet`, `haiku`.
+Status pill with semantic variants: `default`, `accent`, `safe` (deprecated alias for `accent` — slated for removal), `warn`, `danger`, `live` (with pulse dot), `opus`, `sonnet`, `haiku`.
 
 ### EmptyState
 
@@ -214,7 +214,7 @@ Separate resizable window with 6 tabs:
 ### SettingsPanel
 
 Sectioned settings within the popover:
-- **General:** Launch at login toggle, theme selector
+- **General:** Launch at login toggle
 - **Polling:** Interval slider (1–30m), warning about frequent polling
 - **Notifications:** Warning and danger threshold sliders
 - **Account:** Connection status badge, sign out button
