@@ -170,6 +170,7 @@ pub async fn get_cache_stats(
     days: u32,
     state: State<'_, Arc<AppState>>,
 ) -> Result<CacheStats, String> {
+    let pricing = state.pricing.clone();
     let events = get_session_history(days, state).await?;
     let mut read = 0u64;
     let mut created = 0u64;
@@ -183,7 +184,18 @@ pub async fn get_cache_stats(
     } else {
         0.0
     };
-    let savings = (read as f64 / 1_000_000.0) * 2.7;
+    // Savings are per-model: cache-read tokens × (input − cache-read rate).
+    // The previous flat $2.7/MTok was only right for Sonnet — it understated
+    // Opus ($4.50) and Fable ($9.00) savings and priced unknown models' cache
+    // reads as free when they simply can't be estimated.
+    let savings: f64 = events
+        .iter()
+        .map(|e| {
+            pricing.cache_savings_per_mtok(&e.model).unwrap_or(0.0)
+                * (e.cache_read_tokens as f64)
+                / 1_000_000.0
+        })
+        .sum();
     Ok(CacheStats {
         total_cache_read_tokens: read,
         total_cache_creation_tokens: created,
@@ -306,16 +318,20 @@ pub async fn force_refresh(
         RefreshScope::All => {
             let accounts = state.accounts.list().map_err(err_to_string)?;
             let active = *state.active_slot.read();
-            let (interval, base_gap) = {
-                let s = state.settings.read();
-                (
-                    std::time::Duration::from_secs(s.polling_interval_secs.max(60)),
-                    std::time::Duration::from_secs(s.stagger_gap_secs.clamp(5, 120)),
-                )
-            };
+            let interval = std::time::Duration::from_secs(
+                state.settings.read().polling_interval_secs.max(60),
+            );
             let slot_ids: Vec<u32> = accounts.iter().map(|a| a.slot).collect();
+            // Manual refresh is a rare user-initiated burst: use the minimum
+            // stagger so every slot refreshes within seconds rather than
+            // riding the steady-state 30s stagger, which left later slots
+            // stale for minutes after clicking "refresh".
             *state.schedule_by_slot.write() = crate::poll_loop::seed_schedules(
-                &slot_ids, active, now, interval, base_gap,
+                &slot_ids,
+                active,
+                now,
+                interval,
+                std::time::Duration::from_secs(5),
             );
         }
     }
@@ -367,10 +383,18 @@ pub async fn debug_force_threshold(
     Ok(())
 }
 
+/// Target top-left for compact-mode resizes: the TOP edge stays glued
+/// (menu-bar popovers hang downward from the tray icon; a center-fixed
+/// resize visibly detaches the popover from the menu bar on every
+/// collapse/expand). Width is recentered — a no-op when width is unchanged
+/// (the common case; heights are the only thing that differs today).
+fn compact_target_xy(from_x: f64, from_y: f64, from_w: f64, target_w: f64) -> (f64, f64) {
+    (from_x + (from_w - target_w) / 2.0, from_y)
+}
+
 #[command]
 #[specta::specta]
-pub async fn resize_window(mode: String, app: tauri::AppHandle) -> Result<(), String> {
-    use tauri::{LogicalPosition, LogicalSize, Manager, Position, Size};
+pub async fn resize_window(mode: String, app: tauri::AppHandle) -> Result<(), String> {    use tauri::{LogicalPosition, LogicalSize, Manager, Position, Size};
 
     let Some(w) = app.get_webview_window("popover") else {
         return Ok(());
@@ -378,6 +402,9 @@ pub async fn resize_window(mode: String, app: tauri::AppHandle) -> Result<(), St
 
     let target_size = match mode.as_str() {
         "compact" => (360.0_f64, 380.0_f64),
+        // Hero numbers + details disclosure + footer only — the popover's
+        // default glance view. Details expand back to full compact height.
+        "compact-minimal" => (360.0_f64, 208.0_f64),
         "expanded" => (960.0_f64, 640.0_f64),
         _ => return Ok(()),
     };
@@ -387,7 +414,7 @@ pub async fn resize_window(mode: String, app: tauri::AppHandle) -> Result<(), St
     // window-managers respond to subsequent set_size calls on some
     // platforms).
     match mode.as_str() {
-        "compact" => {
+        "compact" | "compact-minimal" => {
             let _ = w.set_always_on_top(true);
             let _ = w.set_resizable(false);
         }
@@ -408,10 +435,12 @@ pub async fn resize_window(mode: String, app: tauri::AppHandle) -> Result<(), St
     let from_x = cur_pos.x as f64 / scale;
     let from_y = cur_pos.y as f64 / scale;
 
-    // Where to end up. Compact stays anchored at the current center (the
-    // post-animation TrayCenter snap below handles the reposition cleanly).
-    // Expanded glides to the monitor's center so the bigger window doesn't
-    // shoot off-screen when called from the tray-anchored compact view.
+    // Where to end up. Compact modes keep the TOP edge glued to its current
+    // position — a menu-bar popover hangs downward from the tray icon, so a
+    // height change must rise/extend from the bottom. (The previous
+    // center-fixed math detached the popover from the menu bar on every
+    // collapse/expand.) Expanded glides to the monitor's center so the
+    // bigger window doesn't shoot off-screen from the tray-anchored view.
     let (to_x, to_y) = if mode == "expanded" {
         match w.current_monitor().map_err(|e| e.to_string())? {
             Some(m) => {
@@ -423,17 +452,10 @@ pub async fn resize_window(mode: String, app: tauri::AppHandle) -> Result<(), St
                 let my = m_pos.y as f64 / scale;
                 (mx + (mw - target_size.0) / 2.0, my + (mh - target_size.1) / 2.0)
             }
-            None => {
-                // Fallback: keep the center fixed.
-                let cx = from_x + from_w / 2.0;
-                let cy = from_y + from_h / 2.0;
-                (cx - target_size.0 / 2.0, cy - target_size.1 / 2.0)
-            }
+            None => compact_target_xy(from_x, from_y, from_w, target_size.0),
         }
     } else {
-        let cx = from_x + from_w / 2.0;
-        let cy = from_y + from_h / 2.0;
-        (cx - target_size.0 / 2.0, cy - target_size.1 / 2.0)
+        compact_target_xy(from_x, from_y, from_w, target_size.0)
     };
 
     #[cfg(not(target_os = "windows"))]
@@ -466,10 +488,12 @@ pub async fn resize_window(mode: String, app: tauri::AppHandle) -> Result<(), St
         let _ = w.set_size(Size::Logical(LogicalSize::new(target_size.0, target_size.1)));
         let _ = w.set_position(Position::Logical(LogicalPosition::new(to_x, to_y)));
 
-        // Compact mode re-anchors to the tray after the animation so the
-        // popover lives where the user's eye expects it. Expanded was already
-        // animated to monitor center, no follow-up needed.
-        if mode == "compact" {
+        // Compact modes re-anchor to the tray after the animation so the
+        // popover lives where the user's eye expects it (this is also the
+        // horizontal centering correction — the top edge is already glued by
+        // compact_target_xy). Expanded was already animated to monitor
+        // center, no follow-up needed.
+        if mode == "compact" || mode == "compact-minimal" {
             use tauri_plugin_positioner::{Position as TrayPos, WindowExt};
             let _ = w.move_window(TrayPos::TrayCenter);
         }
@@ -1013,4 +1037,27 @@ pub fn reconcile_sqlite_account_mirror(state: &Arc<AppState>) -> anyhow::Result<
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_resize_keeps_top_edge_glued() {
+        // Collapsing 380 → 208 must not move the top edge — a menu-bar
+        // popover hangs from the tray; center-fixed math visibly detaches it.
+        let (_, y) = compact_target_xy(100.0, 24.0, 360.0, 360.0);
+        assert_eq!(y, 24.0);
+    }
+
+    #[test]
+    fn compact_resize_recenters_width() {
+        // If the width ever changes, the window recenters horizontally…
+        let (x, _) = compact_target_xy(100.0, 24.0, 400.0, 360.0);
+        assert_eq!(x, 120.0);
+        // …but at equal widths x is untouched (the common case).
+        let (x, _) = compact_target_xy(100.0, 24.0, 360.0, 360.0);
+        assert_eq!(x, 100.0);
+    }
 }
