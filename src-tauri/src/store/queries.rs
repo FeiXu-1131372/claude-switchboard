@@ -118,6 +118,111 @@ impl Db {
         Ok(row.map(|(ts, p)| (DateTime::from_timestamp(ts, 0).unwrap(), p)))
     }
 
+    /// Bound snapshot history to the newest `keep_per_account` rows per
+    /// account. Snapshots are written on every successful poll, so without
+    /// pruning the table grows ~700 rows/day/account forever. Returns the
+    /// number of rows deleted.
+    pub fn prune_snapshots(&self, keep_per_account: u32) -> Result<usize> {
+        let deleted = self.conn().execute(
+            "DELETE FROM api_snapshots
+             WHERE id NOT IN (
+                 SELECT id FROM (
+                     SELECT id,
+                            ROW_NUMBER() OVER (PARTITION BY account_id
+                                               ORDER BY fetched_at DESC, id DESC) AS rn
+                     FROM api_snapshots
+                 ) WHERE rn <= ?1
+             )",
+            params![keep_per_account],
+        )?;
+        Ok(deleted)
+    }
+
+    /// The pricing revision last applied to stored events, or `None` when
+    /// historical costs have never been (re)computed under the current table.
+    pub fn repriced_version(&self) -> Result<Option<u32>> {
+        let v: Option<String> = self
+            .conn()
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'repriced_pricing_version'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(v.and_then(|s| s.parse().ok()))
+    }
+
+    pub fn set_repriced_version(&self, version: u32) -> Result<()> {
+        self.conn().execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('repriced_pricing_version', ?1)",
+            params![version.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// Recompute `cost_usd` for every stored session event using the current
+    /// pricing table. Used as a one-time migration when pricing entries are
+    /// added or corrected (e.g. fable-5 events that were costed 0.0 before
+    /// the model had an entry, opus-4-8 events costed at legacy rates).
+    /// Rows already matching the current table are untouched. Returns the
+    /// number of rows updated.
+    pub fn reprice_outdated_events(
+        &self,
+        pricing: &crate::jsonl_parser::pricing::PricingTable,
+    ) -> Result<usize> {
+        // (id, model, input, output, cache_read, cache_5m, cache_1h, old cost)
+        type EventCostRow = (i64, String, i64, i64, i64, i64, i64, f64);
+
+        // Read first, then write: iterating a SELECT while issuing UPDATEs
+        // against the same table on one connection is asking for skipped
+        // rows, so the scan is materialized up front.
+        let rows: Vec<EventCostRow> = {
+            let conn = self.conn();
+            let mut stmt = conn.prepare(
+                "SELECT id, model, input_tokens, output_tokens, cache_read_tokens,
+                        cache_creation_5m_tokens, cache_creation_1h_tokens, cost_usd
+                 FROM session_events",
+            )?;
+            let mapped = stmt.query_map([], |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                    r.get(7)?,
+                ))
+            })?;
+            mapped.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let mut updated = 0usize;
+        {
+            let mut write =
+                tx.prepare("UPDATE session_events SET cost_usd = ?2 WHERE id = ?1")?;
+            for (id, model, input, output, cr, c5m, c1h, old_cost) in rows {
+                let new_cost = pricing.cost_for(
+                    &model,
+                    input as u64,
+                    output as u64,
+                    cr as u64,
+                    c5m as u64,
+                    c1h as u64,
+                );
+                if (new_cost - old_cost).abs() > 1e-9 {
+                    write.execute(params![id, new_cost])?;
+                    updated += 1;
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(updated)
+    }
+
     pub fn insert_events(&self, events: &[StoredSessionEvent]) -> Result<usize> {
         if events.is_empty() {
             return Ok(0);
@@ -319,6 +424,127 @@ mod tests {
         let (ts, payload) = db.latest_snapshot("acc1").unwrap().expect("snapshot");
         assert_eq!(ts.timestamp(), now.timestamp());
         assert!(payload.contains("five_hour"));
+    }
+
+    #[test]
+    fn prune_snapshots_keeps_latest_n_per_account() {
+        let (_dir, db) = fresh_db();
+        db.upsert_account(&StoredAccount {
+            id: "acc2".into(),
+            email: "b@example.com".into(),
+            display_name: None,
+        })
+        .unwrap();
+        let base = Utc::now();
+        for i in 0..5 {
+            db.insert_snapshot(
+                "acc1",
+                base + chrono::Duration::seconds(i),
+                &format!(r#"{{"n":{i}}}"#),
+            )
+            .unwrap();
+        }
+        for i in 0..2 {
+            db.insert_snapshot(
+                "acc2",
+                base + chrono::Duration::seconds(i),
+                &format!(r#"{{"n":{i}}}"#),
+            )
+            .unwrap();
+        }
+
+        let pruned = db.prune_snapshots(2).unwrap();
+        assert_eq!(pruned, 3, "acc1 drops 3 of 5; acc2 already within keep");
+
+        let (_, payload) = db.latest_snapshot("acc1").unwrap().unwrap();
+        assert!(payload.contains("\"n\":4"), "newest snapshot survives");
+        let remaining: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM api_snapshots WHERE account_id = 'acc2'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 2, "accounts within the keep count are untouched");
+    }
+
+    fn event(model: &str, input: u64, output: u64, cost: f64, id: &str) -> StoredSessionEvent {
+        StoredSessionEvent {
+            ts: Utc::now(),
+            project: "p".into(),
+            model: model.into(),
+            input_tokens: input,
+            output_tokens: output,
+            cache_read_tokens: 0,
+            cache_creation_5m_tokens: 0,
+            cache_creation_1h_tokens: 0,
+            cost_usd: cost,
+            source_file: "f.jsonl".into(),
+            source_line: 1,
+            event_id: id.into(),
+        }
+    }
+
+    fn stored_cost(db: &Db, event_id: &str) -> f64 {
+        db.conn()
+            .query_row(
+                "SELECT cost_usd FROM session_events WHERE event_id = ?1",
+                params![event_id],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn reprice_recomputes_costs_with_current_table() {
+        let (_dir, db) = fresh_db();
+        // Written before fable-5 had a pricing entry (costed 0.0) and before
+        // opus-4-8 got its own entry (costed at legacy $15/$75 rates).
+        db.insert_events(&[
+            event("claude-fable-5", 100_000, 1_000, 0.0, "e_fable"),
+            event("claude-opus-4-8", 5_000, 0, 0.075, "e_o48"),
+            // Relay models previously costed 0.0.
+            event("MiniMax-M2.7", 1_000_000, 0, 0.0, "e_mm"),
+        ])
+        .unwrap();
+        let pricing = crate::jsonl_parser::pricing::PricingTable::bundled().unwrap();
+        let updated = db.reprice_outdated_events(&pricing).unwrap();
+        assert_eq!(updated, 3);
+        // fable: 0.1M in × $10 + 0.001M out × $50 = $1.05
+        assert!((stored_cost(&db, "e_fable") - 1.05).abs() < 1e-6);
+        // opus-4-8: 0.005M in × $5 = $0.025
+        assert!((stored_cost(&db, "e_o48") - 0.025).abs() < 1e-6);
+        // minimax: 1M in × $0.30 = $0.30
+        assert!((stored_cost(&db, "e_mm") - 0.30).abs() < 1e-6);
+    }
+
+    #[test]
+    fn reprice_leaves_already_correct_rows_untouched() {
+        let (_dir, db) = fresh_db();
+        // sonnet-4-6 base: 0.1M in × $3 = $0.30 — already correct.
+        db.insert_events(&[event("claude-sonnet-4-6", 100_000, 0, 0.30, "e_ok")])
+            .unwrap();
+        let pricing = crate::jsonl_parser::pricing::PricingTable::bundled().unwrap();
+        assert_eq!(db.reprice_outdated_events(&pricing).unwrap(), 0);
+    }
+
+    #[test]
+    fn reprice_is_idempotent() {
+        let (_dir, db) = fresh_db();
+        db.insert_events(&[event("claude-fable-5", 100_000, 0, 0.0, "e_f")])
+            .unwrap();
+        let pricing = crate::jsonl_parser::pricing::PricingTable::bundled().unwrap();
+        assert_eq!(db.reprice_outdated_events(&pricing).unwrap(), 1);
+        assert_eq!(db.reprice_outdated_events(&pricing).unwrap(), 0);
+    }
+
+    #[test]
+    fn repriced_version_roundtrip() {
+        let (_dir, db) = fresh_db();
+        assert_eq!(db.repriced_version().unwrap(), None);
+        db.set_repriced_version(2).unwrap();
+        assert_eq!(db.repriced_version().unwrap(), Some(2));
     }
 
     #[test]

@@ -91,6 +91,46 @@ pub fn run() {
         warmup: app_state::WarmupState::default(),
     });
 
+    // One-time per pricing revision: recompute historical event costs with
+    // the current table (covers events costed 0.0 before their model had a
+    // pricing entry, and events costed under corrected rates).
+    match app_state.db.repriced_version() {
+        Ok(Some(v)) if v >= crate::jsonl_parser::pricing::PRICING_VERSION => {}
+        _ => {
+            match app_state.db.reprice_outdated_events(&pricing) {
+                Ok(n) => {
+                    if n > 0 {
+                        tracing::info!("repriced {n} session events to pricing v{}", crate::jsonl_parser::pricing::PRICING_VERSION);
+                    }
+                    if let Err(e) = app_state
+                        .db
+                        .set_repriced_version(crate::jsonl_parser::pricing::PRICING_VERSION)
+                    {
+                        tracing::warn!("set_repriced_version failed: {e}");
+                    }
+                }
+                Err(e) => tracing::warn!("reprice migration failed: {e}"),
+            }
+        }
+    }
+
+    // Rehydrate per-slot usage caches from the most recent persisted API
+    // snapshots so the popover and account rows have last-known-good data
+    // before the poll loop's first fetch. Without this, a cold start during
+    // a rate-limit window shows "usage unavailable" until a fetch succeeds.
+    {
+        let managed = app_state.accounts.list().unwrap_or_default();
+        let hydrated = poll_loop::hydrated_caches(&app_state.db, &managed);
+        if !hydrated.is_empty() {
+            tracing::info!("hydrated usage cache for {} slot(s)", hydrated.len());
+            *app_state.cached_usage_by_slot.write() = hydrated;
+        }
+        // Snapshots accrue on every successful poll; keep the table bounded.
+        if let Err(e) = app_state.db.prune_snapshots(50) {
+            tracing::warn!("prune_snapshots failed: {e}");
+        }
+    }
+
     // tauri-specta's Builder::commands replaces previously registered commands rather
     // than appending, so debug-only handlers must be folded into the same collect_commands! call.
     #[cfg(not(debug_assertions))]

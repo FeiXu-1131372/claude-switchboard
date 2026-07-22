@@ -1,14 +1,19 @@
 {
-  "_comment": "Per-MTok rates in USD. Optional `tier` block applies when the per-call input-side context (input + cache_read + cache_creation) exceeds `above_tokens` — Anthropic's 1M-context Sonnet 4 tier. Opus 4 / 4-1 are capped at 200k context so they have no tier.",
+  "_comment": "Per-MTok rates in USD, verified against Anthropic's pricing page on 2026-07-21. Optional `tier` block applies when the per-call input-side context (input + cache_read + cache_creation) exceeds `above_tokens`. As of mid-2026 only Sonnet 4.5 (and retired Sonnet 4) keep the >200k premium — Opus 4.6+, Sonnet 4.6, Sonnet 5, and Fable/Mythos 5 include the full 1M context at standard pricing. Bare family prefixes (opus/sonnet/haiku) are fallbacks for unknown future models and should track the CURRENT tier of that family.",
   "pricing": [
+    { "prefix": "fable-5",    "input_per_mtok":  10.0, "output_per_mtok":  50.0, "cache_read_per_mtok":  1.00, "cache_5m_per_mtok":  12.50, "cache_1h_per_mtok":  20.00 },
+    { "prefix": "mythos-5",   "input_per_mtok":  10.0, "output_per_mtok":  50.0, "cache_read_per_mtok":  1.00, "cache_5m_per_mtok":  12.50, "cache_1h_per_mtok":  20.00 },
+
+    { "prefix": "opus-4-8",   "input_per_mtok":   5.0, "output_per_mtok":  25.0, "cache_read_per_mtok":  0.50, "cache_5m_per_mtok":   6.25, "cache_1h_per_mtok":  10.00 },
     { "prefix": "opus-4-7",   "input_per_mtok":   5.0, "output_per_mtok":  25.0, "cache_read_per_mtok":  0.50, "cache_5m_per_mtok":   6.25, "cache_1h_per_mtok":  10.00 },
     { "prefix": "opus-4-6",   "input_per_mtok":   5.0, "output_per_mtok":  25.0, "cache_read_per_mtok":  0.50, "cache_5m_per_mtok":   6.25, "cache_1h_per_mtok":  10.00 },
     { "prefix": "opus-4-5",   "input_per_mtok":   5.0, "output_per_mtok":  25.0, "cache_read_per_mtok":  0.50, "cache_5m_per_mtok":   6.25, "cache_1h_per_mtok":  10.00 },
     { "prefix": "opus-4-1",   "input_per_mtok":  15.0, "output_per_mtok":  75.0, "cache_read_per_mtok":  1.50, "cache_5m_per_mtok":  18.75, "cache_1h_per_mtok":  30.00 },
     { "prefix": "opus-4",     "input_per_mtok":  15.0, "output_per_mtok":  75.0, "cache_read_per_mtok":  1.50, "cache_5m_per_mtok":  18.75, "cache_1h_per_mtok":  30.00 },
+    { "prefix": "3-opus",     "input_per_mtok":  15.0, "output_per_mtok":  75.0, "cache_read_per_mtok":  1.50, "cache_5m_per_mtok":  18.75, "cache_1h_per_mtok":  30.00 },
 
-    { "prefix": "sonnet-4-6", "input_per_mtok":   3.0, "output_per_mtok":  15.0, "cache_read_per_mtok":  0.30, "cache_5m_per_mtok":   3.75, "cache_1h_per_mtok":   6.00,
-      "tier": { "above_tokens": 200000, "input_per_mtok":   6.0, "output_per_mtok":  22.50, "cache_read_per_mtok":  0.60, "cache_5m_per_mtok":   7.50, "cache_1h_per_mtok":  12.00 } },
+    { "prefix": "sonnet-5",   "input_per_mtok":   3.0, "output_per_mtok":  15.0, "cache_read_per_mtok":  0.30, "cache_5m_per_mtok":   3.75, "cache_1h_per_mtok":   6.00 },
+    { "prefix": "sonnet-4-6", "input_per_mtok":   3.0, "output_per_mtok":  15.0, "cache_read_per_mtok":  0.30, "cache_5m_per_mtok":   3.75, "cache_1h_per_mtok":   6.00 },
     { "prefix": "sonnet-4-5", "input_per_mtok":   3.0, "output_per_mtok":  15.0, "cache_read_per_mtok":  0.30, "cache_5m_per_mtok":   3.75, "cache_1h_per_mtok":   6.00,
       "tier": { "above_tokens": 200000, "input_per_mtok":   6.0, "output_per_mtok":  22.50, "cache_read_per_mtok":  0.60, "cache_5m_per_mtok":   7.50, "cache_1h_per_mtok":  12.00 } },
     { "prefix": "sonnet-4",   "input_per_mtok":   3.0, "output_per_mtok":  15.0, "cache_read_per_mtok":  0.30, "cache_5m_per_mtok":   3.75, "cache_1h_per_mtok":   6.00,
@@ -16,9 +21,17 @@
 
     { "prefix": "haiku-4-5",  "input_per_mtok":   1.0, "output_per_mtok":   5.0, "cache_read_per_mtok":  0.10, "cache_5m_per_mtok":   1.25, "cache_1h_per_mtok":   2.00 },
     { "prefix": "haiku-3-5",  "input_per_mtok":   0.8, "output_per_mtok":   4.0, "cache_read_per_mtok":  0.08, "cache_5m_per_mtok":   1.00, "cache_1h_per_mtok":   1.60 },
-    { "prefix": "opus",       "input_per_mtok":  15.0, "output_per_mtok":  75.0, "cache_read_per_mtok":  1.50, "cache_5m_per_mtok":  18.75, "cache_1h_per_mtok":  30.00 },
-    { "prefix": "sonnet",     "input_per_mtok":   3.0, "output_per_mtok":  15.0, "cache_read_per_mtok":  0.30, "cache_5m_per_mtok":   3.75, "cache_1h_per_mtok":   6.00,
-      "tier": { "above_tokens": 200000, "input_per_mtok":   6.0, "output_per_mtok":  22.50, "cache_read_per_mtok":  0.60, "cache_5m_per_mtok":   7.50, "cache_1h_per_mtok":  12.00 } },
-    { "prefix": "haiku",      "input_per_mtok":   1.0, "output_per_mtok":   5.0, "cache_read_per_mtok":  0.10, "cache_5m_per_mtok":   1.25, "cache_1h_per_mtok":   2.00 }
-  ]
+
+    { "prefix": "opus",       "input_per_mtok":   5.0, "output_per_mtok":  25.0, "cache_read_per_mtok":  0.50, "cache_5m_per_mtok":   6.25, "cache_1h_per_mtok":  10.00 },
+    { "prefix": "sonnet",     "input_per_mtok":   3.0, "output_per_mtok":  15.0, "cache_read_per_mtok":  0.30, "cache_5m_per_mtok":   3.75, "cache_1h_per_mtok":   6.00 },
+    { "prefix": "haiku",      "input_per_mtok":   1.0, "output_per_mtok":   5.0, "cache_read_per_mtok":  0.10, "cache_5m_per_mtok":   1.25, "cache_1h_per_mtok":   2.00 },
+
+    { "prefix": "minimax-m2.7-highspeed", "input_per_mtok": 0.60, "output_per_mtok": 2.40, "cache_read_per_mtok": 0.12, "cache_5m_per_mtok": 0.75, "cache_1h_per_mtok": 0.75 },
+    { "prefix": "minimax-m2.7", "input_per_mtok": 0.30, "output_per_mtok": 1.20, "cache_read_per_mtok": 0.06, "cache_5m_per_mtok": 0.375, "cache_1h_per_mtok": 0.375 },
+    { "prefix": "glm-5.1",    "input_per_mtok":   1.4, "output_per_mtok":   4.4, "cache_read_per_mtok":  0.26, "cache_5m_per_mtok":   1.40, "cache_1h_per_mtok":   1.40 },
+    { "prefix": "glm",        "input_per_mtok":   1.4, "output_per_mtok":   4.4, "cache_read_per_mtok":  0.26, "cache_5m_per_mtok":   1.40, "cache_1h_per_mtok":   1.40 },
+    { "prefix": "kimi-k3",    "input_per_mtok":   3.0, "output_per_mtok":  15.0, "cache_read_per_mtok":  0.30, "cache_5m_per_mtok":   3.00, "cache_1h_per_mtok":   3.00 },
+    { "prefix": "k3",         "input_per_mtok":   3.0, "output_per_mtok":  15.0, "cache_read_per_mtok":  0.30, "cache_5m_per_mtok":   3.00, "cache_1h_per_mtok":   3.00 }
+  ],
+  "_comment_third_party": "Entries below the haiku fallback are third-party models seen via relays in local Claude Code JSONL logs, at the vendors' official per-MTok API prices (verified 2026-07-21): platform.minimax.io, Z.ai, Moonshot Kimi API. A relay's actual markup may differ. Cache-write columns reuse the published cache-write rate where one exists (MiniMax $0.375), else the base input rate (vendors bill automatic caching's first pass as normal input); cache read uses each vendor's cached-input rate."
 }
