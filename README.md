@@ -159,17 +159,23 @@ The full report has six tabs — Sessions, Models, Trends, Projects, Heatmap, Ca
 
 ## Install
 
-No signed release yet — build from source:
+**[⬇ Download the latest release](https://github.com/FeiXu-1131372/claude-switchboard/releases/latest)** — macOS `.dmg` (universal) and Windows `.exe`.
+
+The app is not notarized (no Apple Developer ID / Windows EV certificate), so the *first* launch on a new machine needs one extra step:
+
+- **macOS:** right-click → Open from Finder, or `xattr -d com.apple.quarantine "/Applications/Claude Switchboard.app"`
+- **Windows:** SmartScreen → "More info" → "Run anyway". WebView2 is required on Windows 10 (Windows 11 ships it).
+
+After that, updates install themselves — see [Updates](#updates).
+
+Found a bug or want a feature? [Open an issue](https://github.com/FeiXu-1131372/claude-switchboard/issues/new).
+
+### Build from source
 
 ```bash
 pnpm install
 pnpm tauri dev
 ```
-
-When binaries ship, first-launch notes for unsigned apps:
-
-- **macOS:** `xattr -d com.apple.quarantine "/Applications/Claude Switchboard.app"` or right-click → Open from Finder.
-- **Windows:** SmartScreen → "More info" → "Run anyway". WebView2 is required on Windows 10 (Windows 11 ships it).
 
 ## Updates
 
