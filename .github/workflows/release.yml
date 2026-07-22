@@ -60,6 +60,37 @@ jobs:
           releaseBody: 'Unsigned build — see README for first-launch instructions on each OS.'
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
+      # tauri-action's own updater-artifact matching has repeatedly missed the
+      # bundler-produced .sig files ("Signature not found for the updater
+      # JSON. Skipping upload..."), leaving the release without the assets the
+      # updater manifest needs. Upload them explicitly instead. Names are
+      # normalized (spaces → dots) so manifest URLs need no escaping.
+      - name: Upload updater artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "src-tauri/target/${{ matrix.target }}/release/bundle"
+          staging="$(mktemp -d)"
+          found=0
+          while IFS= read -r -d '' f; do
+            found=1
+            base="$(basename "$f")"
+            cp "$f" "$staging/${base// /.}"
+          done < <(
+            find . -type f \( -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' -o -name '*.nsis.zip' -o -name '*.nsis.zip.sig' \) -print0
+          )
+          if [ "$found" -eq 0 ]; then
+            echo "::error::no updater artifacts produced (expected .app.tar.gz/.sig or .nsis.zip/.sig)"
+            exit 1
+          fi
+          ls -la "$staging"
+          gh release upload "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --clobber \
+            "$staging"/*
+
   compose-manifest:
     needs: [release]
     runs-on: ubuntu-latest
