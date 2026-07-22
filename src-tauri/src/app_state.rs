@@ -9,7 +9,7 @@ use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration as StdDuration, Instant};
+use std::time::Instant;
 use tokio::sync::Notify;
 
 /// Marker struct for the in-app warm-up scheduler. The tokio JoinHandle is
@@ -113,7 +113,6 @@ pub struct AppState {
 #[derive(Debug, Clone, Copy)]
 pub struct BackoffState {
     pub until: Instant,
-    pub last_delay: StdDuration,
 }
 
 #[derive(Debug, Clone, Copy)]

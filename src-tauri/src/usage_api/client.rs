@@ -146,37 +146,9 @@ impl UsageClient {
     }
 }
 
-/// Exponential backoff ladder: 1m, 2m, 4m, 8m, 10m (cap).
-pub fn next_backoff(previous: Duration) -> Duration {
-    let doubled = previous.saturating_mul(2);
-    let cap = Duration::from_secs(10 * 60);
-    if doubled > cap {
-        cap
-    } else {
-        doubled.max(Duration::from_secs(60))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn backoff_ladder() {
-        let mut d = Duration::from_secs(60);
-        d = next_backoff(d);
-        assert_eq!(d, Duration::from_secs(120));
-        d = next_backoff(d);
-        assert_eq!(d, Duration::from_secs(240));
-        d = next_backoff(d);
-        assert_eq!(d, Duration::from_secs(480));
-        d = next_backoff(d);
-        assert_eq!(d, Duration::from_secs(600)); // doubled 960 clamped to 10m cap
-        d = next_backoff(d);
-        assert_eq!(d, Duration::from_secs(600)); // cap
-        d = next_backoff(d);
-        assert_eq!(d, Duration::from_secs(600)); // cap
-    }
 
     #[test]
     fn user_agent_uses_switchboard_prefix() {

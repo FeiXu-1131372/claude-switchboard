@@ -3,7 +3,7 @@ use crate::auth::AuthSource;
 use crate::auth::accounts::ManagedAccount;
 use crate::notifier;
 use crate::tray;
-use crate::usage_api::{next_backoff, FetchOutcome, UsageSnapshot};
+use crate::usage_api::{FetchOutcome, UsageSnapshot};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde_json::json;
 use std::collections::{HashMap, VecDeque};
@@ -149,6 +149,31 @@ async fn fetch_and_apply_one(
     // adding a lock or capturing the value at the call site.
     let active_slot = *state.active_slot.read();
 
+    // Shared-snapshot fast path (active slot only): when an external poller
+    // — the user's statusline daemon — already has fresh data for the live
+    // account, adopt it instead of spending the account's scarce /usage rate
+    // budget on a duplicate call. Valid only for the active slot because the
+    // daemon polls the live Claude Code account, which is what active_slot
+    // tracks; inactive slots keep their normal (uncontended) fetch path.
+    // Freshness window = the polling interval, so a healthy daemon always
+    // wins and a dead one hands control back to the HTTP path within a cycle.
+    if Some(slot) == active_slot {
+        let interval = Duration::from_secs(state.settings.read().polling_interval_secs.max(60));
+        if let Some(snap) = read_shared_snapshot(&shared_usage_file_path(), interval) {
+            tracing::debug!(target: "switchboard.poll", "slot {slot}: adopted shared snapshot");
+            return self::apply_fetch_outcome(
+                handle,
+                state,
+                burn_buffers,
+                slot,
+                &acc,
+                active_slot,
+                FetchOutcome::Ok(snap),
+            )
+            .await;
+        }
+    }
+
     let token_result = state
         .auth
         .token_for_slot(slot, active_slot, &state.accounts)
@@ -182,7 +207,22 @@ async fn fetch_and_apply_one(
         }
     };
     let Some(outcome) = outcome else { return };
+    apply_fetch_outcome(handle, state, burn_buffers, slot, &acc, active_slot, outcome).await;
+}
 
+/// Apply a fetch outcome for one slot: update the per-slot cache, emit
+/// `usage_updated`, and on success also persist + update tray/notifier.
+/// Shared by the HTTP path and the shared-snapshot fast path.
+#[allow(clippy::too_many_arguments)]
+async fn apply_fetch_outcome(
+    handle: &AppHandle,
+    state: &AppState,
+    burn_buffers: &mut HashMap<u32, VecDeque<(DateTime<Utc>, f64)>>,
+    slot: u32,
+    acc: &ManagedAccount,
+    active_slot: Option<u32>,
+    outcome: FetchOutcome,
+) {
     match outcome {
         FetchOutcome::Ok(snapshot) => {
             let buf = burn_buffers.entry(slot).or_default();
@@ -201,6 +241,21 @@ async fn fetch_and_apply_one(
             };
             state.cached_usage_by_slot.write().insert(slot, cached.clone());
             state.backoff_by_slot.write().remove(&slot);
+            // Persist the raw snapshot so a cold start can rehydrate
+            // last-known-good data (see hydrated_caches). Best-effort: a
+            // storage hiccup must never interrupt polling. Note the
+            // re-serialize drops forward-compat `unknown` fields — the UI
+            // and hydration only rely on the typed buckets.
+            match serde_json::to_string(&snapshot) {
+                Ok(payload) => {
+                    if let Err(e) =
+                        state.db.insert_snapshot(&acc.account_uuid, Utc::now(), &payload)
+                    {
+                        tracing::warn!("persist snapshot for slot {slot} failed: {e}");
+                    }
+                }
+                Err(e) => tracing::warn!("serialize snapshot for slot {slot} failed: {e}"),
+            }
             let _ = handle.emit(
                 "usage_updated",
                 json!({ "slot": slot, "cached": cached }),
@@ -246,7 +301,7 @@ async fn fetch_and_apply_one(
                 .cached_usage_by_slot
                 .write()
                 .remove(&slot)
-                .unwrap_or_else(|| placeholder_cached(&acc, "auth_required"));
+                .unwrap_or_else(|| placeholder_cached(acc, "auth_required"));
             entry.last_error = Some("auth_required".into());
             state.cached_usage_by_slot.write().insert(slot, entry.clone());
             let _ = handle.emit(
@@ -255,39 +310,31 @@ async fn fetch_and_apply_one(
             );
         }
         FetchOutcome::RateLimited(retry_after) => {
-            let prev_delay = state
-                .backoff_by_slot
-                .read()
-                .get(&slot)
-                .map(|b| b.last_delay)
-                .unwrap_or(Duration::from_secs(60));
-            // Honor `Retry-After` only when it carries a positive value.
-            // The Anthropic usage endpoint has been observed returning
-            // `Retry-After: 0` on 429, which would let us hammer it on
-            // the next tick — fall back to exponential backoff there.
-            // Clamp explicit values into [60s, 30min] so a misconfigured
-            // server can't lock us out indefinitely or sub-minute-poll us.
-            let delay = match retry_after {
-                Some(d) if d > Duration::ZERO => clamp_backoff(d),
-                _ => next_backoff(prev_delay),
-            };
-            tracing::warn!(
-                "slot {slot} rate-limited; backing off {:?} (server retry-after={:?})",
-                delay,
-                retry_after,
-            );
-            state.backoff_by_slot.write().insert(
-                slot,
-                BackoffState {
-                    until: Instant::now() + delay,
-                    last_delay: delay,
-                },
-            );
+            match backoff_for_429(retry_after) {
+                Some(delay) => {
+                    tracing::warn!(
+                        "slot {slot} rate-limited; backing off {:?} (server retry-after={:?})",
+                        delay,
+                        retry_after,
+                    );
+                    state
+                        .backoff_by_slot
+                        .write()
+                        .insert(slot, BackoffState { until: Instant::now() + delay });
+                }
+                None => {
+                    // Retry-After: 0 or absent — retry at the next scheduled
+                    // poll; the error state clears on the next success.
+                    tracing::warn!(
+                        "slot {slot} rate-limited; retrying at next scheduled poll (server retry-after={retry_after:?})",
+                    );
+                }
+            }
             let mut entry = state
                 .cached_usage_by_slot
                 .write()
                 .remove(&slot)
-                .unwrap_or_else(|| placeholder_cached(&acc, "rate-limited (429)"));
+                .unwrap_or_else(|| placeholder_cached(acc, "rate-limited (429)"));
             entry.last_error = Some("rate-limited (429)".into());
             state.cached_usage_by_slot.write().insert(slot, entry.clone());
             let _ = handle.emit(
@@ -300,7 +347,7 @@ async fn fetch_and_apply_one(
                 .cached_usage_by_slot
                 .write()
                 .remove(&slot)
-                .unwrap_or_else(|| placeholder_cached(&acc, &e));
+                .unwrap_or_else(|| placeholder_cached(acc, &e));
             entry.last_error = Some(e);
             state.cached_usage_by_slot.write().insert(slot, entry.clone());
             let _ = handle.emit(
@@ -428,6 +475,28 @@ fn clamp_backoff(d: Duration) -> Duration {
     d.clamp(min, max)
 }
 
+/// Decide the backoff for a 429 response, or `None` for "no extra backoff —
+/// retry at the next normally scheduled poll".
+///
+/// The Anthropic usage endpoint returns `Retry-After: 0` on most 429s: the
+/// server is asking for no delay beyond the caller's own cadence. The
+/// per-slot poll schedule already spaces retries by `polling_interval_secs`
+/// (advanced unconditionally after each fetch attempt), so honoring the zero
+/// keeps the request rate identical to the success path — no hammering.
+/// The previous implementation treated 0 as "no guidance" and escalated
+/// 2→4→8→10 min, which stretched each transient 429 into a multi-minute
+/// "usage unavailable" window for no benefit.
+///
+/// Explicit positive `Retry-After` values are honored, clamped into
+/// [60s, 10min] so a misconfigured server can't lock us out indefinitely
+/// or sub-minute-poll us.
+fn backoff_for_429(retry_after: Option<Duration>) -> Option<Duration> {
+    match retry_after {
+        Some(d) if d > Duration::ZERO => Some(clamp_backoff(d)),
+        _ => None,
+    }
+}
+
 fn placeholder_cached(
     acc: &crate::auth::accounts::ManagedAccount,
     err: &str,
@@ -448,6 +517,96 @@ fn placeholder_cached(
         burn_rate: None,
         auth_source: AuthSource::OAuth,
     }
+}
+
+/// Location of the shared usage snapshot written by an external poller —
+/// the user's statusline daemon (`statusline-daemon.sh`), which already
+/// polls `/api/oauth/usage` for the live Claude Code account on a 60s
+/// cadence. `SWITCHBOARD_SHARED_USAGE_FILE` overrides for testing.
+fn shared_usage_file_path() -> std::path::PathBuf {
+    if let Some(p) = std::env::var_os("SWITCHBOARD_SHARED_USAGE_FILE") {
+        return std::path::PathBuf::from(p);
+    }
+    crate::auth::paths::claude_config_home()
+        .unwrap_or_else(|| std::path::PathBuf::from("/"))
+        .join("statusline-usage.json")
+}
+
+/// Adopt a shared usage snapshot written by an external poller when it's
+/// fresher than `max_age`. Returns `None` when the file is missing, stale,
+/// unparsable, or lacks the injected `fetched_at` epoch-seconds marker that
+/// identifies the daemon's format (a bare /usage payload has no timestamp,
+/// so a file without one can't be freshness-checked and is ignored).
+///
+/// Why this exists: the /usage endpoint's rate budget is per-account and is
+/// shared by every consumer — Claude Code sessions, the statusline daemon,
+/// and this app. On a busy account the budget is saturated, so the app's own
+/// fetches 429 constantly. Adopting the daemon's fresh snapshot removes this
+/// app as a competitor for the active account's budget entirely.
+pub fn read_shared_snapshot(path: &std::path::Path, max_age: Duration) -> Option<UsageSnapshot> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let mut value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let obj = value.as_object_mut()?;
+    let fetched_at = obj.remove("fetched_at")?.as_i64()?;
+    let fetched_at = DateTime::from_timestamp(fetched_at, 0)?;
+    let now = Utc::now();
+    // Reject clock-skewed future timestamps (30s grace) and stale data.
+    if fetched_at > now + ChronoDuration::seconds(30) {
+        return None;
+    }
+    if now - fetched_at > ChronoDuration::from_std(max_age).ok()? {
+        return None;
+    }
+    let mut snap: UsageSnapshot = serde_json::from_value(value).ok()?;
+    snap.fetched_at = fetched_at;
+    Some(snap)
+}
+
+/// Build per-slot cache entries from the most recent persisted API snapshot
+/// for each account. Called once at startup so the UI has last-known-good
+/// data before the first poll completes — without this, a cold start during
+/// a rate-limit storm shows "usage unavailable" (empty placeholder) until a
+/// fetch finally succeeds, which can take minutes.
+///
+/// Accounts without a persisted snapshot, or whose latest payload fails to
+/// decode, are skipped (the poll loop will fill them in on its first tick).
+pub fn hydrated_caches(
+    db: &crate::store::Db,
+    accounts: &[ManagedAccount],
+) -> HashMap<u32, CachedUsage> {
+    let mut out = HashMap::new();
+    for acc in accounts {
+        let payload = match db.latest_snapshot(&acc.account_uuid) {
+            Ok(Some((_fetched_at, payload))) => payload,
+            Ok(None) => continue,
+            Err(e) => {
+                tracing::warn!("hydrate: latest_snapshot({}) failed: {e}", acc.account_uuid);
+                continue;
+            }
+        };
+        match serde_json::from_str::<UsageSnapshot>(&payload) {
+            Ok(snapshot) => {
+                out.insert(
+                    acc.slot,
+                    CachedUsage {
+                        snapshot,
+                        account_id: acc.account_uuid.clone(),
+                        account_email: acc.email.clone(),
+                        last_error: None,
+                        burn_rate: None,
+                        auth_source: AuthSource::OAuth,
+                    },
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "hydrate: decode snapshot for {} failed: {e}",
+                    acc.account_uuid
+                );
+            }
+        }
+    }
+    out
 }
 
 fn update_burn_rate(
@@ -564,5 +723,181 @@ mod tests {
         assert_eq!(sched[&1].next_poll_at, now);
         assert_eq!(sched[&2].next_poll_at, now + d(60));
         assert_eq!(sched[&3].next_poll_at, now + d(120));
+    }
+
+    #[test]
+    fn backoff_for_429_zero_retry_after_means_no_backoff() {
+        // The usage endpoint returns `Retry-After: 0` on most 429s — the
+        // server is asking for no delay beyond our normal poll cadence (the
+        // per-slot schedule already spaces retries by the polling interval),
+        // so no backoff entry should be created.
+        assert_eq!(backoff_for_429(Some(Duration::ZERO)), None);
+    }
+
+    #[test]
+    fn backoff_for_429_missing_retry_after_means_no_backoff() {
+        assert_eq!(backoff_for_429(None), None);
+    }
+
+    #[test]
+    fn backoff_for_429_positive_retry_after_is_honored_and_clamped() {
+        // Explicit server guidance wins, clamped into [60s, 10min].
+        assert_eq!(backoff_for_429(Some(d(120))), Some(d(120)));
+        assert_eq!(backoff_for_429(Some(d(5))), Some(d(60)));
+        assert_eq!(backoff_for_429(Some(d(3600))), Some(d(600)));
+    }
+
+    mod hydrate {
+        use super::*;
+        use crate::auth::accounts::{AddSource, ManagedAccount};
+        use crate::store::Db;
+        use tempfile::tempdir;
+
+        fn acc(slot: u32, uuid: &str) -> ManagedAccount {
+            ManagedAccount {
+                slot,
+                email: format!("slot{slot}@example.com"),
+                account_uuid: uuid.to_string(),
+                organization_uuid: None,
+                organization_name: None,
+                subscription_type: None,
+                source: AddSource::OAuth,
+                claude_code_oauth_blob: serde_json::json!({}),
+                oauth_account_blob: serde_json::json!({}),
+                token_expires_at: Utc::now(),
+                added_at: Utc::now(),
+                last_seen_active: None,
+            }
+        }
+
+        const PAYLOAD: &str = r#"{
+            "five_hour": { "utilization": 42.5, "resets_at": "2026-04-24T18:00:00Z" },
+            "seven_day": { "utilization": 63.1, "resets_at": "2026-04-30T09:00:00Z" }
+        }"#;
+
+        fn db_with_account(uuid: &str) -> (tempfile::TempDir, Db) {
+            let dir = tempdir().unwrap();
+            let db = Db::open(dir.path()).unwrap();
+            // api_snapshots.account_id is FK'd to accounts(id) — mirror the
+            // account first, as mirror_account_to_sqlite does in production.
+            db.upsert_account(&crate::store::StoredAccount {
+                id: uuid.to_string(),
+                email: "a@example.com".into(),
+                display_name: None,
+            })
+            .unwrap();
+            (dir, db)
+        }
+
+        #[test]
+        fn returns_persisted_snapshot_for_account_with_last_error_cleared() {
+            let (_dir, db) = db_with_account("uuid-2");
+            db.insert_snapshot("uuid-2", Utc::now(), PAYLOAD).unwrap();
+
+            let caches = hydrated_caches(&db, &[acc(2, "uuid-2")]);
+            let entry = caches.get(&2).expect("slot 2 hydrated");
+            assert_eq!(
+                entry.snapshot.five_hour.as_ref().unwrap().utilization,
+                42.5
+            );
+            assert_eq!(entry.last_error, None);
+            assert_eq!(entry.account_email, "slot2@example.com");
+        }
+
+        #[test]
+        fn skips_accounts_without_snapshots() {
+            let dir = tempdir().unwrap();
+            let db = Db::open(dir.path()).unwrap();
+            let caches = hydrated_caches(&db, &[acc(2, "uuid-2")]);
+            assert!(caches.is_empty());
+        }
+
+        #[test]
+        fn skips_corrupt_payloads_instead_of_failing() {
+            let (_dir, db) = db_with_account("uuid-2");
+            db.insert_snapshot("uuid-2", Utc::now(), "not json").unwrap();
+            let caches = hydrated_caches(&db, &[acc(2, "uuid-2")]);
+            assert!(caches.is_empty());
+        }
+    }
+
+    mod shared_snapshot {
+        use super::*;
+        use tempfile::tempdir;
+
+        fn write(dir: &tempfile::TempDir, body: &str) -> std::path::PathBuf {
+            let p = dir.path().join("statusline-usage.json");
+            std::fs::write(&p, body).unwrap();
+            p
+        }
+
+        fn payload(fetched_at: i64) -> String {
+            format!(
+                r#"{{"five_hour": {{"utilization": 42.5, "resets_at": "2026-04-24T18:00:00Z"}}, "seven_day": null, "fetched_at": {fetched_at}}}"#
+            )
+        }
+
+        #[test]
+        fn adopts_fresh_valid_snapshot() {
+            let dir = tempdir().unwrap();
+            let now = Utc::now().timestamp();
+            let p = write(&dir, &payload(now));
+            let snap = read_shared_snapshot(&p, Duration::from_secs(120))
+                .expect("fresh snapshot adopted");
+            assert_eq!(snap.five_hour.unwrap().utilization, 42.5);
+            assert_eq!(snap.fetched_at.timestamp(), now);
+        }
+
+        #[test]
+        fn tolerates_unknown_vendor_fields() {
+            // The live file carries extra buckets and codename fields the
+            // typed snapshot doesn't know — forward-compat must hold.
+            let dir = tempdir().unwrap();
+            let now = Utc::now().timestamp();
+            let body = format!(
+                r#"{{"five_hour": {{"utilization": 2.0, "resets_at": null}}, "seven_day": {{"utilization": 26.0, "resets_at": "2026-07-25T02:59:59Z"}}, "seven_day_cowork": null, "tangelo": null, "limits": [], "fetched_at": {now}}}"#
+            );
+            let p = write(&dir, &body);
+            assert!(read_shared_snapshot(&p, Duration::from_secs(120)).is_some());
+        }
+
+        #[test]
+        fn rejects_stale_snapshot() {
+            let dir = tempdir().unwrap();
+            let old = (Utc::now() - ChronoDuration::minutes(10)).timestamp();
+            let p = write(&dir, &payload(old));
+            assert!(read_shared_snapshot(&p, Duration::from_secs(120)).is_none());
+        }
+
+        #[test]
+        fn rejects_future_timestamp() {
+            let dir = tempdir().unwrap();
+            let future = (Utc::now() + ChronoDuration::minutes(5)).timestamp();
+            let p = write(&dir, &payload(future));
+            assert!(read_shared_snapshot(&p, Duration::from_secs(120)).is_none());
+        }
+
+        #[test]
+        fn missing_file_returns_none() {
+            let dir = tempdir().unwrap();
+            let p = dir.path().join("does-not-exist.json");
+            assert!(read_shared_snapshot(&p, Duration::from_secs(120)).is_none());
+        }
+
+        #[test]
+        fn corrupt_json_returns_none() {
+            let dir = tempdir().unwrap();
+            let p = write(&dir, "not json at all");
+            assert!(read_shared_snapshot(&p, Duration::from_secs(120)).is_none());
+        }
+
+        #[test]
+        fn missing_fetched_at_returns_none() {
+            // Without the daemon's injected epoch marker we can't judge
+            // freshness — treat as a foreign file and ignore it.
+            let dir = tempdir().unwrap();
+            let p = write(&dir, r#"{"five_hour": {"utilization": 42.5, "resets_at": null}}"#);
+            assert!(read_shared_snapshot(&p, Duration::from_secs(120)).is_none());
+        }
     }
 }
