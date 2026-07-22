@@ -72,6 +72,18 @@ export function CompactPopover() {
   const activeModel = useActiveModel();
   const [view, setView] = useState<'home' | 'settings' | 'accounts'>('home');
   const [refreshing, setRefreshing] = useState(false);
+  // Detail rows (Opus/Sonnet split, pay-as-you-go) collapse behind a
+  // disclosure by default so the glance view is just the two hero numbers.
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const shownTick = useAppStore((s) => s.shownTick);
+
+  // Keep the window height in sync with content: minimal only for the home
+  // glance view with details collapsed; full compact height everywhere else
+  // (settings/accounts need the room). Re-asserted on every popover show.
+  const minimal = view === 'home' && !detailsOpen;
+  useEffect(() => {
+    ipc.resizeWindow(minimal ? 'compact-minimal' : 'compact').catch(() => {});
+  }, [minimal, shownTick]);
 
   const accountEmail = usage?.account_email ?? null;
   const fetchedAt = usage?.snapshot.fetched_at;
@@ -117,7 +129,7 @@ export function CompactPopover() {
   const danger = thresholds[1] ?? 90;
 
   return (
-    <Shell>
+    <Shell minimal={minimal}>
       <UpdateBanner />
       <ChromeBar
         live
@@ -141,7 +153,14 @@ export function CompactPopover() {
         )}
       </div>
 
-      <UsageSummary usage={usage} thresholds={[warn, danger]} activeModel={activeModel} />
+      <UsageSummary
+        usage={usage}
+        thresholds={[warn, danger]}
+        activeModel={activeModel}
+        collapsible
+        detailsOpen={detailsOpen}
+        onToggleDetails={() => setDetailsOpen((v) => !v)}
+      />
 
       <div
         style={{ marginTop: 'auto' }}
@@ -209,11 +228,14 @@ function LoadingShell({
   );
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
+function Shell({ children, minimal }: { children: React.ReactNode; minimal?: boolean }) {
   return (
     <div
-      className="relative flex h-full w-full flex-col"
-      style={{ width: 'var(--popover-width)', height: 'var(--popover-height)' }}
+      className={`relative flex h-full w-full flex-col ${minimal ? 'popover-minimal' : ''}`}
+      style={{
+        width: 'var(--popover-width)',
+        height: minimal ? 'var(--popover-height-minimal)' : 'var(--popover-height)',
+      }}
     >
       {children}
       <SwapToast />

@@ -9,6 +9,7 @@
 
 import { motion } from 'framer-motion';
 import { InstrumentColumn, InstrumentRow } from '../popover/InstrumentRow';
+import { ChevronRight } from '../lib/icons';
 import type { BurnRateProjection, CachedUsage, Utilization } from '../lib/types';
 
 interface UsageSummaryProps {
@@ -18,19 +19,35 @@ interface UsageSummaryProps {
   condensed?: boolean;
   /** Highlights the matching Opus/Sonnet sub-row as currently in use. */
   activeModel?: 'opus' | 'sonnet' | 'haiku' | null;
+  /** When true, the model-split / pay-as-you-go detail rows collapse behind a
+   * disclosure row (compact popover default). Omit for always-expanded. */
+  collapsible?: boolean;
+  detailsOpen?: boolean;
+  onToggleDetails?: () => void;
 }
 
-export function UsageSummary({ usage, thresholds, condensed, activeModel }: UsageSummaryProps) {
+export function UsageSummary({
+  usage,
+  thresholds,
+  condensed,
+  activeModel,
+  collapsible,
+  detailsOpen,
+  onToggleDetails,
+}: UsageSummaryProps) {
   const snap = usage.snapshot;
   const extra = snap.extra_usage;
   const [warn, danger] = thresholds;
   // Render the model split whenever the 7d primary has loaded — even if both
   // sub-buckets are null, an empty row reads better than disappearing data.
-  const showModelSplit = snap.seven_day != null;
+  const showModelSplit = snap.seven_day != null && (!collapsible || detailsOpen);
+  const showExtra = extra?.is_enabled && (!collapsible || detailsOpen);
 
   return (
     <div className={condensed ? 'flex flex-col gap-[var(--space-xs)]' : 'flex flex-col'}>
-      {/* Hero: two-column instrument readout */}
+      {/* Hero: two-column instrument readout — tighter padding in the
+          collapsed glance view so the shorter popover height still fits the
+          footer. */}
       <motion.div
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
@@ -38,7 +55,11 @@ export function UsageSummary({ usage, thresholds, condensed, activeModel }: Usag
         className={
           condensed
             ? 'grid grid-cols-2 gap-x-[var(--space-lg)] px-[var(--popover-pad)] py-[var(--space-sm)]'
-            : 'grid grid-cols-2 gap-x-[var(--space-lg)] px-[var(--popover-pad)] pt-[var(--space-md)] pb-[var(--space-lg)]'
+            : `grid grid-cols-2 gap-x-[var(--space-lg)] px-[var(--popover-pad)] ${
+                collapsible && !detailsOpen
+                  ? 'pt-[var(--space-xs)] pb-[var(--space-sm)]'
+                  : 'pt-[var(--space-md)] pb-[var(--space-lg)]'
+              }`
         }
       >
         <div className="flex flex-col gap-[var(--space-xs)]">
@@ -61,6 +82,26 @@ export function UsageSummary({ usage, thresholds, condensed, activeModel }: Usag
           dangerAt={danger}
         />
       </motion.div>
+
+      {collapsible && (
+        <>
+          <Hairline />
+          <button
+            type="button"
+            onClick={onToggleDetails}
+            aria-expanded={detailsOpen}
+            className="flex items-center justify-between px-[var(--popover-pad)] py-[var(--space-xs)]"
+          >
+            <span className="text-[length:var(--text-micro)] font-[var(--weight-medium)] tracking-[var(--tracking-label)] uppercase text-[color:var(--color-text-muted)]">
+              Details
+            </span>
+            <ChevronRight
+              size={12}
+              className={`text-[color:var(--color-text-muted)] transition-transform duration-[var(--duration-fast)] ${detailsOpen ? 'rotate-90' : ''}`}
+            />
+          </button>
+        </>
+      )}
 
       {/* Opus / Sonnet sub-row — rendered whenever 7d data is present so the
        * model split stays visible even when one bucket is idle. The currently-
@@ -88,7 +129,7 @@ export function UsageSummary({ usage, thresholds, condensed, activeModel }: Usag
       )}
 
       {/* Pay-as-you-go — its own row, hairline-divided */}
-      {extra?.is_enabled && (
+      {showExtra && extra && (
         <>
           <Hairline />
           <div className="px-[var(--popover-pad)] py-[var(--space-sm)]">

@@ -51,10 +51,15 @@ export function InstrumentColumn({
 
   return (
     <div className="flex flex-col gap-[10px]">
-      {/* Eyebrow label */}
-      <span className="text-[length:var(--text-micro)] font-[var(--weight-medium)] tracking-[var(--tracking-label)] uppercase text-[color:var(--color-text-muted)]">
-        {label}
-      </span>
+      {/* Eyebrow label + reset time on ONE row. They are the same kind of
+       * metadata, so they scan as a unit; this also drops the old bottom
+       * caption row entirely, which is what lets the glance view shrink. */}
+      <div className="flex items-baseline justify-between gap-[var(--space-xs)]">
+        <span className="text-[length:var(--text-micro)] font-[var(--weight-medium)] tracking-[var(--tracking-label)] uppercase text-[color:var(--color-text-muted)]">
+          {label}
+        </span>
+        {data?.resets_at && <ResetCountdown resetsAt={data.resets_at} />}
+      </div>
 
       {/* Hero number — the % sits at the digit's CAP-height (top edge), not its
        * baseline, so the digit + unit read as a single integrated cluster. The
@@ -74,7 +79,7 @@ export function InstrumentColumn({
               className="font-[var(--weight-medium)] text-[color:var(--color-text-secondary)] mt-[8px]"
               style={{
                 fontFamily: 'var(--font-mono)',
-                fontSize: '32px',
+                fontSize: 'var(--text-hero-unit)',
                 lineHeight: 1,
                 letterSpacing: '-0.02em',
               }}
@@ -87,13 +92,6 @@ export function InstrumentColumn({
 
       {/* Hairline meter */}
       <Meter value={clamped} level={level} />
-
-      {/* Caption — leading-tight so it occupies a single line predictably,
-       * and a min-height so all columns line up when one bucket has no
-       * reset_at to show. */}
-      <div className="min-h-[16px] leading-[1.4]">
-        {data?.resets_at && <ResetCountdown resetsAt={data.resets_at} />}
-      </div>
     </div>
   );
 }

@@ -24,6 +24,8 @@ interface AppStore {
   dbReset: boolean;
   sessionDataVersion: number;
   viewMode: 'compact' | 'expanded';
+  /** Bumped on every popover_shown so views can re-assert size/state. */
+  shownTick: number;
   pendingSwapReport: SwapReport | null;
   modalStack: string[];
 
@@ -57,6 +59,7 @@ export const useAppStore = create<AppStore>((set, _get) => ({
   dbReset: false,
   sessionDataVersion: 0,
   viewMode: 'compact',
+  shownTick: 0,
   pendingSwapReport: null,
   modalStack: [],
 
@@ -152,6 +155,7 @@ export const useAppStore = create<AppStore>((set, _get) => ({
           ipc.resizeWindow('compact').catch(() => {});
           break;
         case 'popover_shown':
+          set((s) => ({ shownTick: s.shownTick + 1 }));
           document.body.dataset.appearing = 'true';
           window.setTimeout(() => {
             delete document.body.dataset.appearing;

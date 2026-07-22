@@ -29,7 +29,7 @@ export const ipc = {
   getSettings: () => commands.getSettings().then(unwrap),
   updateSettings: (s: Settings) => commands.updateSettings(s).then(unwrap),
 
-  resizeWindow: (mode: 'compact' | 'expanded') => commands.resizeWindow(mode).then(unwrap),
+  resizeWindow: (mode: 'compact' | 'compact-minimal' | 'expanded') => commands.resizeWindow(mode).then(unwrap),
   forceRefresh: (scope: 'active' | 'all') => commands.forceRefresh(scope).then(unwrap),
 
   // Warmup pillar

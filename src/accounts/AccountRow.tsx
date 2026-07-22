@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { ResetCountdown } from '../popover/ResetCountdown';
 import { ipc } from '../lib/ipc';
+import { formatRelativeTime } from '../lib/format';
 import type { AccountListEntry, Schedule } from '../lib/generated/bindings';
 import { WarmupToggle } from './WarmupToggle';
 import { WarmupNowButton, type WarmupNowStatus } from './WarmupNowButton';
 import { ScheduleSelector } from './ScheduleSelector';
 import { WarmupConsentModal } from '../components/modals/WarmupConsentModal';
-import { MoreHorizontal, Trash2 } from '../lib/icons';
+import { MoreHorizontal, Trash2, ChevronRight } from '../lib/icons';
 import type { WarmupOutcome } from '../lib/generated/bindings';
 
 interface Props {
@@ -128,11 +129,15 @@ export function AccountRow({
   const cached = entry.cached_usage;
   const fiveHour = cached?.snapshot.five_hour ?? null;
   const sevenDay = cached?.snapshot.seven_day ?? null;
+  const hasUsableData = fiveHour != null || sevenDay != null;
 
   // Warmup state — fetched once per mount from the DB via get_warmup_state.
   const [warmupEnabled, setWarmupEnabled] = useState(false);
   const [schedule, setSchedule] = useState<Schedule>({ type: 'Off' });
   const [showConsent, setShowConsent] = useState(false);
+  // The warm-up block is collapsed by default to keep account rows
+  // scannable — its state stays visible as a one-line summary.
+  const [warmupOpen, setWarmupOpen] = useState(false);
 
   // "Warm up now" button state — busy flag plus a transient outcome chip that
   // auto-clears after a few seconds so the user can tell the click did
@@ -246,9 +251,34 @@ export function AccountRow({
   const errLabel = (() => {
     if (entry.last_error === 'auth_required')
       return 'token expired — re-authenticate';
-    if (entry.last_error) return 'usage unavailable';
+    // Transient failures (429, timeout, network) only replace the meters when
+    // there's no usable snapshot to fall back on.
+    if (entry.last_error && !hasUsableData) return 'usage unavailable';
     return null;
   })();
+
+  // With a transient error but valid cached data, keep showing the meters and
+  // flag their age — hiding good 2-minute-old numbers behind "usage
+  // unavailable" made rate-limit windows read as total outages.
+  const staleHint = (() => {
+    if (!entry.last_error || entry.last_error === 'auth_required' || !hasUsableData)
+      return null;
+    const age = cached?.snapshot.fetched_at
+      ? formatRelativeTime(cached.snapshot.fetched_at)
+      : '';
+    return age
+      ? `${entry.last_error} — showing last good data from ${age}`
+      : `${entry.last_error} — showing last good data`;
+  })();
+
+  // One-line state for the collapsed warm-up disclosure.
+  const warmupSummary = !warmupEnabled
+    ? 'Off'
+    : schedule.type === 'Off'
+      ? 'On · manual'
+      : schedule.type === 'Every5h'
+        ? 'Every 5h'
+        : `Custom (${schedule.times.length})`;
 
   const showSwap = !!onSwap && !entry.is_active;
 
@@ -467,6 +497,11 @@ export function AccountRow({
               dangerAt={thresholds[1]}
             />
           </div>
+          {staleHint && (
+            <span className="text-[length:var(--text-micro)] text-[color:var(--color-warn)]">
+              {staleHint}
+            </span>
+          )}
           {shareHint && (
             <span className="text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]">
               shares quota with {shareHint}
@@ -475,69 +510,92 @@ export function AccountRow({
         </div>
       )}
 
-      {/* Warm-up controls */}
-      <div className="border-t border-neutral-700/40 pt-2 mt-1 space-y-2">
-        <div className="flex items-center justify-between">
+      {/* Warm-up — collapsed to a one-line summary by default; expands to
+          the full controls on click. The summary keeps the configured state
+          glanceable without the section eating vertical space in every row. */}
+      <div className="border-t border-neutral-700/40 pt-2 mt-1">
+        <button
+          type="button"
+          onClick={() => setWarmupOpen((v) => !v)}
+          aria-expanded={warmupOpen}
+          className="flex w-full items-center justify-between gap-2"
+        >
           <span className="text-[11px] text-neutral-400 uppercase tracking-wide">
             Warm-up
           </span>
-          <WarmupToggle enabled={warmupEnabled} onToggle={handleToggle} />
-        </div>
-        {warmupEnabled && (
-          <>
-            <ScheduleSelector value={schedule} onChange={handleScheduleChange} />
-            <div className="flex items-center justify-end gap-[var(--space-xs)]">
-              {warmupMessage && (
-                <span
-                  className={`text-[length:var(--text-micro)] ${
-                    warmupStatus === 'error'
-                      ? 'text-[color:var(--color-danger)]'
-                      : 'text-[color:var(--color-safe)]'
-                  }`}
-                >
-                  {warmupMessage}
-                </span>
-              )}
-              <div className="relative group/warmup">
-                <WarmupNowButton
-                  enabled={true}
-                  busy={warmupBusy}
-                  status={warmupStatus}
-                  onClick={handleWarmupNow}
-                />
-                {/* Opens upward so the explanation stays within the popover's
-                    scroll area even when the row is near the bottom. */}
-                <div
-                  role="tooltip"
-                  className="
-                    pointer-events-none opacity-0
-                    group-hover/warmup:opacity-100 group-focus-within/warmup:opacity-100
-                    transition-opacity duration-[var(--duration-fast)] ease-[var(--ease-out)]
-                    absolute right-0 bottom-[calc(100%+6px)] z-30
-                    w-[240px]
-                    rounded-[var(--radius-md)]
-                    border border-[var(--color-border)]
-                    bg-[var(--color-bg-elevated)]
-                    backdrop-blur-[var(--glass-blur)]
-                    shadow-[0_8px_24px_oklch(0%_0_0_/_0.35)]
-                    p-[var(--space-sm)]
-                    text-left text-[length:var(--text-micro)] text-[color:var(--color-text-secondary)]
-                    leading-[var(--leading-label)]
-                  "
-                >
-                  <p className="font-[var(--weight-semibold)] text-[color:var(--color-text)] mb-[var(--space-2xs)]">
-                    What “warm up” does
-                  </p>
-                  <p>
-                    Sends a 1-token <span className="mono text-[color:var(--color-text)]">“hi”</span> to{' '}
-                    <span className="mono text-[color:var(--color-text)]">claude-haiku-4-5</span> — Anthropic's
-                    cheapest model. That single call opens a fresh 5-hour
-                    usage window for this account, at a fraction of a cent.
-                  </p>
-                </div>
-              </div>
+          <span className="flex items-center gap-1.5 text-[11px] text-neutral-500">
+            {warmupSummary}
+            <ChevronRight
+              size={12}
+              className={`transition-transform duration-[var(--duration-fast)] ${warmupOpen ? 'rotate-90' : ''}`}
+            />
+          </span>
+        </button>
+        {warmupOpen && (
+          <div className="mt-2 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-neutral-400 uppercase tracking-wide">
+                Enabled
+              </span>
+              <WarmupToggle enabled={warmupEnabled} onToggle={handleToggle} />
             </div>
-          </>
+            {warmupEnabled && (
+              <>
+                <ScheduleSelector value={schedule} onChange={handleScheduleChange} />
+                <div className="flex items-center justify-end gap-[var(--space-xs)]">
+                  {warmupMessage && (
+                    <span
+                      className={`text-[length:var(--text-micro)] ${
+                        warmupStatus === 'error'
+                          ? 'text-[color:var(--color-danger)]'
+                          : 'text-[color:var(--color-safe)]'
+                      }`}
+                    >
+                      {warmupMessage}
+                    </span>
+                  )}
+                  <div className="relative group/warmup">
+                    <WarmupNowButton
+                      enabled={true}
+                      busy={warmupBusy}
+                      status={warmupStatus}
+                      onClick={handleWarmupNow}
+                    />
+                    {/* Opens upward so the explanation stays within the popover's
+                        scroll area even when the row is near the bottom. */}
+                    <div
+                      role="tooltip"
+                      className="
+                        pointer-events-none opacity-0
+                        group-hover/warmup:opacity-100 group-focus-within/warmup:opacity-100
+                        transition-opacity duration-[var(--duration-fast)] ease-[var(--ease-out)]
+                        absolute right-0 bottom-[calc(100%+6px)] z-30
+                        w-[240px]
+                        rounded-[var(--radius-md)]
+                        border border-[var(--color-border)]
+                        bg-[var(--color-bg-elevated)]
+                        backdrop-blur-[var(--glass-blur)]
+                        shadow-[0_8px_24px_oklch(0%_0_0_/_0.35)]
+                        p-[var(--space-sm)]
+                        text-left text-[length:var(--text-micro)] text-[color:var(--color-text-secondary)]
+                        leading-[var(--leading-label)]
+                      "
+                    >
+                      <p className="font-[var(--weight-semibold)] text-[color:var(--color-text)] mb-[var(--space-2xs)]">
+                        What “warm up” does
+                      </p>
+                      <p>
+                        Sends a 1-token <span className="mono text-[color:var(--color-text)]">“hi”</span> to{' '}
+                        <span className="mono text-[color:var(--color-text)]">claude-haiku-4-5</span> — Anthropic's
+                        cheapest model. That single call opens a fresh 5-hour
+                        usage window for this account, at a fraction of a cent.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         )}
       </div>
 

@@ -127,4 +127,35 @@ describe('useAccountManagement', () => {
     expect(result.current.refreshing).toBe(false);
     vi.useRealTimers();
   });
+
+  it('handleRefreshAll stops spinning when the first usage_updated event lands', async () => {
+    const { result } = renderHook(() => useAccountManagement());
+    await act(async () => { await result.current.handleRefreshAll(); });
+    expect(result.current.refreshing).toBe(true);
+    // Rows live-update as usage_updated events stream in; the spinner should
+    // stop on the first one rather than outlasting the full staggered round.
+    await act(async () => {
+      mockSubscribers['usage_updated']({ slot: 1, cached: {} });
+    });
+    expect(result.current.refreshing).toBe(false);
+  });
+
+  it('handleRefreshAll caps the spin at ~10s when no usage_updated arrives', async () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useAccountManagement());
+    await act(async () => { await result.current.handleRefreshAll(); });
+    expect(result.current.refreshing).toBe(true);
+    await act(async () => { await vi.advanceTimersByTimeAsync(9_999); });
+    expect(result.current.refreshing).toBe(true);
+    await act(async () => { await vi.advanceTimersByTimeAsync(2); });
+    expect(result.current.refreshing).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it('handleRefreshAll stops immediately when forceRefresh rejects', async () => {
+    ipcMock.forceRefresh.mockRejectedValueOnce(new Error('ipc down'));
+    const { result } = renderHook(() => useAccountManagement());
+    await act(async () => { await result.current.handleRefreshAll(); });
+    expect(result.current.refreshing).toBe(false);
+  });
 });

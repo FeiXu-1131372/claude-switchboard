@@ -1,0 +1,101 @@
+import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import type { CachedUsage } from '../lib/types';
+import { UsageSummary } from './UsageSummary';
+
+function usage(): CachedUsage {
+  return {
+    snapshot: {
+      five_hour: { utilization: 19, resets_at: new Date(Date.now() + 5400_000).toISOString() },
+      seven_day: { utilization: 32, resets_at: new Date(Date.now() + 93600_000).toISOString() },
+      seven_day_sonnet: { utilization: 20, resets_at: null },
+      seven_day_opus: { utilization: 40, resets_at: null },
+      extra_usage: null,
+      fetched_at: new Date().toISOString(),
+    },
+    account_id: 'uuid-1',
+    account_email: 'a@x.com',
+    last_error: null,
+    burn_rate: null,
+    auth_source: 'OAuth',
+  } as CachedUsage;
+}
+
+describe('UsageSummary collapsible details', () => {
+  it('renders only the hero numbers plus a disclosure row when collapsed', () => {
+    const onToggle = vi.fn();
+    render(
+      <UsageSummary
+        usage={usage()}
+        thresholds={[75, 90]}
+        collapsible
+        detailsOpen={false}
+        onToggleDetails={onToggle}
+      />,
+    );
+    // Hero numbers visible…
+    expect(screen.getByText('19')).toBeTruthy();
+    expect(screen.getByText('32')).toBeTruthy();
+    // …disclosure row present…
+    expect(screen.getByRole('button', { name: /details/i })).toBeTruthy();
+    // …but the model split is hidden.
+    expect(screen.queryByText('Opus')).toBeNull();
+    expect(screen.queryByText('Sonnet')).toBeNull();
+  });
+
+  it('renders the detail rows when expanded', () => {
+    render(
+      <UsageSummary
+        usage={usage()}
+        thresholds={[75, 90]}
+        collapsible
+        detailsOpen
+        onToggleDetails={() => {}}
+      />,
+    );
+    expect(screen.getByText('Opus')).toBeTruthy();
+    expect(screen.getByText('Sonnet')).toBeTruthy();
+  });
+
+  it('clicking the disclosure row toggles', () => {
+    const onToggle = vi.fn();
+    render(
+      <UsageSummary
+        usage={usage()}
+        thresholds={[75, 90]}
+        collapsible
+        detailsOpen={false}
+        onToggleDetails={onToggle}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /details/i }));
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders fully with no disclosure when not collapsible (expanded report)', () => {
+    render(
+      <UsageSummary usage={usage()} thresholds={[75, 90]} condensed />,
+    );
+    expect(screen.queryByRole('button', { name: /details/i })).toBeNull();
+    expect(screen.getByText('Opus')).toBeTruthy();
+  });
+
+  it('merges the reset countdown into the bucket label row (no separate caption row)', () => {
+    render(<UsageSummary usage={usage()} thresholds={[75, 90]} />);
+    // The 5h label row carries its reset time — and nothing else (in the old
+    // layout the label's parent was the whole column, hero number included).
+    const labelRow = screen.getByText('5h').parentElement!;
+    expect(labelRow.textContent).toMatch(/in 1h \d+m/);
+    expect(labelRow.textContent).not.toContain('19');
+    // Exactly one reset countdown per bucket — not duplicated below the meter.
+    expect(screen.getAllByText(/^1h \d+m$/)).toHaveLength(1);
+    expect(screen.getAllByText(/^2[56]h \d+m$/)).toHaveLength(1);
+  });
+
+  it('keeps the burn-rate projection as the sole bottom caption when present', () => {
+    const u = usage();
+    u.burn_rate = { utilization_per_min: 0.5, projected_at_reset: 113 };
+    render(<UsageSummary usage={u} thresholds={[75, 90]} />);
+    expect(screen.getByText(/~113% by reset/)).toBeTruthy();
+  });
+});

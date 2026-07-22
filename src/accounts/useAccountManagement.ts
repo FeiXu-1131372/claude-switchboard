@@ -125,14 +125,29 @@ export function useAccountManagement() {
   const handleRefreshAll = useCallback(async () => {
     if (refreshing) return;
     setRefreshing(true);
+    // Rows live-update individually as each slot's `usage_updated` event
+    // lands, so the spinner only needs to outlast the wait for the FIRST
+    // fresh result — not the whole staggered round. (This used to spin
+    // (n−1)×30s+2s, which read as "stuck".) A 10s cap bounds the spin when
+    // every slot is in 429 backoff and no event ever arrives.
+    const cap = setTimeout(() => setRefreshing(false), 10_000);
+    let unlisten: (() => void) | undefined;
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      clearTimeout(cap);
+      unlisten?.();
+      setRefreshing(false);
+    };
+    unlisten = await listen('usage_updated', stop).catch(() => undefined);
     try {
       await ipc.forceRefresh('all');
     } catch {
       // Loop logs failures.
+      stop();
     }
-    const staggerTotalMs = Math.max(0, (accounts.length - 1) * 30_000) + 2_000;
-    setTimeout(() => setRefreshing(false), staggerTotalMs);
-  }, [refreshing, accounts.length]);
+  }, [refreshing]);
 
   return {
     accounts,
