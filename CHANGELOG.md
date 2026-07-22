@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## v1.1.0 — 2026-07-23
+
+### Added
+
+- **Auto-updater is now fully wired.** The bundler produces signed updater artifacts (`.app.tar.gz` + `.sig` on macOS, `.nsis.zip` + `.sig` on Windows) and the release workflow uploads them explicitly, fixing a tauri-action quirk that dropped the `.sig` files.
+- **Support for the latest Anthropic models:** Fable 5, Mythos 5, Sonnet 5, and Opus 4.8, with current per-token and cache pricing.
+- **Third-party relay pricing:** MiniMax M2.7, GLM 5.1, and Kimi K3 are now costed in session history.
+- **Historical cost re-computation.** On first launch after this update, Switchboard re-prices past session events using the new table, so reports reflect correct costs for previously unknown or corrected models.
+- **Shared usage snapshot.** When the statusline daemon has already polled the active account’s `/usage` endpoint, Switchboard adopts that fresh snapshot instead of competing for the same rate-limit budget.
+- **Startup hydration.** Last-known-good usage data is restored from the local database on launch, so the popover no longer flashes “usage unavailable” while the first poll is in flight.
+- **MIT license.**
+
+### Changed
+
+- **Compact popover redesign.** The default glance view is now 208 px tall and shows only the 5 h and 7 d hero numbers plus a Details disclosure; expanding reveals the Opus/Sonnet split and pay-as-you-go row.
+- **Reset countdowns now sit beside their bucket labels** instead of on a separate caption row, freeing vertical space.
+- **Warm-up controls are collapsed by default** in each account row; the one-line summary shows Off / On · manual / Every 5 h / Custom (n).
+- **Manual refresh is faster across all accounts:** the stagger gap drops from 30 s to 5 s for a user-initiated refresh.
+- **README install section** now points to the releases page and explains first-launch quarantine / SmartScreen steps.
+- The `Unreleased` comparison link now points to the `claude-switchboard` repository.
+
+### Fixed
+
+- **“Usage unavailable” on transient failures.** Cached usage numbers now stay visible during a 429 or network hiccup, with a stale hint like “rate-limited (429) — showing last good data from 3m ago.”
+- **429 backoff escalation.** `Retry-After: 0` no longer triggers ever-increasing exponential backoff; Switchboard retries at the next scheduled poll instead of backing off for minutes.
+- **Refresh spinner never stopping.** The spinner now stops on the first `usage_updated` event or a 10 s cap.
+- **Popover detached from the menu bar** when expanding Details or re-showing the window. Compact modes now keep the top edge glued to the tray.
+- **Cache-savings calculation** is now per-model instead of a Sonnet-only flat rate, so Opus and Fable sessions report accurate savings.
+
 ## v1.0.0 — 2026-05-07
 
 **Renamed: Claude Limits is now Claude Switchboard.** First release on the
@@ -81,6 +110,8 @@ First public release. See the [GitHub release notes](https://github.com/FeiXu-11
 - Settings persistence via SQLite; CSP set; corrupted-DB recovery.
 - Anthropic-warm token system with native vibrancy (macOS) / Mica (Windows 11) / translucent solid (Windows 10).
 
-[Unreleased]: https://github.com/FeiXu-1131372/claude-limits/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/FeiXu-1131372/claude-switchboard/releases/tag/v1.0.0
 [0.3.0]: https://github.com/FeiXu-1131372/claude-limits/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/FeiXu-1131372/claude-limits/releases/tag/v0.2.0
