@@ -6,7 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-## v1.1.0 — 2026-07-23
+## v1.1.1 — 2026-07-23
+
+### Fixed
+
+- **Auto-updater signing was broken in v1.1.0.** The release build failed on both macOS and Windows at the artifact-signing step because the CI signing key was corrupted; no v1.1.0 binaries were ever published. This release rotates to a fresh signing keypair and ships the working auto-updater, pricing updates, and fixes originally intended for v1.1.0 (see below).
+
+## v1.1.0 — 2026-07-23 (not published — see v1.1.1)
 
 ### Added
 
