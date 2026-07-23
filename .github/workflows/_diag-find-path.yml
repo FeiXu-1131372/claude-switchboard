@@ -1,0 +1,17 @@
+name: diag-find-path
+on: workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - name: Compare find resolution before/after PATH fix
+        shell: bash
+        run: |
+          echo "--- before fix ---"
+          which find || echo "which failed"
+          find --version 2>&1 | head -3 || echo "find --version failed"
+          echo "--- after fix ---"
+          export PATH="/usr/bin:$PATH"
+          which find || echo "which failed"
+          find --version 2>&1 | head -3 || echo "find --version failed"
