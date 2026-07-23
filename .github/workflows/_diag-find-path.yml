@@ -6,13 +6,39 @@ jobs:
   check:
     runs-on: windows-latest
     steps:
-      - name: Compare find resolution before/after PATH fix
+      - name: Reproduce the exact upload-step logic against synthetic bundle files
         shell: bash
         run: |
-          echo "--- before fix ---"
-          which find || echo "which failed"
-          find --version 2>&1 | head -3 || echo "find --version failed"
-          echo "--- after fix ---"
-          export PATH="/usr/bin:$PATH"
-          which find || echo "which failed"
-          find --version 2>&1 | head -3 || echo "find --version failed"
+          set -euo pipefail
+          mkdir -p "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis"
+          mkdir -p "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi"
+          touch "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Claude Switchboard_1.1.1_x64-setup.nsis.zip"
+          touch "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Claude Switchboard_1.1.1_x64-setup.nsis.zip.sig"
+          touch "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Claude Switchboard_1.1.1_x64-setup.exe"
+          touch "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Claude Switchboard_1.1.1_x64-setup.exe.sig"
+          touch "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/Claude Switchboard_1.1.1_x64_en-US.msi"
+
+          echo "=== pwd ==="
+          pwd
+          echo "=== full tree ==="
+          find "src-tauri/target/x86_64-pc-windows-msvc/release/bundle" -type f
+
+          echo "=== cd + relative find (exact script logic) ==="
+          cd "src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
+          pwd
+          staging="$(mktemp -d)"
+          found=0
+          while IFS= read -r -d '' f; do
+            found=1
+            base="$(basename "$f")"
+            echo "MATCHED: $f -> $base"
+            cp "$f" "$staging/${base// /.}"
+          done < <(
+            find . -type f \( -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' -o -name '*.nsis.zip' -o -name '*.nsis.zip.sig' \) -print0
+          )
+          echo "found=$found"
+          if [ "$found" -eq 0 ]; then
+            echo "::error::REPRODUCED: no updater artifacts produced"
+            exit 1
+          fi
+          ls -la "$staging"
