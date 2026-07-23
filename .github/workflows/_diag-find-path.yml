@@ -1,0 +1,38 @@
+name: diag-find-path
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - name: Create a real zip via PowerShell (separate process, like the actual bundler)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis" | Out-Null
+          "dummy content for a realistic file size" * 500 | Out-File -FilePath "seed.txt"
+          Compress-Archive -Path "seed.txt" -DestinationPath "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Claude Switchboard_1.1.1_x64-setup.nsis.zip"
+          Copy-Item "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Claude Switchboard_1.1.1_x64-setup.nsis.zip" "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Claude Switchboard_1.1.1_x64-setup.nsis.zip.sig"
+          Get-Item "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*"
+
+      - name: Immediately run the exact upload-step find logic
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
+          staging="$(mktemp -d)"
+          found=0
+          while IFS= read -r -d '' f; do
+            found=1
+            base="$(basename "$f")"
+            echo "MATCHED: $f -> $base"
+            cp "$f" "$staging/${base// /.}"
+          done < <(
+            find . -type f \( -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' -o -name '*.nsis.zip' -o -name '*.nsis.zip.sig' \) -print0
+          )
+          echo "found=$found"
+          if [ "$found" -eq 0 ]; then
+            echo "::error::REPRODUCED: no updater artifacts produced"
+            exit 1
+          fi
+          ls -la "$staging"
