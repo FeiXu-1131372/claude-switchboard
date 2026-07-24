@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Notify;
@@ -108,6 +109,14 @@ pub struct AppState {
     pub schedule_by_slot: RwLock<HashMap<u32, ScheduleState>>,
     pub keychain_guardian: Mutex<Option<KeychainGuardian>>,
     pub warmup: WarmupState,
+    /// Set once a real `TrayIconEvent` has reached `tauri_plugin_positioner`.
+    /// `Position::TrayCenter` panics (and aborts the process under the
+    /// release profile's `panic = "abort"`) if no tray position has been
+    /// recorded yet — which can happen on a cold launch, since the popover's
+    /// webview mounts and requests a resize before the user has ever
+    /// interacted with the tray icon. `resize_window` checks this before
+    /// asking for `TrayCenter`.
+    pub tray_position_known: AtomicBool,
 }
 
 #[derive(Debug, Clone, Copy)]

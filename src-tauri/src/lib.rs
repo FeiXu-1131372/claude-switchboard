@@ -89,6 +89,7 @@ pub fn run() {
         schedule_by_slot: parking_lot::RwLock::new(std::collections::HashMap::new()),
         keychain_guardian: parking_lot::Mutex::new(None),
         warmup: app_state::WarmupState::default(),
+        tray_position_known: std::sync::atomic::AtomicBool::new(false),
     });
 
     // One-time per pricing revision: recompute historical event costs with
@@ -348,6 +349,10 @@ pub fn run() {
                 });
                 tray.on_tray_icon_event(|tray, event| {
                     tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
+                    tray.app_handle()
+                        .state::<Arc<AppState>>()
+                        .tray_position_known
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,

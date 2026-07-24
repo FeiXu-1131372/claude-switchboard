@@ -396,6 +396,19 @@ fn compact_target_xy(from_x: f64, from_y: f64, from_w: f64, target_w: f64) -> (f
 #[specta::specta]
 pub async fn resize_window(mode: String, app: tauri::AppHandle) -> Result<(), String> {    use tauri::{LogicalPosition, LogicalSize, Manager, Position, Size};
 
+    // `Position::TrayCenter` panics (aborting the process under this crate's
+    // `panic = "abort"` release profile) if `tauri_plugin_positioner` hasn't
+    // recorded a tray position yet — which happens on a cold launch, since
+    // the popover's webview mounts and calls this before the user has ever
+    // interacted with the tray icon. Skip the tray-relative repositioning
+    // until a real `TrayIconEvent` has arrived; the window is still sized
+    // correctly, just not yet re-anchored, and the next call (e.g. the
+    // user's first tray click, which itself supplies that position) fixes it.
+    let tray_position_known = app
+        .state::<Arc<AppState>>()
+        .tray_position_known
+        .load(std::sync::atomic::Ordering::Relaxed);
+
     let Some(w) = app.get_webview_window("popover") else {
         return Ok(());
     };
@@ -493,7 +506,7 @@ pub async fn resize_window(mode: String, app: tauri::AppHandle) -> Result<(), St
         // horizontal centering correction — the top edge is already glued by
         // compact_target_xy). Expanded was already animated to monitor
         // center, no follow-up needed.
-        if mode == "compact" || mode == "compact-minimal" {
+        if tray_position_known && (mode == "compact" || mode == "compact-minimal") {
             use tauri_plugin_positioner::{Position as TrayPos, WindowExt};
             let _ = w.move_window(TrayPos::TrayCenter);
         }
@@ -512,8 +525,10 @@ pub async fn resize_window(mode: String, app: tauri::AppHandle) -> Result<(), St
                 tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                 let _ = w.set_size(Size::Logical(LogicalSize::new(target_size.0, target_size.1)));
                 let _ = w.set_position(Position::Logical(LogicalPosition::new(to_x, to_y)));
-                use tauri_plugin_positioner::{Position as TrayPos, WindowExt};
-                let _ = w.move_window(TrayPos::TrayCenter);
+                if tray_position_known {
+                    use tauri_plugin_positioner::{Position as TrayPos, WindowExt};
+                    let _ = w.move_window(TrayPos::TrayCenter);
+                }
             });
         }
     }
