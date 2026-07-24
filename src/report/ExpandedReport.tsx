@@ -1,7 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { IconButton } from '../components/ui/IconButton';
-import { UsageSummary } from '../components/UsageSummary';
 import { SessionsTab } from './SessionsTab';
 import { ModelsTab } from './ModelsTab';
 import { TrendsTab } from './TrendsTab';
@@ -41,8 +40,6 @@ export function ExpandedReport() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const prevTabRef = useRef<string>('sessions');
   const stale = useAppStore((s) => s.stale);
-  const usage = useAppStore((s) => s.usage);
-  const thresholds = useAppStore((s) => s.settings?.thresholds ?? [75, 90]);
   const toggleViewMode = useAppStore((s) => s.toggleViewMode);
 
   const TabComponent = TAB_COMPONENTS[activeTab] ?? SessionsTab;
@@ -52,9 +49,6 @@ export function ExpandedReport() {
   const currIdx = tabIds.indexOf(activeTab);
   const slideDir = currIdx >= prevIdx ? 1 : -1;
   prevTabRef.current = activeTab;
-
-  const warn = thresholds[0] ?? 75;
-  const danger = thresholds[1] ?? 90;
 
   async function handleRefresh() {
     if (refreshing) return;
@@ -121,14 +115,6 @@ export function ExpandedReport() {
               </IconButton>
             </div>
           </header>
-
-          {/* Condensed usage summary — compact readout at the top of expanded view */}
-          {usage && (
-            <>
-              <UsageSummary usage={usage} thresholds={[warn, danger]} condensed />
-              <div className="mx-[var(--space-2xl)] border-t border-[var(--color-rule)]" />
-            </>
-          )}
 
           {/* Tab bar — text-only, with a single sliding underline indicator */}
           <TabBar
