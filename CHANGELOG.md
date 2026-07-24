@@ -6,7 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-## v1.1.2 — 2026-07-23
+## v1.1.3 — 2026-07-24
+
+### Fixed
+
+- **App could crash immediately on launch.** On a cold start, the popover could call into the tray-positioning logic before the tray icon had ever reported its on-screen location. That path panicked, and since release builds run with `panic = "abort"`, the panic took down the entire app instead of just failing quietly. The window is now sized correctly immediately and re-anchors to the tray as soon as its position is known — normally on the very next launch or the first click.
+- **Wrong bundle identifier on macOS.** The committed `Info.plist` still shipped `com.claude-limits.app` — a leftover from the pre-rename project name — while every other part of the app expected `com.claude-switchboard.app`.
+
+### Changed
+
+- **Expanded view drops a redundant usage summary.** The condensed 5h/7d + Opus/Sonnet + pay-as-you-go readout at the top of the expanded report duplicated the accounts sidebar and cost significant vertical space above the tabs.
+
+## v1.1.2 — 2026-07-23 (not published — see v1.1.3)
 
 ### Fixed
 
