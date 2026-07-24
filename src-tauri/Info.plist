@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.claude-limits.app</string>
+    <string>com.claude-switchboard.app</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSHighResolutionCapable</key>
