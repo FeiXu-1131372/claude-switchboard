@@ -116,14 +116,26 @@ impl Db {
         Ok(())
     }
 
-    /// Remove the SQLite row for `account_uuid`. Idempotent (no error when
+    /// Remove the SQLite row for `account_uuid` along with dependent rows in
+    /// `api_snapshots` and `notification_state`. Idempotent (no error when
     /// the row is already absent). Paired with AccountManager::remove so the
     /// warmup state for a removed account does not linger.
     pub fn delete_account(&self, account_uuid: &str) -> Result<()> {
-        self.conn().execute(
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM api_snapshots WHERE account_id = ?1",
+            params![account_uuid],
+        )?;
+        tx.execute(
+            "DELETE FROM notification_state WHERE account_id = ?1",
+            params![account_uuid],
+        )?;
+        tx.execute(
             "DELETE FROM accounts WHERE id = ?1",
             params![account_uuid],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -821,5 +833,26 @@ mod tests {
         db.insert_events(&[mk(old, 1), mk(recent, 2)]).unwrap();
         let cutoff = Utc::now() - chrono::Duration::days(90);
         assert_eq!(db.prune_events_older_than(cutoff).unwrap(), 1);
+    }
+
+    #[test]
+    fn delete_account_cleans_up_snapshots_and_notifications() {
+        let (_dir, db) = fresh_db();
+        db.upsert_account(&StoredAccount {
+            id: "acc-1".into(),
+            email: "a@example.com".into(),
+            display_name: None,
+        })
+        .unwrap();
+        db.insert_snapshot("acc-1", Utc::now(), "{}").unwrap();
+        db.record_notification_fired("acc-1", "five_hour", 75, Utc::now())
+            .unwrap();
+
+        db.delete_account("acc-1").unwrap();
+        assert!(db.latest_snapshot("acc-1").unwrap().is_none());
+        assert!(db
+            .notification_last_fired("acc-1", "five_hour", 75)
+            .unwrap()
+            .is_none());
     }
 }

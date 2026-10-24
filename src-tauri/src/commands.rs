@@ -1114,9 +1114,19 @@ fn ensure_sqlite_account_row(
 /// upsert_account's ON CONFLICT clause only touches email/display_name/
 /// last_seen_at, not the warm-up columns.
 pub fn reconcile_sqlite_account_mirror(state: &Arc<AppState>) -> anyhow::Result<()> {
-    let accounts = state.accounts.list()?;
-    for acc in accounts {
-        if let Err(e) = state.db.upsert_account(&crate::store::StoredAccount {
+    reconcile_sqlite_mirror(&state.accounts, &state.db)
+}
+
+fn reconcile_sqlite_mirror(
+    accounts_mgr: &crate::auth::accounts::AccountManager,
+    db: &crate::store::Db,
+) -> anyhow::Result<()> {
+    let accounts = accounts_mgr.list()?;
+    let active_uuids: std::collections::HashSet<&str> =
+        accounts.iter().map(|a| a.account_uuid.as_str()).collect();
+
+    for acc in &accounts {
+        if let Err(e) = db.upsert_account(&crate::store::StoredAccount {
             id: acc.account_uuid.clone(),
             email: acc.email.clone(),
             display_name: None,
@@ -1127,6 +1137,32 @@ pub fn reconcile_sqlite_account_mirror(state: &Arc<AppState>) -> anyhow::Result<
             );
         }
     }
+
+    // Backwards-compatibility guard: if a legacy single-account `credentials.json`
+    // is still on disk (e.g. offline boot prevented `migrate_legacy` from completing),
+    // do not prune existing SQLite account rows or their history.
+    if accounts_mgr.data_dir.join("credentials.json").exists() {
+        return Ok(());
+    }
+
+    // Prune any orphan SQLite account rows left behind if a prior delete failed
+    // before dependent snapshot rows were cleaned up.
+    let sqlite_ids: Vec<String> = {
+        let conn = db.conn();
+        let mut stmt = conn.prepare("SELECT id FROM accounts")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    for id in sqlite_ids {
+        if !active_uuids.contains(id.as_str()) {
+            if let Err(e) = db.delete_account(&id) {
+                tracing::warn!("reconcile_sqlite_account_mirror: failed to prune orphan {id}: {e:#}");
+            } else {
+                tracing::info!("reconcile_sqlite_account_mirror: pruned orphan account {id}");
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -1150,6 +1186,32 @@ mod tests {
         // …but at equal widths x is untouched (the common case).
         let (x, _) = compact_target_xy(100.0, 24.0, 360.0, 360.0);
         assert_eq!(x, 100.0);
+    }
+
+    #[test]
+    fn reconcile_prunes_orphans_unless_legacy_credentials_pending() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::store::Db::open(dir.path()).unwrap();
+        let mgr = crate::auth::accounts::AccountManager::new(dir.path().to_path_buf());
+
+        db.upsert_account(&crate::store::StoredAccount {
+            id: "legacy-acc".into(),
+            email: "legacy@example.com".into(),
+            display_name: None,
+        })
+        .unwrap();
+        db.insert_snapshot("legacy-acc", Utc::now(), "{}").unwrap();
+
+        // While legacy `credentials.json` is still pending migration, keep SQLite rows intact.
+        let legacy_creds = dir.path().join("credentials.json");
+        std::fs::write(&legacy_creds, b"{}").unwrap();
+        reconcile_sqlite_mirror(&mgr, &db).unwrap();
+        assert!(db.latest_snapshot("legacy-acc").unwrap().is_some());
+
+        // Once legacy migration is complete (`credentials.json` absent), orphan rows are pruned cleanly.
+        std::fs::remove_file(&legacy_creds).unwrap();
+        reconcile_sqlite_mirror(&mgr, &db).unwrap();
+        assert!(db.latest_snapshot("legacy-acc").unwrap().is_none());
     }
 }
 
