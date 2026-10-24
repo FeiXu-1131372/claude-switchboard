@@ -41,10 +41,8 @@ const EV_PROGRESS: &str = "update://progress";
 const EV_READY: &str = "update://ready";
 const EV_FAILED: &str = "update://failed";
 
-pub fn data_dir(app: &AppHandle) -> PathBuf {
-    app.path()
-        .app_data_dir()
-        .unwrap_or_else(|_| std::env::temp_dir())
+pub fn data_dir(_app: &AppHandle) -> PathBuf {
+    crate::store::default_dir()
 }
 
 /// Single check cycle. Emits events as it progresses. Never panics.
@@ -210,7 +208,11 @@ pub fn run_scheduler(app: AppHandle) {
     #[cfg(not(debug_assertions))]
     tauri::async_runtime::spawn(async move {
         loop {
-            let last = persistence::read_last_checked_at(&data_dir(&app));
+            let legacy_dir = app.path().app_data_dir().ok();
+            let last = persistence::read_last_checked_with_fallback(
+                &data_dir(&app),
+                legacy_dir.as_deref(),
+            );
             let delay = scheduler::delay_until_next_check(Utc::now(), last);
             let std_delay = delay
                 .to_std()
