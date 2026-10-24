@@ -31,6 +31,14 @@ async fn handles_401() {
 }
 
 #[tokio::test]
+async fn handles_403_as_unauthorized() {
+    let mut server = Server::new_async().await;
+    let _m = server.mock("GET", "/").with_status(403).create_async().await;
+    let c = UsageClient::with_base_url(server.url(), "0.0.0-test".into()).unwrap();
+    assert!(matches!(c.fetch("tok").await, FetchOutcome::Unauthorized));
+}
+
+#[tokio::test]
 async fn handles_429() {
     let mut server = Server::new_async().await;
     let _m = server.mock("GET", "/").with_status(429).create_async().await;

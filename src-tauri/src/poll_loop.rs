@@ -20,6 +20,13 @@ static STALE_EMITTED: AtomicBool = AtomicBool::new(false);
 /// still gets the historical behaviour.
 pub const DEFAULT_STAGGER_GAP_SECS: u64 = 30;
 
+/// Backoff applied when a slot fails with 401/403 (`FetchOutcome::Unauthorized`)
+/// or an OAuth token refresh failure (`invalid_grant`). Prevents hammering
+/// `/api/oauth/usage` or `/v1/oauth/token` every poll cycle (which triggers
+/// 1-hour 429 bans from Anthropic) while waiting for the user to re-authenticate.
+/// Cleared immediately on OAuth completion, manual refresh, or account swap.
+pub const AUTH_FAILURE_BACKOFF: Duration = Duration::from_secs(30 * 60);
+
 /// Pull the polling interval + base stagger gap from settings as Durations,
 /// clamping each to a safe lower bound that mirrors the validation in
 /// `update_settings` (defends against any settings row written before that
@@ -183,7 +190,16 @@ async fn fetch_and_apply_one(
     let outcome = match token_result {
         Ok(tok) => Some(state.usage.fetch(&tok).await),
         Err(e) => {
-            tracing::warn!("token_for_slot({slot}) failed: {e}");
+            tracing::warn!(
+                "token_for_slot({slot}) failed: {e}; backing off {:?}",
+                AUTH_FAILURE_BACKOFF
+            );
+            state.backoff_by_slot.write().insert(
+                slot,
+                BackoffState {
+                    until: Instant::now() + AUTH_FAILURE_BACKOFF,
+                },
+            );
             let _ = handle.emit(
                 "auth_required_for_slot",
                 json!({ "slot": slot, "email": acc.email }),
@@ -295,6 +311,16 @@ async fn apply_fetch_outcome(
             }
         }
         FetchOutcome::Unauthorized => {
+            tracing::warn!(
+                "slot {slot} returned unauthorized/forbidden; backing off {:?}",
+                AUTH_FAILURE_BACKOFF
+            );
+            state.backoff_by_slot.write().insert(
+                slot,
+                BackoffState {
+                    until: Instant::now() + AUTH_FAILURE_BACKOFF,
+                },
+            );
             let _ = handle.emit(
                 "auth_required_for_slot",
                 json!({ "slot": slot, "email": acc.email }),

@@ -120,6 +120,10 @@ impl UsageClient {
                 tracing::warn!(target: "switchboard.http", "usage fetch returned 401 unauthorized");
                 FetchOutcome::Unauthorized
             }
+            StatusCode::FORBIDDEN => {
+                tracing::warn!(target: "switchboard.http", "usage fetch returned 403 forbidden");
+                FetchOutcome::Unauthorized
+            }
             StatusCode::TOO_MANY_REQUESTS => {
                 let retry_after = resp
                     .headers()

@@ -331,6 +331,7 @@ pub async fn start_oauth_flow(
                 tracing::warn!("oauth_complete: SQLite mirror failed: {e:#}");
             }
 
+            state_clone.backoff_by_slot.write().remove(&slot);
             state_clone.force_refresh.notify_one();
             Ok(slot)
         }
@@ -370,6 +371,7 @@ pub async fn force_refresh(
     match scope {
         RefreshScope::Active => {
             if let Some(active) = *state.active_slot.read() {
+                state.backoff_by_slot.write().remove(&active);
                 state.schedule_by_slot.write().insert(
                     active,
                     ScheduleState { next_poll_at: now },
@@ -383,6 +385,7 @@ pub async fn force_refresh(
                 state.settings.read().polling_interval_secs.max(60),
             );
             let slot_ids: Vec<u32> = accounts.iter().map(|a| a.slot).collect();
+            state.backoff_by_slot.write().clear();
             // Manual refresh is a rare user-initiated burst: use the minimum
             // stagger so every slot refreshes within seconds rather than
             // riding the steady-state 30s stagger, which left later slots
@@ -698,6 +701,7 @@ pub async fn add_account_from_claude_code(
     if let Err(e) = mirror_account_to_sqlite(&state, slot) {
         tracing::warn!("add_from_claude_code: SQLite mirror failed: {e:#}");
     }
+    state.backoff_by_slot.write().remove(&slot);
     state.force_refresh.notify_one();
     Ok(slot)
 }
@@ -862,6 +866,7 @@ pub async fn refresh_account(
     slot: u32,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
+    state.backoff_by_slot.write().remove(&slot);
     let active = *state.active_slot.read();
     if Some(slot) == active {
         state.force_refresh.notify_one();
