@@ -39,7 +39,25 @@ pub struct PricingTable {
 /// Revision of the bundled pricing table. Bump this whenever pricing.json
 /// changes so the startup migration (Db::reprice_outdated_events) recomputes
 /// historical event costs exactly once per correction.
-pub const PRICING_VERSION: u32 = 2;
+pub const PRICING_VERSION: u32 = 3;
+
+fn normalize_model_for_lookup(model: &str) -> String {
+    let lower = model.trim().to_ascii_lowercase();
+    let without_1m = lower.strip_suffix("[1m]").unwrap_or(&lower);
+    let without_org = match without_1m.split_once('/') {
+        Some((_, rest)) => rest,
+        None => without_1m,
+    };
+    let needle = without_org.strip_prefix("claude-").unwrap_or(without_org);
+    if ["fable-", "mythos-", "opus-", "sonnet-", "haiku-"]
+        .iter()
+        .any(|p| needle.starts_with(p))
+    {
+        needle.replace('.', "-")
+    } else {
+        needle.to_string()
+    }
+}
 
 impl PricingTable {
     pub fn load(path: &Path) -> Result<Self> {
@@ -64,12 +82,10 @@ impl PricingTable {
     }
 
     pub fn lookup(&self, model: &str) -> Option<&PricingEntry> {
-        let lower = model.to_ascii_lowercase();
-        // Strip the "claude-" vendor prefix so that both full API model IDs
-        // ("claude-sonnet-4-6-20260115") and bare family names ("sonnet-4-6")
-        // resolve correctly via starts_with on the pricing prefix.
-        let needle = lower.strip_prefix("claude-").unwrap_or(&lower);
-        self.entries.iter().find(|e| needle.starts_with(e.prefix.as_str()))
+        let needle = normalize_model_for_lookup(model);
+        self.entries
+            .iter()
+            .find(|e| needle.starts_with(e.prefix.as_str()))
     }
 
     /// Estimated dollars saved per million cache-read tokens for `model` —
@@ -148,8 +164,11 @@ mod tests {
     fn every_current_family_is_priced() {
         let tbl = t();
         for m in [
+            "fable-5-1",
             "fable-5",
             "mythos-5",
+            "opus-5-5",
+            "opus-5",
             "opus-4-8",
             "opus-4-7",
             "opus-4-6",
@@ -157,10 +176,13 @@ mod tests {
             "opus-4-1",
             "opus-4",
             "claude-3-opus-20240229",
+            "sonnet-5-5",
             "sonnet-5",
             "sonnet-4-6",
             "sonnet-4-5",
             "sonnet-4",
+            "haiku-5-5",
+            "haiku-5",
             "haiku-4-5",
             "haiku-3-5",
         ] {
@@ -169,24 +191,38 @@ mod tests {
     }
 
     #[test]
-    fn fable_5_is_priced_at_current_rates() {
+    fn fable_5_1_and_fable_5_are_priced_at_official_rates() {
         let tbl = t();
-        // $10 in / $50 out, cache: $1 read / $12.50 5m / $20 1h (per MTok).
-        let e = tbl.lookup("claude-fable-5").unwrap();
-        assert_eq!(e.prefix, "fable-5");
-        assert!((e.input_per_mtok - 10.0).abs() < 0.001);
-        assert!((e.output_per_mtok - 50.0).abs() < 0.001);
-        assert!((e.cache_read_per_mtok - 1.0).abs() < 0.001);
-        assert!((e.cache_5m_per_mtok - 12.5).abs() < 0.001);
-        assert!((e.cache_1h_per_mtok - 20.0).abs() < 0.001);
-        assert!(e.tier.is_none(), "Fable 5 1M context is flat-rate");
+        let e51 = tbl.lookup("claude-fable-5-1").unwrap();
+        assert_eq!(e51.prefix, "fable-5-1");
+        assert!((e51.input_per_mtok - 10.0).abs() < 0.001);
+        assert!((e51.output_per_mtok - 50.0).abs() < 0.001);
+        assert!((e51.cache_read_per_mtok - 0.25).abs() < 0.001);
+        assert!((e51.cache_5m_per_mtok - 12.5).abs() < 0.001);
+        assert!((e51.cache_1h_per_mtok - 20.0).abs() < 0.001);
+        assert!(e51.tier.is_none());
+
+        let e5 = tbl.lookup("claude-fable-5").unwrap();
+        assert_eq!(e5.prefix, "fable-5");
+        assert!((e5.input_per_mtok - 10.0).abs() < 0.001);
+        assert!((e5.output_per_mtok - 50.0).abs() < 0.001);
+        assert!((e5.cache_read_per_mtok - 1.0).abs() < 0.001);
     }
 
     #[test]
-    fn opus_4_8_uses_current_opus_tier_not_legacy_opus_4() {
+    fn opus_5_5_and_opus_5_and_opus_4_8_resolve_distinctly() {
         let tbl = t();
-        // Opus 4.8 is $5/$25 — it must NOT fall through to the legacy
-        // $15/$75 opus-4/opus-4-1 rates via the "opus-4" prefix.
+        let o55 = tbl.lookup("claude-opus-5-5").unwrap();
+        assert_eq!(o55.prefix, "opus-5-5");
+        assert!((o55.input_per_mtok - 4.0).abs() < 0.001);
+        assert!((o55.output_per_mtok - 20.0).abs() < 0.001);
+        assert!((o55.cache_read_per_mtok - 0.20).abs() < 0.001);
+
+        let o5 = tbl.lookup("claude-opus-5").unwrap();
+        assert_eq!(o5.prefix, "opus-5");
+        assert!((o5.input_per_mtok - 5.0).abs() < 0.001);
+        assert!((o5.output_per_mtok - 25.0).abs() < 0.001);
+
         let e = tbl.lookup("claude-opus-4-8").unwrap();
         assert_eq!(e.prefix, "opus-4-8");
         assert!((e.input_per_mtok - 5.0).abs() < 0.001);
@@ -196,17 +232,14 @@ mod tests {
     #[test]
     fn unknown_future_opus_defaults_to_current_opus_tier() {
         let tbl = t();
-        // The bare "opus" fallback should guess the CURRENT Opus tier
-        // ($5/$25), not the retired Opus 4 / 4.1 rates.
+        // Bare "opus" fallback tracks the CURRENT Opus 5.5 tier ($4/$20).
         let c = tbl.cost_for("opus-9-9-future", 1_000_000, 1_000_000, 0, 0, 0);
-        assert!((c - 30.0).abs() < 0.001, "got {c}");
+        assert!((c - 24.0).abs() < 0.001, "got {c}");
     }
 
     #[test]
     fn opus_3_keeps_legacy_rates() {
         let tbl = t();
-        // Retired 3.x IDs put the generation first ("claude-3-opus-…"), so
-        // the functional prefix is "3-opus", not "opus-3".
         let e = tbl.lookup("claude-3-opus-20240229").unwrap();
         assert_eq!(e.prefix, "3-opus");
         assert!((e.input_per_mtok - 15.0).abs() < 0.001);
@@ -214,23 +247,47 @@ mod tests {
     }
 
     #[test]
-    fn sonnet_5_is_flat_rate_with_no_long_context_tier() {
+    fn sonnet_5_5_and_sonnet_5_are_flat_rate_at_permanent_pricing() {
         let tbl = t();
+        let s55 = tbl.lookup("claude-sonnet-5-5").unwrap();
+        assert_eq!(s55.prefix, "sonnet-5-5");
+        assert!((s55.input_per_mtok - 2.0).abs() < 0.001);
+        assert!((s55.output_per_mtok - 10.0).abs() < 0.001);
+        assert!((s55.cache_read_per_mtok - 0.10).abs() < 0.001);
+        assert!(s55.tier.is_none());
+
         let e = tbl.lookup("claude-sonnet-5").unwrap();
         assert_eq!(e.prefix, "sonnet-5");
-        assert!((e.input_per_mtok - 3.0).abs() < 0.001);
-        assert!((e.output_per_mtok - 15.0).abs() < 0.001);
+        assert!((e.input_per_mtok - 2.0).abs() < 0.001);
+        assert!((e.output_per_mtok - 10.0).abs() < 0.001);
         assert!(e.tier.is_none(), "Sonnet 5 1M context is flat-rate");
-        // Above 200k the flat rate still applies.
         let c = tbl.cost_for("claude-sonnet-5", 250_000, 0, 0, 0, 0);
-        assert!((c - 0.75).abs() < 0.001, "got {c}");
+        assert!((c - 0.50).abs() < 0.001, "got {c}");
+    }
+
+    #[test]
+    fn haiku_5_5_applies_100k_whole_request_tier() {
+        let tbl = t();
+        let below = tbl.cost_for("claude-haiku-5-5", 100_000, 1_000_000, 0, 0, 0);
+        // 0.1 × $0.10 + 1.0 × $0.50 = $0.51
+        assert!((below - 0.51).abs() < 0.001, "got {below}");
+
+        let above = tbl.cost_for("claude-haiku-5-5", 100_001, 1_000_000, 0, 0, 0);
+        // >100k shifts whole call to $0.50 in / $2.50 out
+        assert!((above - 2.5500005).abs() < 0.001, "got {above}");
+    }
+
+    #[test]
+    fn openrouter_namespaced_ids_resolve_cleanly() {
+        let tbl = t();
+        assert_eq!(tbl.lookup("anthropic/claude-opus-5.5").unwrap().prefix, "opus-5-5");
+        assert_eq!(tbl.lookup("anthropic/claude-fable-5.1").unwrap().prefix, "fable-5-1");
+        assert_eq!(tbl.lookup("deepseek/deepseek-v4.1-flash").unwrap().prefix, "deepseek-v4.1-flash");
     }
 
     #[test]
     fn sonnet_4_6_no_longer_has_a_long_context_tier() {
         let tbl = t();
-        // Anthropic folded Sonnet 4.6's 1M context into standard pricing —
-        // the >200k premium tier no longer exists for this model.
         assert!(tbl.lookup("sonnet-4-6").unwrap().tier.is_none());
         let c = tbl.cost_for("sonnet-4-6", 250_000, 0, 0, 0, 0);
         assert!((c - 0.75).abs() < 0.001, "got {c}");
@@ -239,20 +296,41 @@ mod tests {
     #[test]
     fn third_party_relay_models_are_priced_at_vendor_rates() {
         let tbl = t();
-        // MiniMax M2.7 — official platform.minimax.io rates.
+        // DeepSeek V4.1 Flash (including dated snapshot IDs like -1017).
+        let ds = tbl.lookup("deepseek-v4.1-flash-1017").unwrap();
+        assert_eq!(ds.prefix, "deepseek-v4.1-flash");
+        assert!((ds.input_per_mtok - 0.30).abs() < 0.001);
+        assert!((ds.output_per_mtok - 1.20).abs() < 0.001);
+        assert!((ds.cache_read_per_mtok - 0.006).abs() < 0.0001);
+
+        // MiniMax M3 + M2.7 — official platform.minimax.io rates.
+        let m3 = tbl.lookup("MiniMax-M3").unwrap();
+        assert!((m3.input_per_mtok - 0.30).abs() < 0.001);
+        assert!(m3.tier.is_some());
         let std = tbl.lookup("MiniMax-M2.7").unwrap();
         assert!((std.input_per_mtok - 0.30).abs() < 0.001);
         assert!((std.output_per_mtok - 1.20).abs() < 0.001);
-        // Zhipu GLM-5.1 — official Z.ai rates.
-        let glm = tbl.lookup("glm-5.1").unwrap();
-        assert!((glm.input_per_mtok - 1.40).abs() < 0.001);
-        assert!((glm.output_per_mtok - 4.40).abs() < 0.001);
-        // Moonshot Kimi K3 — official rates; also match the kimi-k3 form.
+
+        // Zhipu GLM-5.3 / 5.1 / 4.7 — official Z.ai rates.
+        for g in ["glm-5.3", "glm-5.2", "glm-5.1"] {
+            let glm = tbl.lookup(g).unwrap();
+            assert!((glm.input_per_mtok - 1.40).abs() < 0.001);
+            assert!((glm.output_per_mtok - 4.40).abs() < 0.001);
+        }
+        let g47 = tbl.lookup("glm-4.7").unwrap();
+        assert!((g47.input_per_mtok - 0.60).abs() < 0.001);
+
+        // Moonshot Kimi K3 / K3.1 / coding aliases.
         for id in ["k3", "kimi-k3"] {
             let k3 = tbl.lookup(id).unwrap();
             assert!((k3.input_per_mtok - 3.0).abs() < 0.001, "{id} input");
             assert!((k3.output_per_mtok - 15.0).abs() < 0.001, "{id} output");
         }
+        let k31 = tbl.lookup("kimi-k3.1-pro").unwrap();
+        assert!((k31.input_per_mtok - 2.0).abs() < 0.001);
+        let kfch = tbl.lookup("kimi-for-coding-highspeed").unwrap();
+        assert!((kfch.input_per_mtok - 1.90).abs() < 0.001);
+        assert!((kfch.output_per_mtok - 8.00).abs() < 0.001);
     }
 
     #[test]

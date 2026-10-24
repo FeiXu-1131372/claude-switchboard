@@ -21,13 +21,20 @@ export interface PerCategoryCost {
   cache_1h: number;
 }
 
-/** Match the Rust longest-prefix lookup, after stripping the `claude-` vendor prefix. */
+/** Match the Rust longest-prefix lookup, after stripping org/vendor prefixes and `[1m]`. */
 export function lookupPricing(
   entries: PricingEntry[],
   model: string,
 ): PricingEntry | undefined {
-  const lower = model.toLowerCase();
-  const needle = lower.startsWith('claude-') ? lower.slice('claude-'.length) : lower;
+  const without1m = model.trim().toLowerCase().replace(/\[1m\]$/, '');
+  const slashIdx = without1m.indexOf('/');
+  const withoutOrg = slashIdx >= 0 ? without1m.slice(slashIdx + 1) : without1m;
+  const rawNeedle = withoutOrg.startsWith('claude-')
+    ? withoutOrg.slice('claude-'.length)
+    : withoutOrg;
+  const needle = /^(fable|mythos|opus|sonnet|haiku)-/.test(rawNeedle)
+    ? rawNeedle.replace(/\./g, '-')
+    : rawNeedle;
   // Entries are returned sorted longest-prefix-first by the Rust side, so the
   // first match wins.
   return entries.find((e) => needle.startsWith(e.prefix));

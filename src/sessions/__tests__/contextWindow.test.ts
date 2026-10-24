@@ -7,10 +7,15 @@ describe('windowFor', () => {
   it('reports 1M for models whose registry entry sets native_1m', () => {
     for (const m of [
       'claude-sonnet-5',
+      'claude-sonnet-5-5',
       'claude-opus-4-7',
       'claude-opus-4-8',
       'claude-opus-5',
+      'claude-opus-5-5',
       'claude-fable-5',
+      'claude-fable-5-1',
+      'claude-haiku-5-5',
+      'anthropic/claude-fable-5.1',
     ]) {
       expect(windowFor(m), m).toEqual({ total: 1_000_000, label: '1M' });
     }

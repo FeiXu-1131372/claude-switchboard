@@ -1,6 +1,6 @@
 import { type HTMLAttributes, forwardRef, type ReactNode } from 'react';
 
-type BadgeVariant = 'default' | 'accent' | 'safe' | 'warn' | 'danger' | 'live' | 'stale' | 'opus' | 'sonnet' | 'haiku';
+type BadgeVariant = 'default' | 'accent' | 'safe' | 'warn' | 'danger' | 'live' | 'stale' | 'fable' | 'opus' | 'sonnet' | 'haiku';
 
 interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   variant?: BadgeVariant;
@@ -18,6 +18,7 @@ const variantClasses: Record<BadgeVariant, string> = {
   danger: 'bg-[var(--color-danger-dim)] text-[color:var(--color-danger)]',
   live: 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)]',
   stale: 'bg-[var(--color-track)] text-[color:var(--color-text-muted)]',
+  fable: 'bg-[var(--color-model-fable)] text-[color:var(--color-model-fable-text)]',
   opus: 'bg-[var(--color-model-opus)] text-[color:var(--color-model-opus-text)]',
   sonnet: 'bg-[var(--color-model-sonnet)] text-[color:var(--color-model-sonnet-text)]',
   haiku: 'bg-[var(--color-model-haiku)] text-[color:var(--color-model-haiku-text)]',

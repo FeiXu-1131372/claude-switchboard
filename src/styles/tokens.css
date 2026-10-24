@@ -73,6 +73,8 @@
   --color-safe-dim: var(--color-accent-dim);
 
   /* Model chips — tonal variations on warm family */
+  --color-model-fable: oklch(48% 0.165 22);
+  --color-model-fable-text: oklch(98% 0.005 85);
   --color-model-opus: oklch(56% 0.155 38);
   --color-model-opus-text: oklch(98% 0.005 85);
   --color-model-sonnet: oklch(60% 0.105 50);
@@ -229,6 +231,8 @@ body[data-theme="dark"] {
   --color-safe-dim: var(--color-accent-dim);
 
   /* Model chips — same tonal idea but darker for dark text on light text */
+  --color-model-fable: oklch(72% 0.155 22);
+  --color-model-fable-text: oklch(20% 0.012 65);
   --color-model-opus: oklch(70% 0.140 38);
   --color-model-opus-text: oklch(20% 0.012 65);
   --color-model-sonnet: oklch(64% 0.090 50);

@@ -34,11 +34,16 @@ const LONG_WINDOW = 1_000_000;
  */
 const NATIVE_1M_MODELS = new Set([
   'claude-sonnet-5',
+  'claude-sonnet-5-5',
   'claude-opus-4-7',
   'claude-opus-4-8',
   'claude-opus-5',
+  'claude-opus-5-5',
   'claude-fable-5',
+  'claude-fable-5-1',
   'claude-mythos-5',
+  'claude-haiku-5',
+  'claude-haiku-5-5',
 ]);
 
 /** Anthropic models known to be 200K. Everything else Anthropic-branded is
@@ -77,8 +82,16 @@ export function windowFor(model: string | null | undefined): ContextWindow {
   if (!model) return { total: null, label: null };
 
   // Claude Code strips `[1m]` before writing a transcript, but a model id
-  // reaching us from a provider config still carries it.
-  const bare = model.replace(/\[1m\]$/i, '');
+  // reaching us from a provider config still carries it. Also normalize
+  // OpenRouter's `anthropic/` namespace, dot-separated minor versions, and
+  // dated snapshot suffixes (`-YYYYMMDD`).
+  const bare = model
+    .trim()
+    .toLowerCase()
+    .replace(/\[1m\]$/, '')
+    .replace(/^anthropic\//, '')
+    .replace(/-\d{8}$/, '')
+    .replace(/^(claude-(?:fable|mythos|opus|sonnet|haiku)-\d+)\.(\d+)$/, '$1-$2');
 
   if (NATIVE_1M_MODELS.has(bare) || /\[1m\]$/i.test(model)) {
     return { total: LONG_WINDOW, label: '1M' };

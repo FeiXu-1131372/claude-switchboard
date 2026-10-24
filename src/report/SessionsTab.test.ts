@@ -182,14 +182,19 @@ function localDayKeyOf(iso: string): string {
 
 describe('modelLabel', () => {
   it('collapses Anthropic families to their tier name', () => {
+    expect(modelLabel('claude-opus-5-5')).toBe('opus');
     expect(modelLabel('claude-opus-4-7')).toBe('opus');
+    expect(modelLabel('claude-sonnet-5-5')).toBe('sonnet');
     expect(modelLabel('claude-sonnet-5')).toBe('sonnet');
     expect(modelLabel('claude-haiku-4-5-20251001')).toBe('haiku');
+    expect(modelLabel('claude-fable-5-1')).toBe('fable');
     expect(modelLabel('claude-fable-5')).toBe('fable');
   });
   it('surfaces the real name for third-party / relay models', () => {
+    expect(modelLabel('glm-5.3')).toBe('glm-5.3');
     expect(modelLabel('glm-5.2')).toBe('glm-5.2');
     expect(modelLabel('k3')).toBe('k3');
+    expect(modelLabel('deepseek-v4.1-flash-1017')).toBe('deepseek-v4.1-flash-1017');
     expect(modelLabel('MiniMax-M2.7-highspeed')).toBe('MiniMax-M2.7');
     expect(modelLabel('kimi-for-coding-highspeed')).toBe('kimi');
   });

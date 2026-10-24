@@ -8,7 +8,7 @@ import { IconChart } from '../lib/icons';
 import { ipc } from '../lib/ipc';
 import { useTabData } from '../lib/useTabData';
 import { useAppStore } from '../lib/store';
-import { MODEL_VARIANT, modelKey, shortName } from './modelDisplay';
+import { MODEL_COLOR, MODEL_VARIANT, modelKey, shortName } from './modelDisplay';
 
 export function ModelsTab() {
   const version = useAppStore((s) => s.sessionDataVersion);
@@ -82,12 +82,6 @@ export function ModelsTab() {
             {segments.map((seg) => {
               const { strokeLength, offset } = seg;
 
-              const colors: Record<string, string> = {
-                opus: 'var(--color-model-opus)',
-                sonnet: 'var(--color-model-sonnet)',
-                haiku: 'var(--color-model-haiku)',
-              };
-
               return (
                 <circle
                   key={seg.model}
@@ -95,7 +89,7 @@ export function ModelsTab() {
                   cy="70"
                   r={radius}
                   fill="none"
-                  stroke={colors[seg.key] ?? 'var(--color-text-muted)'}
+                  stroke={MODEL_COLOR[seg.key] ?? 'var(--color-teal)'}
                   strokeWidth="14"
                   strokeDasharray={`${strokeLength} ${circumference - strokeLength}`}
                   strokeDashoffset={-offset}
@@ -129,12 +123,7 @@ export function ModelsTab() {
                     className="h-full rounded-[var(--radius-pill)] transition-[width] duration-[var(--duration-bar)] ease-[var(--ease-spring)]"
                     style={{
                       width: `${seg.pct}%`,
-                      background:
-                        seg.key === 'opus'
-                          ? 'var(--color-model-opus)'
-                          : seg.key === 'sonnet'
-                            ? 'var(--color-model-sonnet)'
-                            : 'var(--color-model-haiku)',
+                      background: MODEL_COLOR[seg.key] ?? 'var(--color-teal)',
                     }}
                   />
                 </div>

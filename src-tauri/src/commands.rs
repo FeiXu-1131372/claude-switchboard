@@ -131,6 +131,15 @@ pub async fn get_daily_trends(
     Ok(by_day.into_values().collect())
 }
 
+fn is_synthetic_placeholder(e: &StoredSessionEvent) -> bool {
+    e.model.starts_with('<')
+        && e.input_tokens == 0
+        && e.output_tokens == 0
+        && e.cache_read_tokens == 0
+        && e.cache_creation_5m_tokens == 0
+        && e.cache_creation_1h_tokens == 0
+}
+
 #[command]
 #[specta::specta]
 pub async fn get_model_breakdown(
@@ -141,6 +150,9 @@ pub async fn get_model_breakdown(
     use std::collections::HashMap;
     let mut by_model: HashMap<String, ModelStats> = HashMap::new();
     for e in events {
+        if is_synthetic_placeholder(&e) {
+            continue;
+        }
         let entry = by_model
             .entry(e.model.clone())
             .or_insert_with(|| ModelStats {
@@ -157,7 +169,14 @@ pub async fn get_model_breakdown(
         entry.cache_creation_tokens += e.cache_creation_5m_tokens + e.cache_creation_1h_tokens;
         entry.cost_usd += e.cost_usd;
     }
-    Ok(by_model.into_values().collect())
+    let mut models: Vec<ModelStats> = by_model.into_values().collect();
+    models.sort_by(|a, b| {
+        b.cost_usd
+            .total_cmp(&a.cost_usd)
+            .then_with(|| (b.input_tokens + b.output_tokens).cmp(&(a.input_tokens + a.output_tokens)))
+            .then_with(|| a.model.cmp(&b.model))
+    });
+    Ok(models)
 }
 
 #[command]
@@ -170,6 +189,9 @@ pub async fn get_daily_model_breakdown(
     use std::collections::{BTreeMap, HashMap};
     let mut by_day: BTreeMap<String, HashMap<String, ModelStats>> = BTreeMap::new();
     for e in events {
+        if is_synthetic_placeholder(&e) {
+            continue;
+        }
         let date = e
             .ts
             .with_timezone(&chrono::Local)

@@ -8,7 +8,7 @@ import { IconTrends } from '../lib/icons';
 import { ipc } from '../lib/ipc';
 import { useTabData } from '../lib/useTabData';
 import { useAppStore } from '../lib/store';
-import { MODEL_VARIANT, modelKey, shortName } from './modelDisplay';
+import { MODEL_COLOR, MODEL_VARIANT, modelKey, shortName } from './modelDisplay';
 
 export function TrendsTab() {
   const version = useAppStore((s) => s.sessionDataVersion);
@@ -202,12 +202,7 @@ export function TrendsTab() {
                           className="h-full rounded-[var(--radius-pill)] transition-[width] duration-[var(--duration-bar)] ease-[var(--ease-spring)]"
                           style={{
                             width: `${pct}%`,
-                            background:
-                              key === 'opus'
-                                ? 'var(--color-model-opus)'
-                                : key === 'sonnet'
-                                  ? 'var(--color-model-sonnet)'
-                                  : 'var(--color-model-haiku)',
+                            background: MODEL_COLOR[key] ?? 'var(--color-teal)',
                           }}
                         />
                       </div>
