@@ -27,7 +27,7 @@
     "trayIcon": {
       "iconPath": "icons/tray/boot-placeholder.png",
       "iconAsTemplate": false,
-      "menuOnLeftClick": false
+      "showMenuOnLeftClick": false
     },
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: https://ipc.localhost; img-src 'self' data: asset: https://asset.localhost; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'none'"

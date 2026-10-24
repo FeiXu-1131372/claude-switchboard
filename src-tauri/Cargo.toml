@@ -5,7 +5,7 @@ description = "Multi-account control plane for Claude — observe usage, swap ac
 authors = ["Claude Switchboard contributors"]
 license = "MIT"
 edition = "2021"
-rust-version = "1.89"
+rust-version = "1.90"
 
 [lib]
 name = "claude_switchboard_lib"

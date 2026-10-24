@@ -21,10 +21,9 @@ pub fn set_level(
 
     let bytes = tray_icon::render(five_hour, seven_day, paused);
     match Image::from_bytes(&bytes) {
-        Ok(img) => { let _ = tray.set_icon(Some(img)); }
+        Ok(img) => { let _ = tray.set_icon_with_as_template(Some(img), false); }
         Err(e) => tracing::warn!("tray icon decode failed, keeping previous icon: {e}"),
     }
-    let _ = tray.set_icon_as_template(false);
 
     // Numbers live in the icon now — no separate title text alongside.
     let _ = tray.set_title(None::<&str>);
