@@ -100,13 +100,13 @@ impl Db {
     }
 
     /// Create a brand-new SQLite database with the current schema and stamp
-    /// schema_version=9 so that migrate() skips steps meant for older upgrades.
+    /// schema_version=10 so that migrate() skips steps meant for older upgrades.
     fn create_fresh_db(db_path: &Path) -> Result<Connection> {
         let conn = Connection::open(db_path).context("open sqlite")?;
         conn.execute_batch(include_str!("schema.sql")).context("apply schema")?;
         conn.execute(
             "INSERT OR REPLACE INTO schema_version (version) VALUES (?1)",
-            [9_i64],
+            [10_i64],
         )
         .context("stamp schema version")?;
         Ok(conn)
@@ -173,9 +173,15 @@ impl Db {
                 .context("apply migration 0009")?;
         }
 
+        if current < 10 {
+            tracing::info!("migrating v9 -> v10 (Claude Code official session costs + re-ingest)");
+            conn.execute_batch(include_str!("migrations/0010_official_session_costs.sql"))
+                .context("apply migration 0010")?;
+        }
+
         conn.execute(
             "INSERT OR REPLACE INTO schema_version (version) VALUES (?1)",
-            [9_i64],
+            [10_i64],
         )?;
         Ok(())
     }
@@ -634,14 +640,14 @@ mod tests {
     }
 
     #[test]
-    fn fresh_database_is_stamped_at_version_9() {
+    fn fresh_database_is_stamped_at_version_10() {
         let dir = tempdir().unwrap();
         let db = Db::open(dir.path()).unwrap();
         let version: i64 = db
             .conn()
             .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 9, "create_fresh_db and migrate() must both stamp 9");
+        assert_eq!(version, 10, "create_fresh_db and migrate() must both stamp 10");
     }
 
     /// 0009 adds the compactions table and, like 0008, clears cursors so the
@@ -708,8 +714,10 @@ mod tests {
             post_tokens: 16_608,
             uuid: "u-1".into(),
         };
-        db.ingest_atomic("p/s.jsonl", &[], std::slice::from_ref(&c), 1, 10).unwrap();
-        db.ingest_atomic("p/s.jsonl", &[], std::slice::from_ref(&c), 2, 20).unwrap();
+        let pricing = crate::jsonl_parser::pricing::PricingTable::bundled().unwrap();
+        let none = crate::store::HiddenCallBatch::default();
+        db.ingest_atomic("p/s.jsonl", &[], std::slice::from_ref(&c), &none, &pricing, 1, 10).unwrap();
+        db.ingest_atomic("p/s.jsonl", &[], std::slice::from_ref(&c), &none, &pricing, 2, 20).unwrap();
         let n: i64 = db
             .conn()
             .query_row("SELECT COUNT(*) FROM session_compactions", [], |r| r.get(0))

@@ -5,6 +5,30 @@ use rusqlite::{params, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 
 use crate::app_state::Settings;
+use crate::jsonl_parser::hidden_calls::{self, MainContext, ObservedCall};
+use crate::jsonl_parser::pricing::PricingTable;
+use crate::jsonl_parser::record::OfficialModelUsage;
+
+/// What one ingest chunk of a transcript says about API calls Claude Code
+/// never logged (see `jsonl_parser::hidden_calls`).
+#[derive(Debug, Default)]
+pub struct HiddenCallBatch {
+    /// Parent transcript (relative path) the chunk belongs to. Subagent
+    /// chunks name their parent, so their new calls re-run its reconciliation.
+    pub session_file: String,
+    /// `est:` rows for markers seen in this chunk.
+    pub estimates: Vec<StoredSessionEvent>,
+    /// The chunk's `cost-state` records, the last one per process.
+    pub cost_states: Vec<CostStateAt>,
+}
+
+/// A `cost-state` record and where it sits in its transcript.
+#[derive(Debug, Clone)]
+pub struct CostStateAt {
+    /// Byte offset of the line.
+    pub line: i64,
+    pub state: crate::jsonl_parser::record::CostState,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct StoredAccount {
@@ -100,6 +124,79 @@ fn insert_events_in_tx(tx: &Transaction<'_>, events: &[StoredSessionEvent]) -> R
         ])?;
     }
     Ok(inserted)
+}
+
+/// Rewrite a session's `adj:` rows from its stored official totals and its
+/// real calls (parent and subagent transcripts). No official totals means
+/// no adjustment rows.
+fn reconcile_session_in_tx(
+    tx: &Transaction<'_>,
+    pricing: &PricingTable,
+    session_file: &str,
+) -> Result<()> {
+    tx.execute(
+        "DELETE FROM session_events WHERE source_file = ?1 AND event_id LIKE 'adj:%'",
+        params![session_file],
+    )?;
+    let mut line = 0i64;
+    let official: Vec<(String, OfficialModelUsage)> = {
+        let mut stmt = tx.prepare(
+            "SELECT model, input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens, web_search_requests, cost_usd, source_line
+             FROM session_official_costs WHERE source_file = ?1",
+        )?;
+        let rows = stmt.query_map(params![session_file], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                OfficialModelUsage {
+                    input_tokens: r.get::<_, i64>(1)? as u64,
+                    output_tokens: r.get::<_, i64>(2)? as u64,
+                    cache_read_tokens: r.get::<_, i64>(3)? as u64,
+                    cache_creation_tokens: r.get::<_, i64>(4)? as u64,
+                    web_search_requests: r.get::<_, i64>(5)? as u64,
+                    cost_usd: r.get(6)?,
+                },
+                r.get::<_, i64>(7)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (model, usage, l) = row?;
+            line = line.max(l);
+            // One row per (process, model); reconcile() sums them per model.
+            out.push((model, usage));
+        }
+        out
+    };
+    if official.is_empty() {
+        return Ok(());
+    }
+    let (lo, hi) = hidden_calls::subagent_range_of(session_file);
+    let observed: Vec<ObservedCall> = {
+        let mut stmt = tx.prepare(
+            "SELECT ts, project, model, cost_usd, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_5m_tokens + cache_creation_1h_tokens
+             FROM session_events
+             WHERE (source_file = ?1 OR (source_file >= ?2 AND source_file < ?3))
+               AND event_id NOT LIKE 'est:%' AND event_id NOT LIKE 'adj:%'",
+        )?;
+        let rows = stmt.query_map(params![session_file, lo, hi], |r| {
+            Ok(ObservedCall {
+                ts: DateTime::from_timestamp(r.get(0)?, 0).unwrap_or_default(),
+                project: r.get(1)?,
+                model: r.get(2)?,
+                cost_usd: r.get(3)?,
+                input_tokens: r.get::<_, i64>(4)? as u64,
+                output_tokens: r.get::<_, i64>(5)? as u64,
+                cache_read_tokens: r.get::<_, i64>(6)? as u64,
+                cache_creation_tokens: r.get::<_, i64>(7)? as u64,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let adjustments = hidden_calls::reconcile(pricing, session_file, line, &official, &observed);
+    insert_events_in_tx(tx, &adjustments)?;
+    Ok(())
 }
 
 impl Db {
@@ -231,7 +328,7 @@ impl Db {
             let mut stmt = conn.prepare(
                 "SELECT id, model, input_tokens, output_tokens, cache_read_tokens,
                         cache_creation_5m_tokens, cache_creation_1h_tokens, cost_usd
-                 FROM session_events",
+                 FROM session_events WHERE event_id NOT LIKE 'adj:%'",
             )?;
             let mapped = stmt.query_map([], |r| {
                 Ok((
@@ -269,8 +366,45 @@ impl Db {
                 }
             }
         }
+        // Adjustment rows hold Claude Code's cost minus the app's, so they
+        // are recomputed from the repriced rows rather than repriced
+        // themselves.
+        let sessions: Vec<String> = {
+            let mut stmt = tx.prepare("SELECT DISTINCT source_file FROM session_official_costs")?;
+            let rows = stmt.query_map([], |r| r.get(0))?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for session_file in &sessions {
+            reconcile_session_in_tx(&tx, pricing, session_file)?;
+        }
         tx.commit()?;
         Ok(updated)
+    }
+
+    /// The main thread's latest real call in `source_file`, for pricing an
+    /// unlogged call that re-reads it when the chunk being ingested has none.
+    pub fn last_main_context(&self, source_file: &str) -> Result<Option<MainContext>> {
+        let conn = self.conn();
+        let row = conn
+            .query_row(
+                "SELECT model, project,
+                        input_tokens + cache_read_tokens
+                          + cache_creation_5m_tokens + cache_creation_1h_tokens
+                 FROM session_events
+                 WHERE source_file = ?1
+                   AND event_id NOT LIKE 'est:%' AND event_id NOT LIKE 'adj:%'
+                 ORDER BY source_line DESC LIMIT 1",
+                params![source_file],
+                |r| {
+                    Ok(MainContext {
+                        model: r.get(0)?,
+                        project: r.get(1)?,
+                        context_tokens: r.get::<_, i64>(2)?.max(0) as u64,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
     }
 
     pub fn insert_events(&self, events: &[StoredSessionEvent]) -> Result<usize> {
@@ -412,16 +546,18 @@ impl Db {
     /// (backfill task + watcher) split the two writes across transactions,
     /// letting the slower caller's cursor write regress the faster caller's
     /// progress and causing repeated re-ingestion of the same lines.
-    /// Insert events and advance the JSONL cursor in a single SQLite
-    /// transaction. This prevents the race where two concurrent callers
-    /// (backfill task + watcher) split the two writes across transactions,
-    /// letting the slower caller's cursor write regress the faster caller's
-    /// progress and causing repeated re-ingestion of the same lines.
+    ///
+    /// `hidden` carries the chunk's unlogged-call estimates and, when the
+    /// chunk holds a `cost-state` record, Claude Code's official totals,
+    /// which replace the estimates and re-run the session's reconciliation.
+    #[allow(clippy::too_many_arguments)]
     pub fn ingest_atomic(
         &self,
         file: &str,
         events: &[StoredSessionEvent],
         compactions: &[StoredCompaction],
+        hidden: &HiddenCallBatch,
+        pricing: &PricingTable,
         mtime_ns: i64,
         byte_offset: i64,
     ) -> Result<usize> {
@@ -432,6 +568,65 @@ impl Db {
         // landed while the cursor advanced past it could never be recovered,
         // since the walker would not re-read those bytes.
         insert_compactions_in_tx(&tx, compactions)?;
+        insert_events_in_tx(&tx, &hidden.estimates)?;
+
+        let session = hidden.session_file.as_str();
+        let mut reconcile = false;
+        if let Some(last_line) = hidden.cost_states.iter().map(|c| c.line).max() {
+            for cs in &hidden.cost_states {
+                // A later record from the same process supersedes the earlier one.
+                tx.execute(
+                    "DELETE FROM session_official_costs WHERE source_file = ?1 AND start_time = ?2",
+                    params![session, cs.state.start_time],
+                )?;
+                let mut stmt = tx.prepare(
+                    "INSERT INTO session_official_costs
+                     (source_file, start_time, model, input_tokens, output_tokens,
+                      cache_read_tokens, cache_creation_tokens, web_search_requests,
+                      cost_usd, source_line)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                )?;
+                for (model, u) in &cs.state.model_usage {
+                    stmt.execute(params![
+                        session,
+                        cs.state.start_time,
+                        model,
+                        u.input_tokens as i64,
+                        u.output_tokens as i64,
+                        u.cache_read_tokens as i64,
+                        u.cache_creation_tokens as i64,
+                        u.web_search_requests as i64,
+                        u.cost_usd,
+                        cs.line,
+                    ])?;
+                }
+            }
+            // The exact totals cover every call up to this record, including
+            // the ones estimated so far, so those estimates go. Estimates
+            // after it (a resumed session) stay until the next record.
+            tx.execute(
+                "DELETE FROM session_events
+                 WHERE source_file = ?1 AND event_id LIKE 'est:%' AND source_line < ?2",
+                params![session, last_line],
+            )?;
+            reconcile = true;
+        } else if inserted > 0 && !session.is_empty() {
+            // New real calls in a session that already has official totals
+            // (a subagent transcript read after its parent, or a resumed
+            // session) change the gap.
+            reconcile = tx
+                .query_row(
+                    "SELECT 1 FROM session_official_costs WHERE source_file = ?1 LIMIT 1",
+                    params![session],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+        }
+        if reconcile {
+            reconcile_session_in_tx(&tx, pricing, session)?;
+        }
+
         tx.execute(
             "INSERT INTO jsonl_cursors (file_path, last_mtime_ns, byte_offset) VALUES (?1, ?2, ?3)
              ON CONFLICT(file_path) DO UPDATE SET

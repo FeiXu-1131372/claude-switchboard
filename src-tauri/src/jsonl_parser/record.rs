@@ -34,8 +34,32 @@ pub struct SessionEvent {
     #[serde(default)]
     pub event_id: Option<String>,
 
+    /// The API response's `stop_reason`. `"end_turn"` marks the last call of
+    /// a turn, which is when Claude Code fires its unlogged follow-up call
+    /// (see `hidden_calls`).
+    #[serde(default)]
+    pub stop_reason: Option<String>,
+    /// `isSidechain` on the record: true for subagent/side-thread calls.
+    #[serde(default)]
+    pub is_sidechain: bool,
+    /// How Claude Code was started: `"cli"` for the interactive terminal,
+    /// `"sdk-cli"` for `claude -p` / Agent SDK runs.
+    #[serde(default)]
+    pub entrypoint: Option<String>,
+
     #[serde(flatten, default)]
     pub unknown: HashMap<String, serde_json::Value>,
+}
+
+impl SessionEvent {
+    /// Size of the prompt this call sent: every input-side bucket. This is
+    /// the context an unlogged follow-up call re-reads from cache.
+    pub fn context_tokens(&self) -> u64 {
+        self.input_tokens
+            + self.cache_read_tokens
+            + self.cache_creation_5m_tokens
+            + self.cache_creation_1h_tokens
+    }
 }
 
 /// Raw shape of one JSONL line as Claude Code writes it. Many line types
@@ -51,6 +75,10 @@ struct ClaudeCodeRecord {
     cwd: Option<String>,
     #[serde(default, rename = "requestId")]
     request_id: Option<String>,
+    #[serde(default, rename = "isSidechain")]
+    is_sidechain: bool,
+    #[serde(default)]
+    entrypoint: Option<String>,
     message: Option<ClaudeMessage>,
 }
 
@@ -60,6 +88,8 @@ struct ClaudeMessage {
     id: Option<String>,
     #[serde(default)]
     model: Option<String>,
+    #[serde(default)]
+    stop_reason: Option<String>,
     #[serde(default)]
     usage: Option<ClaudeUsage>,
 }
@@ -153,8 +183,103 @@ pub fn parse_event_line(line: &str, fallback_project: &str) -> Option<SessionEve
         cache_creation_1h_tokens: cache_1h,
         cost_usd: 0.0,
         event_id,
+        stop_reason: msg.stop_reason,
+        is_sidechain: rec.is_sidechain,
+        entrypoint: rec.entrypoint,
         unknown: HashMap::new(),
     })
+}
+
+/// Claude Code's own per-model usage for one model, from a `cost-state` record.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct OfficialModelUsage {
+    #[serde(default, rename = "inputTokens")]
+    pub input_tokens: u64,
+    #[serde(default, rename = "outputTokens")]
+    pub output_tokens: u64,
+    #[serde(default, rename = "cacheReadInputTokens")]
+    pub cache_read_tokens: u64,
+    #[serde(default, rename = "cacheCreationInputTokens")]
+    pub cache_creation_tokens: u64,
+    #[serde(default, rename = "webSearchRequests")]
+    pub web_search_requests: u64,
+    #[serde(default, rename = "costUSD")]
+    pub cost_usd: f64,
+}
+
+/// A `cost-state` record: one Claude Code process's running per-model totals
+/// for the session, the same numbers `/cost` prints.
+///
+/// Claude Code appends one when the process exits. The totals are cumulative
+/// and survive `--resume` (the resumed process keeps the same `startTime`),
+/// so the last record per `startTime` is that process's total. Two processes
+/// can write to one transcript (seen in 2 of 251 sessions); each counts only
+/// its own calls, so the session total is the sum per `startTime`. It counts calls that are
+/// never written to the transcript: auto-compaction, away summaries, prompt
+/// suggestions, memory extraction, session titles, WebSearch/WebFetch on
+/// Haiku. Subagent usage is included.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CostState {
+    /// Start of the process that wrote it (epoch ms); 0 when absent.
+    pub start_time: i64,
+    /// Keyed by model id exactly as Claude Code wrote it (may carry `[1m]`).
+    pub model_usage: Vec<(String, OfficialModelUsage)>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CostStateRecord {
+    #[serde(rename = "type")]
+    record_type: String,
+    #[serde(default, rename = "startTime")]
+    start_time: i64,
+    #[serde(default, rename = "modelUsage")]
+    model_usage: HashMap<String, OfficialModelUsage>,
+}
+
+/// Parse a `cost-state` record. Returns `None` for other lines, and for a
+/// record with no model usage (a process that made no API calls), which
+/// carries no information.
+pub fn parse_cost_state_line(line: &str) -> Option<CostState> {
+    // Cheap guard: the walker calls this for every non-assistant line.
+    if !line.contains("cost-state") {
+        return None;
+    }
+    let rec: CostStateRecord = serde_json::from_str(line).ok()?;
+    if rec.record_type != "cost-state" || rec.model_usage.is_empty() {
+        return None;
+    }
+    let mut model_usage: Vec<_> = rec.model_usage.into_iter().collect();
+    model_usage.sort_by(|a, b| a.0.cmp(&b.0));
+    Some(CostState { start_time: rec.start_time, model_usage })
+}
+
+/// An away summary ("while you were away…" recap): a `system` line Claude
+/// Code writes after an unlogged API call that re-read the whole context.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AwaySummary {
+    pub ts: DateTime<Utc>,
+    pub uuid: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SystemRecord {
+    #[serde(rename = "type")]
+    record_type: String,
+    #[serde(default)]
+    subtype: Option<String>,
+    timestamp: DateTime<Utc>,
+    uuid: String,
+}
+
+pub fn parse_away_summary_line(line: &str) -> Option<AwaySummary> {
+    if !line.contains("away_summary") {
+        return None;
+    }
+    let rec: SystemRecord = serde_json::from_str(line).ok()?;
+    if rec.record_type != "system" || rec.subtype.as_deref() != Some("away_summary") {
+        return None;
+    }
+    Some(AwaySummary { ts: rec.timestamp, uuid: rec.uuid })
 }
 
 /// One compaction inside a session: the point where Claude Code summarised
@@ -395,6 +520,62 @@ mod tests {
           }
         }"#;
         assert!(parse_event_line(no_message_id, "fb").unwrap().event_id.is_none());
+    }
+
+    #[test]
+    fn captures_turn_end_metadata() {
+        let line = r#"{"type":"assistant","timestamp":"2026-11-02T18:10:20Z","cwd":"/x/y",
+          "isSidechain":false,"entrypoint":"cli","requestId":"r","message":{"id":"m",
+          "model":"claude-opus-5-5","stop_reason":"end_turn",
+          "usage":{"input_tokens":2,"output_tokens":5,"cache_read_input_tokens":1000,
+                   "cache_creation_input_tokens":30}}}"#;
+        let ev = parse_event_line(line, "fb").unwrap();
+        assert_eq!(ev.stop_reason.as_deref(), Some("end_turn"));
+        assert_eq!(ev.entrypoint.as_deref(), Some("cli"));
+        assert!(!ev.is_sidechain);
+        assert_eq!(ev.context_tokens(), 1032);
+    }
+
+    /// Shape copied from a real Claude Code 2.1.316 transcript.
+    const COST_STATE_LINE: &str = r#"{"type":"cost-state","sessionId":"fcfb095a",
+      "totalCostUSD":0.2854113,"startTime":1792262748949,
+      "modelUsage":{
+        "claude-haiku-5-5":{"inputTokens":1181,"outputTokens":22,"thinkingTokens":0,
+          "cacheReadInputTokens":0,"cacheCreationInputTokens":0,"webSearchRequests":0,
+          "costUSD":0.0001291},
+        "claude-sonnet-5-5":{"inputTokens":1034,"outputTokens":7625,"thinkingTokens":3971,
+          "cacheReadInputTokens":690922,"cacheCreationInputTokens":34468,
+          "webSearchRequests":0,"costUSD":0.2852822}},
+      "hasUnknownModelCost":false}"#;
+
+    #[test]
+    fn parses_cost_state_record() {
+        let cs = parse_cost_state_line(COST_STATE_LINE).expect("should parse");
+        assert_eq!(cs.start_time, 1_792_262_748_949);
+        assert_eq!(cs.model_usage.len(), 2);
+        let (model, u) = &cs.model_usage[1];
+        assert_eq!(model, "claude-sonnet-5-5");
+        assert_eq!(u.cache_read_tokens, 690_922);
+        assert_eq!(u.cache_creation_tokens, 34_468);
+        assert!((u.cost_usd - 0.2852822).abs() < 1e-12);
+    }
+
+    #[test]
+    fn cost_state_without_usage_or_other_types_is_ignored() {
+        let empty = r#"{"type":"cost-state","totalCostUSD":0,"modelUsage":{}}"#;
+        assert!(parse_cost_state_line(empty).is_none());
+        assert!(parse_cost_state_line(ASSISTANT_LINE).is_none());
+        let mentions = r#"{"type":"user","message":{"content":"what is cost-state?"}}"#;
+        assert!(parse_cost_state_line(mentions).is_none());
+    }
+
+    #[test]
+    fn parses_away_summary_record() {
+        let line = r#"{"type":"system","subtype":"away_summary","content":"Recap",
+          "timestamp":"2026-11-02T19:24:35.132Z","uuid":"06bc1b4d"}"#;
+        let a = parse_away_summary_line(line).unwrap();
+        assert_eq!(a.uuid, "06bc1b4d");
+        assert!(parse_away_summary_line(COMPACTION_LINE).is_none());
     }
 
     #[test]

@@ -116,3 +116,26 @@ CREATE TABLE IF NOT EXISTS session_compactions (
     UNIQUE (uuid)
 );
 CREATE INDEX IF NOT EXISTS idx_compactions_ts ON session_compactions(ts DESC);
+
+-- Claude Code's own per-model totals for a session: the last `cost-state`
+-- record of each process that wrote to the transcript (written on exit). These
+-- include API calls Claude Code never writes to the transcript, which
+-- `session_events` therefore cannot see. The walker stores the difference as
+-- `adj:` rows in session_events (see jsonl_parser::hidden_calls).
+-- `source_file` is the parent transcript; subagent usage is included.
+CREATE TABLE IF NOT EXISTS session_official_costs (
+    source_file           TEXT NOT NULL,
+    -- startTime of the Claude Code process that wrote the record (epoch ms).
+    start_time            INTEGER NOT NULL DEFAULT 0,
+    model                 TEXT NOT NULL,
+    input_tokens          INTEGER NOT NULL DEFAULT 0,
+    output_tokens         INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens     INTEGER NOT NULL DEFAULT 0,
+    cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+    web_search_requests   INTEGER NOT NULL DEFAULT 0,
+    cost_usd              REAL NOT NULL DEFAULT 0,
+    -- Byte offset of the cost-state line the totals came from.
+    source_line           INTEGER NOT NULL,
+    PRIMARY KEY (source_file, start_time, model)
+);
+CREATE INDEX IF NOT EXISTS idx_events_source_file ON session_events(source_file);

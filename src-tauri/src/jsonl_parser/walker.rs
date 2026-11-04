@@ -1,12 +1,20 @@
-use super::record::{parse_compaction_line, parse_event_line};
+use super::hidden_calls::{self, MainContext};
+use super::record::{
+    parse_away_summary_line, parse_compaction_line, parse_cost_state_line, parse_event_line,
+};
 use super::pricing::PricingTable;
-use crate::store::{Db, StoredCompaction, StoredSessionEvent};
+use crate::store::{CostStateAt, Db, HiddenCallBatch, StoredCompaction, StoredSessionEvent};
 use anyhow::{Context, Result, anyhow};
 use std::fs::{self, File};
 use std::io::{BufRead, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-const MAX_FILE_BYTES: u64 = 100 * 1024 * 1024;
+/// Sanity cap for the startup backfill. Reading is incremental and streamed
+/// line by line, so this only guards against pathological files. It used to
+/// be 100 MiB, which skipped the largest (and most expensive) sessions:
+/// transcripts of 291 MiB and 382 MiB were seen on 2026-11-04, and their
+/// end-of-session `cost-state` record was never read.
+const MAX_FILE_BYTES: u64 = 1024 * 1024 * 1024;
 
 pub fn claude_projects_root() -> Option<PathBuf> {
     directories::UserDirs::new()
@@ -58,7 +66,7 @@ pub fn discover_jsonl_files(root: &Path) -> Result<Vec<PathBuf>> {
                         continue;
                     }
                     if smeta.len() > MAX_FILE_BYTES {
-                        tracing::warn!("skipping oversized file (>100MB): {}", spath.display());
+                        tracing::warn!("skipping oversized file (>1GiB): {}", spath.display());
                         continue;
                     }
                     files.push(spath);
@@ -72,7 +80,7 @@ pub fn discover_jsonl_files(root: &Path) -> Result<Vec<PathBuf>> {
                 continue;
             }
             if fmeta.len() > MAX_FILE_BYTES {
-                tracing::warn!("skipping oversized file (>100MB): {}", fpath.display());
+                tracing::warn!("skipping oversized file (>1GiB): {}", fpath.display());
                 continue;
             }
             files.push(fpath);
@@ -129,6 +137,19 @@ pub fn ingest_file(
         .to_string_lossy()
         .into_owned();
 
+    // Unlogged calls are tracked on parent transcripts only: a subagent's
+    // usage is already inside its parent's `cost-state`, and subagents don't
+    // compact or get away summaries.
+    let is_main = !source_file_path.contains("/subagents/");
+    let mut hidden = HiddenCallBatch {
+        session_file: hidden_calls::session_file_of(&source_file_path),
+        ..Default::default()
+    };
+    // Latest main-thread call, which compactions and away summaries re-read.
+    // Looked up from the DB only if a marker appears before any call in this
+    // chunk.
+    let mut last_main: Option<MainContext> = None;
+
     let mut reader = std::io::BufReader::new(f);
     let mut buf = Vec::new();
     let mut stored = Vec::<StoredSessionEvent>::new();
@@ -174,7 +195,24 @@ pub fn ingest_file(
             // re-writing the same usage block to multiple offsets.
             let event_id = ev
                 .event_id
+                .clone()
                 .unwrap_or_else(|| format!("{}:{}", key, line_start));
+            if is_main && !ev.is_sidechain {
+                if let Some(est) = hidden_calls::turn_end_estimate(
+                    pricing,
+                    &ev,
+                    &event_id,
+                    &source_file_path,
+                    line_start,
+                ) {
+                    hidden.estimates.push(est);
+                }
+                last_main = Some(MainContext {
+                    model: ev.model.clone(),
+                    project: ev.project.clone(),
+                    context_tokens: ev.context_tokens(),
+                });
+            }
             stored.push(StoredSessionEvent {
                 ts: ev.ts,
                 project: ev.project,
@@ -192,6 +230,24 @@ pub fn ingest_file(
         } else if let Some(c) = parse_compaction_line(text) {
             // `else if`: a compaction is a `system` line, so it can never also
             // be a usage-bearing assistant line — no need to test both.
+            if is_main {
+                if let Some(main) = main_context(db, &mut last_main, &source_file_path) {
+                    hidden.estimates.push(hidden_calls::compaction_estimate(
+                        pricing,
+                        c.ts,
+                        &c.uuid,
+                        c.pre_tokens,
+                        &main,
+                        &source_file_path,
+                        line_start,
+                    ));
+                }
+                // What a recap right after this would re-read is the
+                // compacted context, not the old one.
+                if let Some(m) = last_main.as_mut() {
+                    m.context_tokens = c.post_tokens;
+                }
+            }
             compactions.push(StoredCompaction {
                 ts: c.ts,
                 source_file: source_file_path.clone(),
@@ -200,10 +256,48 @@ pub fn ingest_file(
                 post_tokens: c.post_tokens,
                 uuid: c.uuid,
             });
+        } else if !is_main {
+            continue;
+        } else if let Some(a) = parse_away_summary_line(text) {
+            if let Some(main) = main_context(db, &mut last_main, &source_file_path) {
+                hidden.estimates.push(hidden_calls::away_summary_estimate(
+                    pricing,
+                    a.ts,
+                    &a.uuid,
+                    &main,
+                    &source_file_path,
+                    line_start,
+                ));
+            }
+        } else if let Some(cs) = parse_cost_state_line(text) {
+            // Exact totals up to here: estimates before this line are moot.
+            hidden.estimates.retain(|e| e.source_line > line_start);
+            hidden.cost_states.retain(|c| c.state.start_time != cs.start_time);
+            hidden.cost_states.push(CostStateAt { line: line_start, state: cs });
         }
     }
-    let inserted = db.ingest_atomic(&key, &stored, &compactions, mtime_ns, consumed)?;
+    let inserted = db.ingest_atomic(
+        &key,
+        &stored,
+        &compactions,
+        &hidden,
+        pricing,
+        mtime_ns,
+        consumed,
+    )?;
     Ok(inserted)
+}
+
+/// The chunk's latest main-thread call, else the latest one already stored.
+fn main_context(
+    db: &Db,
+    last_main: &mut Option<MainContext>,
+    source_file: &str,
+) -> Option<MainContext> {
+    if last_main.is_none() {
+        *last_main = db.last_main_context(source_file).ok().flatten();
+    }
+    last_main.clone()
 }
 
 #[cfg(test)]
@@ -287,6 +381,202 @@ mod tests {
         let key = path.to_str().expect("test path must be UTF-8").to_owned();
         let (_mtime, offset) = db.get_cursor(&key).unwrap().expect("cursor missing");
         assert_eq!(offset, file_len, "cursor must be at end-of-file");
+    }
+
+    fn turn_line(req: &str, out: u64, cache_read: u64, stop: &str) -> String {
+        format!(
+            r#"{{"type":"assistant","timestamp":"2026-11-02T20:00:00Z","cwd":"/tmp/proj","isSidechain":false,"entrypoint":"cli","requestId":"{req}","message":{{"id":"m-{req}","model":"claude-opus-5-5","stop_reason":"{stop}","usage":{{"input_tokens":0,"output_tokens":{out},"cache_read_input_tokens":{cache_read}}}}}}}"#
+        )
+    }
+
+    fn cost_state_line(opus_cost: f64, haiku_cost: f64) -> String {
+        format!(
+            r#"{{"type":"cost-state","sessionId":"s","modelUsage":{{"claude-opus-5-5":{{"inputTokens":0,"outputTokens":3000000,"cacheReadInputTokens":20000000,"cacheCreationInputTokens":0,"costUSD":{opus_cost}}},"claude-haiku-5-5":{{"inputTokens":1500000,"outputTokens":122500,"cacheReadInputTokens":0,"cacheCreationInputTokens":0,"webSearchRequests":37,"costUSD":{haiku_cost}}}}}}}"#
+        )
+    }
+
+    const COMPACT: &str = r#"{"type":"system","subtype":"compact_boundary","uuid":"c-1","timestamp":"2026-11-02T20:05:00Z","compactMetadata":{"trigger":"auto","preTokens":400000,"postTokens":30000}}"#;
+    const AWAY: &str = r#"{"type":"system","subtype":"away_summary","uuid":"a-1","timestamp":"2026-11-02T20:06:00Z","content":"Recap"}"#;
+
+    struct Fixture {
+        dir: tempfile::TempDir,
+        db: Db,
+        pricing: PricingTable,
+        main: PathBuf,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let dir = tempdir().unwrap();
+            let db_dir = dir.path().join("db");
+            std::fs::create_dir_all(&db_dir).unwrap();
+            let db = Db::open(&db_dir).unwrap();
+            let main = dir.path().join("proj").join("s.jsonl");
+            std::fs::create_dir_all(main.parent().unwrap()).unwrap();
+            std::fs::write(&main, "").unwrap();
+            Fixture { dir, db, pricing: PricingTable::bundled().unwrap(), main }
+        }
+        fn append(&self, path: &Path, lines: &[String]) {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path).unwrap();
+            for l in lines {
+                writeln!(f, "{l}").unwrap();
+            }
+        }
+        fn ingest(&self, path: &Path) {
+            ingest_file(&self.db, &self.pricing, path, self.dir.path()).unwrap();
+        }
+        /// (total cost, number of rows) for rows whose event_id matches `like`.
+        fn sum(&self, like: &str) -> (f64, i64) {
+            self.db
+                .conn()
+                .query_row(
+                    "SELECT COALESCE(SUM(cost_usd), 0), COUNT(*) FROM session_events WHERE event_id LIKE ?1",
+                    [like],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap()
+        }
+    }
+
+    /// Live session: estimates appear for the turn end, the compaction and
+    /// the away summary. When the session closes and Claude Code writes its
+    /// cost-state, the estimates are replaced and the session total equals
+    /// Claude Code's own total exactly.
+    #[test]
+    fn live_estimates_give_way_to_claude_codes_exact_total() {
+        let fx = Fixture::new();
+        fx.append(&fx.main, &[
+            turn_line("r1", 1_000_000, 10_000_000, "tool_use"),
+            turn_line("r2", 1_000_000, 5_000_000, "end_turn"),
+            COMPACT.to_string(),
+            AWAY.to_string(),
+        ]);
+        fx.ingest(&fx.main);
+
+        let (est, n_est) = fx.sum("est:%");
+        assert_eq!(n_est, 3, "turn end + compaction + away summary");
+        assert!(est > 0.0);
+
+        // Process exits: Claude Code appends its totals. Opus $70 official vs
+        // $40 + $2 + $1 observed from the transcript ($43): $27 unlogged.
+        fx.append(&fx.main, &[cost_state_line(70.0, 0.58)]);
+        fx.ingest(&fx.main);
+
+        assert_eq!(fx.sum("est:%").1, 0, "estimates replaced by exact totals");
+        let (total, _) = fx.sum("%");
+        assert!((total - 70.58).abs() < 1e-9, "session total must equal /cost, got {total}");
+        let haiku: f64 = fx
+            .db
+            .conn()
+            .query_row(
+                "SELECT SUM(cost_usd) FROM session_events WHERE model = 'claude-haiku-5-5'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((haiku - 0.58).abs() < 1e-9, "never-logged Haiku calls are added");
+    }
+
+    /// The re-read after migration 0010 can ingest the parent before its
+    /// subagent transcripts. The subagent's calls must shrink the adjustment,
+    /// not stack on top of it.
+    #[test]
+    fn subagent_ingested_after_parent_does_not_double_count() {
+        let fx = Fixture::new();
+        fx.append(&fx.main, &[
+            turn_line("r1", 1_000_000, 0, "end_turn"),
+            cost_state_line(50.0, 0.0),
+        ]);
+        fx.ingest(&fx.main);
+        assert!((fx.sum("%").0 - 50.0).abs() < 1e-9);
+
+        let sub = fx.dir.path().join("proj").join("s").join("subagents").join("agent-a.jsonl");
+        fx.append(&sub, &[turn_line("r9", 1_000_000, 0, "end_turn")]);
+        fx.ingest(&sub);
+        let (total, _) = fx.sum("%");
+        assert!((total - 50.0).abs() < 1e-9, "still exactly /cost, got {total}");
+        assert_eq!(fx.sum("est:%").1, 0, "subagent turns are never estimated");
+    }
+
+    /// A resumed session: new turns after the cost-state get estimates until
+    /// the next cost-state, which then sets the total exactly again.
+    #[test]
+    fn resumed_session_estimates_only_after_the_last_cost_state() {
+        let fx = Fixture::new();
+        fx.append(&fx.main, &[turn_line("r1", 1_000_000, 0, "end_turn"), cost_state_line(30.0, 0.0)]);
+        fx.ingest(&fx.main);
+        fx.append(&fx.main, &[turn_line("r2", 100_000, 1_000_000, "end_turn")]);
+        fx.ingest(&fx.main);
+        assert_eq!(fx.sum("est:%").1, 1, "the resumed turn is estimated");
+
+        fx.append(&fx.main, &[cost_state_line(45.0, 0.0)]);
+        fx.ingest(&fx.main);
+        assert_eq!(fx.sum("est:%").1, 0);
+        assert!((fx.sum("%").0 - 45.0).abs() < 1e-9);
+    }
+
+    /// Two Claude Code processes wrote to one transcript (real case:
+    /// 81495532, $144.87 + $139.37). Each record counts only its own process,
+    /// so the session total is their sum, and a later record from the same
+    /// process replaces its earlier one.
+    #[test]
+    fn totals_from_separate_processes_add_up() {
+        let fx = Fixture::new();
+        let with_start = |cost: f64, start: i64| {
+            cost_state_line(cost, 0.0).replacen(
+                r#""sessionId":"s","#,
+                &format!(r#""sessionId":"s","startTime":{start},"#),
+                1,
+            )
+        };
+        fx.append(&fx.main, &[
+            turn_line("r1", 1_000_000, 0, "end_turn"),
+            with_start(30.0, 111),
+            with_start(25.0, 222),
+        ]);
+        fx.ingest(&fx.main);
+        assert!((fx.sum("%").0 - 55.0).abs() < 1e-9);
+
+        fx.append(&fx.main, &[with_start(40.0, 111)]);
+        fx.ingest(&fx.main);
+        assert!((fx.sum("%").0 - 65.0).abs() < 1e-9, "process 111 now at $40, 222 still $25");
+    }
+
+    /// Re-reading a transcript from byte 0 (what migration 0010 forces) is
+    /// idempotent: same rows, same total.
+    #[test]
+    fn rereading_a_closed_session_is_idempotent() {
+        let fx = Fixture::new();
+        fx.append(&fx.main, &[
+            turn_line("r1", 1_000_000, 0, "end_turn"),
+            COMPACT.to_string(),
+            cost_state_line(50.0, 0.58),
+        ]);
+        fx.ingest(&fx.main);
+        let before = fx.sum("%");
+        fx.db.conn().execute("DELETE FROM jsonl_cursors", []).unwrap();
+        fx.ingest(&fx.main);
+        let after = fx.sum("%");
+        assert_eq!(before.1, after.1);
+        assert!((before.0 - after.0).abs() < 1e-9);
+        assert!((after.0 - 50.58).abs() < 1e-9);
+    }
+
+    /// Repricing must not touch adjustment rows directly; it recomputes them,
+    /// so the session still totals Claude Code's figure afterwards.
+    #[test]
+    fn repricing_keeps_closed_sessions_at_the_official_total() {
+        let fx = Fixture::new();
+        fx.append(&fx.main, &[turn_line("r1", 1_000_000, 0, "end_turn"), cost_state_line(50.0, 0.0)]);
+        fx.ingest(&fx.main);
+        // Simulate a stale cost on the real row, as a pricing fix would leave.
+        fx.db
+            .conn()
+            .execute("UPDATE session_events SET cost_usd = 1.0 WHERE event_id NOT LIKE 'adj:%'", [])
+            .unwrap();
+        fx.db.reprice_outdated_events(&fx.pricing).unwrap();
+        assert!((fx.sum("%").0 - 50.0).abs() < 1e-9);
     }
 
     #[test]

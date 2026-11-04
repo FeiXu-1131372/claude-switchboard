@@ -49,6 +49,21 @@ describe('aggregateSessions — subagent nesting', () => {
     expect(s.subagents.map((x) => x.label)).toEqual(['agent a47b7bea', 'agent aa8a0578']);
   });
 
+  it('adds unlogged-call cost to the session without counting it as turns', () => {
+    const file = `${PROJ}/8723ad3b.jsonl`;
+    const sessions = aggregateSessions(
+      [
+        mk({ source_file: file, project: 'life-os', cost_usd: 1.0 }),
+        mk({ source_file: file, project: 'life-os', cost_usd: 0.25, event_id: `adj:${file}:claude-sonnet-5:2026-07-26` }),
+        mk({ source_file: file, project: 'life-os', cost_usd: 0.05, event_id: 'est:turn:req_1:msg_1' }),
+      ],
+      null,
+    );
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].turn_count).toBe(1);
+    expect(sessions[0].total_cost_usd).toBeCloseTo(1.3, 5);
+  });
+
   it('keeps unrelated parent sessions as separate rows', () => {
     const sessions = aggregateSessions(
       [

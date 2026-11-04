@@ -41,6 +41,8 @@ pub struct PricingTable {
 /// historical event costs exactly once per correction.
 pub const PRICING_VERSION: u32 = 3;
 
+const ANTHROPIC_FAMILIES: [&str; 5] = ["fable-", "mythos-", "opus-", "sonnet-", "haiku-"];
+
 fn normalize_model_for_lookup(model: &str) -> String {
     let lower = model.trim().to_ascii_lowercase();
     let without_1m = lower.strip_suffix("[1m]").unwrap_or(&lower);
@@ -49,9 +51,7 @@ fn normalize_model_for_lookup(model: &str) -> String {
         None => without_1m,
     };
     let needle = without_org.strip_prefix("claude-").unwrap_or(without_org);
-    if ["fable-", "mythos-", "opus-", "sonnet-", "haiku-"]
-        .iter()
-        .any(|p| needle.starts_with(p))
+    if ANTHROPIC_FAMILIES.iter().any(|p| needle.starts_with(p))
     {
         needle.replace('.', "-")
     } else {
@@ -79,6 +79,16 @@ impl PricingTable {
 
     pub fn entries(&self) -> &[PricingEntry] {
         &self.entries
+    }
+
+    /// True for Anthropic models. Claude Code knows their real prices, so its
+    /// `costUSD` for them is authoritative. For third-party relay models it
+    /// falls back to a flat placeholder rate, so the vendor price in this
+    /// table is the better number there.
+    pub fn is_anthropic(model: &str) -> bool {
+        let needle = normalize_model_for_lookup(model);
+        ANTHROPIC_FAMILIES.iter().any(|p| needle.starts_with(p))
+            || model.to_ascii_lowercase().contains("claude")
     }
 
     pub fn lookup(&self, model: &str) -> Option<&PricingEntry> {
@@ -354,6 +364,18 @@ mod tests {
         assert_eq!(tbl.cache_savings_per_mtok("claude-haiku-4-5"), Some(0.9));
         assert_eq!(tbl.cache_savings_per_mtok("MiniMax-M2.7"), Some(0.24));
         assert_eq!(tbl.cache_savings_per_mtok("no-such-model"), None);
+    }
+
+    #[test]
+    fn is_anthropic_separates_claude_from_relay_models() {
+        for m in ["claude-opus-5-5", "claude-opus-4-7[1m]", "anthropic/claude-fable-5.1",
+                  "claude-3-opus-20240229", "claude-haiku-4-5-20251001"] {
+            assert!(PricingTable::is_anthropic(m), "{m}");
+        }
+        for m in ["deepseek-v4.1-flash-1017", "glm-5.3", "k3[1m]", "kimi-for-coding",
+                  "MiniMax-M3", "qwen3.8-max"] {
+            assert!(!PricingTable::is_anthropic(m), "{m}");
+        }
     }
 
     #[test]

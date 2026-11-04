@@ -22,6 +22,16 @@ export type {
 export type { StoredSessionEvent as SessionEvent } from './generated/bindings';
 export type { StoredCompaction as Compaction } from './generated/bindings';
 
+/**
+ * Rows the backend adds for Claude Code API calls that never reach the
+ * transcript (see `jsonl_parser::hidden_calls`): `adj:` lifts a closed
+ * session to Claude Code's own /cost total, `est:` estimates a live one.
+ * They carry real cost and tokens but are not turns.
+ */
+export function isUnloggedCallRow(e: { event_id: string }): boolean {
+  return e.event_id.startsWith('adj:') || e.event_id.startsWith('est:');
+}
+
 // Frontend-only types — no Rust equivalent, not in generated bindings.
 export interface HeatmapCell {
   date: string;

@@ -7,6 +7,7 @@ import { ChevronDown, ChevronRight, IconCompact, IconSessions, IconSubagent } fr
 import { ipc } from '../lib/ipc';
 import { useTabData } from '../lib/useTabData';
 import { useAppStore } from '../lib/store';
+import { isUnloggedCallRow } from '../lib/types';
 import type { Compaction, PricingEntry, SessionEvent } from '../lib/types';
 import { costPerCategory, lookupPricing } from '../lib/pricing';
 
@@ -224,8 +225,10 @@ export function aggregateSessions(
     }
 
     // Combined accumulation — the parent row represents the whole
-    // conversation, so subagent usage counts toward its totals.
-    p.turn_count += 1;
+    // conversation, so subagent usage counts toward its totals. Unlogged-call
+    // rows add cost and tokens but are not turns.
+    const isTurn = !isUnloggedCallRow(e);
+    if (isTurn) p.turn_count += 1;
     p.headline_tokens += e.input_tokens + e.output_tokens;
     p.breakdown.input += e.input_tokens;
     p.breakdown.output += e.output_tokens;
@@ -271,7 +274,7 @@ export function aggregateSessions(
         };
         p.subs.set(e.source_file, s);
       }
-      s.turn_count += 1;
+      if (isTurn) s.turn_count += 1;
       s.headline_tokens += e.input_tokens + e.output_tokens;
       s.total_cost_usd += e.cost_usd;
       if (e.ts > s.latest_ts) s.latest_ts = e.ts;

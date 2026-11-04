@@ -1,3 +1,4 @@
+pub mod hidden_calls;
 pub mod pricing;
 pub mod record;
 pub mod walker;
