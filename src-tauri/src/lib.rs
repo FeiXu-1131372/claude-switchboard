@@ -14,6 +14,8 @@ pub mod os_scheduler;
 pub mod scheduler;
 pub mod scheduler_glue;
 pub mod sessions;
+mod statusline_setup;
+mod statusline_source;
 pub mod store;
 mod tray;
 mod tray_icon;
@@ -161,6 +163,13 @@ pub fn run() {
             commands::set_default_provider,
             commands::clear_default_provider,
             commands::list_resumable_sessions,
+            commands::get_statusline_bridge_status,
+            commands::preflight_statusline_bridge,
+            commands::enable_statusline_bridge,
+            commands::disable_statusline_bridge,
+            commands::rewrap_statusline_bridge,
+            commands::restore_original_statusline,
+            commands::recheck_statusline_bridge,
         ]);
 
     #[cfg(debug_assertions)]
@@ -213,6 +222,13 @@ pub fn run() {
             commands::set_default_provider,
             commands::clear_default_provider,
             commands::list_resumable_sessions,
+            commands::get_statusline_bridge_status,
+            commands::preflight_statusline_bridge,
+            commands::enable_statusline_bridge,
+            commands::disable_statusline_bridge,
+            commands::rewrap_statusline_bridge,
+            commands::restore_original_statusline,
+            commands::recheck_statusline_bridge,
         ]);
 
     #[cfg(debug_assertions)]
@@ -285,12 +301,16 @@ pub fn run() {
         cached_usage_by_slot: parking_lot::RwLock::new(std::collections::HashMap::new()),
         active_slot: parking_lot::RwLock::new(None),
         active_since: parking_lot::RwLock::new(None),
+        local_source_changed: tokio::sync::Notify::new(),
+        statusline_last_adopted: parking_lot::RwLock::new(None),
+        statusline_last_persisted: parking_lot::RwLock::new(std::collections::HashMap::new()),
         backoff_by_slot: parking_lot::RwLock::new(std::collections::HashMap::new()),
         schedule_by_slot: parking_lot::RwLock::new(std::collections::HashMap::new()),
         keychain_guardian: parking_lot::Mutex::new(None),
         warmup: app_state::WarmupState::default(),
         tray_position_known: std::sync::atomic::AtomicBool::new(false),
         sessions_cache: parking_lot::RwLock::new(None),
+        statusline_setup: Arc::new(statusline_setup::BridgeManager::new(data_dir.clone())),
     });
 
     // One-time per pricing revision: recompute historical event costs with
@@ -583,6 +603,33 @@ pub fn run() {
             }
 
             poll_loop::spawn(handle.clone(), state.clone());
+            statusline_source::start_watcher(state.clone());
+            {
+                // Repair our own files and re-check the bridge. Never edits
+                // `settings.json`; a bridge that can't run gets one OS notice.
+                let st = state.clone();
+                let h = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let manager = st.statusline_setup.clone();
+                    match tauri::async_runtime::spawn_blocking(move || manager.reconcile_on_startup()).await {
+                        Ok(Ok(report)) => {
+                            for (_, error) in report.newly_broken {
+                                use tauri_plugin_notification::NotificationExt;
+                                let _ = h
+                                    .notification()
+                                    .builder()
+                                    .title("Your status line isn't working")
+                                    .body(format!(
+                                        "Switchboard's bridge can't run ({error}). Open Settings to restore your original status line."
+                                    ))
+                                    .show();
+                            }
+                        }
+                        Ok(Err(e)) => tracing::warn!("statusline bridge reconcile failed: {e}"),
+                        Err(e) => tracing::warn!("statusline bridge reconcile task failed: {e}"),
+                    }
+                });
+            }
             crate::updater::run_scheduler(handle.clone());
 
             // Run legacy single-account migration first, then reconcile the

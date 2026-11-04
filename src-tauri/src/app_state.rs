@@ -106,6 +106,21 @@ pub struct BurnRateProjection {
     pub projected_at_reset: f64,
 }
 
+/// Where a usage snapshot came from. Every origin but `Http` is a local
+/// source that costs no `/usage` call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum SnapshotOrigin {
+    #[default]
+    Http,
+    /// The upstream CLI's persisted `/usage` response in its global config.
+    CliCache,
+    /// `statusline-usage.json` written by an external poller.
+    SharedFile,
+    /// A `rate_limits` observation recorded by the statusline bridge.
+    Statusline,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct CachedUsage {
     pub snapshot: UsageSnapshot,
@@ -115,6 +130,15 @@ pub struct CachedUsage {
     #[serde(default)]
     pub burn_rate: Option<BurnRateProjection>,
     pub auth_source: AuthSource,
+    /// Which source produced `snapshot`'s headline 5h/7d numbers.
+    #[serde(default)]
+    pub origin: SnapshotOrigin,
+    /// For a `Statusline` snapshot: when the slower buckets it carries over
+    /// (Sonnet, Opus, extra usage) were last fetched. They are not in the
+    /// status line's `rate_limits`, so they keep their own age.
+    #[serde(default)]
+    #[specta(type = Option<String>)]
+    pub carried_fetched_at: Option<DateTime<Utc>>,
 }
 
 impl CachedUsage {
@@ -150,6 +174,16 @@ pub struct AppState {
     /// account identity, so a snapshot written before this instant describes
     /// the previous account and must not be adopted for the new one.
     pub active_since: RwLock<Option<DateTime<Utc>>>,
+    /// Woken by the observation-directory watcher: a statusline observation
+    /// changed, so the poll loop should re-evaluate the local sources now
+    /// (without the keychain read a full `poll_all` tick does).
+    pub local_source_changed: Notify,
+    /// When a statusline observation was last adopted for any managed
+    /// account. Drives the "Live" state of the settings card.
+    pub statusline_last_adopted: RwLock<Option<DateTime<Utc>>>,
+    /// Per slot, when a statusline snapshot last went into the history table
+    /// (they are throttled so the trend charts don't get a row per second).
+    pub statusline_last_persisted: RwLock<HashMap<u32, DateTime<Utc>>>,
     pub backoff_by_slot: RwLock<HashMap<u32, BackoffState>>,
     pub schedule_by_slot: RwLock<HashMap<u32, ScheduleState>>,
     pub keychain_guardian: Mutex<Option<KeychainGuardian>>,
@@ -166,6 +200,8 @@ pub struct AppState {
     /// advances. `ExpandedReport` remounts tab components on every tab
     /// change, so an unmemoized scan would re-parse ~100 MB per switch.
     pub sessions_cache: RwLock<Option<(std::time::SystemTime, Vec<crate::sessions::SessionSummary>)>>,
+    /// Turns "Live usage from Claude Code" (the statusline bridge) on and off.
+    pub statusline_setup: Arc<crate::statusline_setup::BridgeManager>,
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -1,4 +1,6 @@
-use crate::app_state::{AppState, BackoffReason, BackoffState, BurnRateProjection, CachedUsage};
+use crate::app_state::{
+    AppState, BackoffReason, BackoffState, BurnRateProjection, CachedUsage, SnapshotOrigin,
+};
 use crate::auth::AuthSource;
 use crate::auth::accounts::ManagedAccount;
 use crate::notifier;
@@ -42,15 +44,32 @@ const MAX_RATE_LIMIT_BACKOFF: Duration = Duration::from_secs(2 * 60 * 60);
 /// upstream CLI's own cut-off for its persisted `cachedUsageUtilization`.
 const MAX_LOCAL_AGE_DURING_BAN: Duration = Duration::from_secs(60 * 60);
 
-/// Where an adopted usage snapshot came from. Every origin but `Http` is a
-/// local source that costs no `/usage` call.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SnapshotOrigin {
-    Http,
-    /// The upstream CLI's persisted `/usage` response in its global config.
-    CliCache,
-    /// `statusline-usage.json` written by an external poller.
-    SharedFile,
+/// What a slot that cannot call `/usage` (no `user:profile` scope) does with
+/// the local sources' answer.
+#[derive(Debug)]
+#[allow(clippy::large_enum_variant)] // UsageSnapshot is intentionally value-typed; boxing adds indirection for no benefit here
+enum LocalOnly {
+    /// A local snapshot newer than what the slot shows: apply it.
+    Adopt(UsageSnapshot, SnapshotOrigin),
+    /// A local source has data, but nothing newer than what is shown. Carries
+    /// its `fetched_at` so the next poll lands when that data ages out.
+    KeepShown(DateTime<Utc>),
+    /// No local source has data: show the "usage not supported" placeholder.
+    NotSupported,
+}
+
+/// Decide the outcome for a slot whose only possible usage source is local.
+/// These accounts never reach the HTTP path: `/api/oauth/usage` answers 403
+/// `oauth_scope_insufficient` for an inference-only token.
+fn resolve_local_only(
+    local: Option<(UsageSnapshot, SnapshotOrigin)>,
+    newer_than_shown: bool,
+) -> LocalOnly {
+    match local {
+        Some((snap, origin)) if newer_than_shown => LocalOnly::Adopt(snap, origin),
+        Some((snap, _)) => LocalOnly::KeepShown(snap.fetched_at),
+        None => LocalOnly::NotSupported,
+    }
 }
 
 /// Pull the polling interval + base stagger gap from settings as Durations,
@@ -170,9 +189,23 @@ pub fn spawn(handle: AppHandle, state: Arc<AppState>) {
             // "live creds change without a swap" path).
             let max_sleep = Duration::from_secs(60);
             let sleep_for = wake_at.saturating_duration_since(now).min(max_sleep);
-            tokio::select! {
-                _ = tokio::time::sleep(sleep_for) => {}
-                _ = state.force_refresh.notified() => {}
+            let deadline = tokio::time::Instant::now() + sleep_for;
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep_until(deadline) => break,
+                    _ = state.force_refresh.notified() => break,
+                    // A statusline observation changed: refresh the local
+                    // sources only. A full `poll_all` tick would re-read the
+                    // keychain on every status-line refresh.
+                    _ = state.local_source_changed.notified() => {
+                        let accounts = state.accounts.list().unwrap_or_default();
+                        let active_slot = *state.active_slot.read();
+                        adopt_fresh_statusline(
+                            &handle, &state, &mut burn_buffers, &accounts, active_slot,
+                        )
+                        .await;
+                    }
+                }
             }
         }
     });
@@ -200,14 +233,56 @@ async fn fetch_and_apply_one(
     let active_slot = *state.active_slot.read();
 
     if !acc.supports_usage() {
-        let cached = placeholder_cached(&acc, "usage_not_supported");
-        state.cached_usage_by_slot.write().insert(slot, cached.clone());
-        if Some(slot) == active_slot {
-            *state.cached_usage.write() = Some(cached.clone());
-            tray::set_level(handle, None, None, None, None, false);
-        }
-        let _ = handle.emit("usage_updated", json!({ "slot": slot, "cached": cached }));
-        return None;
+        // No `user:profile` scope, so `/usage` is off the table. A local
+        // source (the statusline bridge's observations) may still know.
+        let interval = Duration::from_secs(state.settings.read().polling_interval_secs.max(60));
+        let local = local_snapshot(state, &acc, active_slot, interval);
+        let newer = local
+            .as_ref()
+            .is_none_or(|(snap, _)| is_newer_than_shown(state, slot, snap.fetched_at));
+        return match resolve_local_only(local, newer) {
+            LocalOnly::Adopt(snap, origin) => {
+                let fetched_at = snap.fetched_at;
+                tracing::debug!(target: "switchboard.poll", "slot {slot}: adopted {origin:?} snapshot");
+                apply_fetch_outcome(
+                    handle,
+                    state,
+                    burn_buffers,
+                    slot,
+                    &acc,
+                    active_slot,
+                    FetchOutcome::Ok(snap),
+                    origin,
+                )
+                .await;
+                Some(fetched_at)
+            }
+            LocalOnly::KeepShown(fetched_at) => Some(fetched_at),
+            LocalOnly::NotSupported => {
+                // Keep data an earlier adoption put on the row: it ages
+                // visibly through `fetched_at` instead of vanishing.
+                let shown = state
+                    .cached_usage_by_slot
+                    .read()
+                    .get(&slot)
+                    .is_some_and(|c| has_usage_data(&c.snapshot));
+                if !shown {
+                    let marker = crate::commands::local_only_marker(
+                        state.statusline_setup.feeds_usage(),
+                        Some(slot) == active_slot,
+                    );
+                    let cached = placeholder_cached(&acc, marker);
+                    state.cached_usage_by_slot.write().insert(slot, cached.clone());
+                    if Some(slot) == active_slot {
+                        *state.cached_usage.write() = Some(cached.clone());
+                        tray::set_level(handle, None, None, None, None, false);
+                    }
+                    let _ = handle
+                        .emit("usage_updated", json!({ "slot": slot, "cached": cached }));
+                }
+                None
+            }
+        };
     }
 
     // Local-source waterfall: when another local consumer already holds data
@@ -219,6 +294,15 @@ async fn fetch_and_apply_one(
     let interval = Duration::from_secs(state.settings.read().polling_interval_secs.max(60));
     if let Some((snap, origin)) = local_snapshot(state, &acc, active_slot, interval) {
         let fetched_at = snap.fetched_at;
+        // A statusline snapshot carries no Sonnet/Opus/extra-usage buckets of
+        // its own. Once the ones it inherited are 15 minutes old, the slot
+        // makes its one real call (which still honors any backoff).
+        let floor_forces_http = origin == SnapshotOrigin::Statusline
+            && !crate::statusline_source::satisfies_poll(
+                crate::statusline_source::carried_of(state.cached_usage_by_slot.read().get(&slot))
+                    .map(|(_, at)| at),
+                Utc::now(),
+            );
         if is_newer_than_shown(state, slot, fetched_at) {
             tracing::debug!(target: "switchboard.poll", "slot {slot}: adopted {origin:?} snapshot");
             apply_fetch_outcome(
@@ -233,7 +317,9 @@ async fn fetch_and_apply_one(
             )
             .await;
         }
-        return Some(fetched_at);
+        if !floor_forces_http {
+            return Some(fetched_at);
+        }
     }
 
     let token_result = state
@@ -326,6 +412,27 @@ async fn apply_fetch_outcome(
             .then(|| RATE_LIMITED_ERROR.to_string());
             let buf = burn_buffers.entry(slot).or_default();
             let burn_rate = update_burn_rate(buf, &snapshot, snapshot.fetched_at);
+            // Read what the slot showed before this snapshot replaces it: a
+            // statusline snapshot inherits its carried buckets' age from it,
+            // and its history row is gated on a headline change.
+            let (carried_fetched_at, persist) = {
+                let shown = state.cached_usage_by_slot.read();
+                let shown = shown.get(&slot);
+                if origin == SnapshotOrigin::Statusline {
+                    let now = Utc::now();
+                    let changed = crate::statusline_source::headline_changed(
+                        shown.map(|c| &c.snapshot),
+                        &snapshot,
+                    );
+                    let last = state.statusline_last_persisted.read().get(&slot).copied();
+                    (
+                        crate::statusline_source::carried_of(shown).map(|(_, at)| at),
+                        crate::statusline_source::should_persist(last, now, changed),
+                    )
+                } else {
+                    (None, true)
+                }
+            };
             let cached = CachedUsage {
                 snapshot: snapshot.clone(),
                 account_id: acc.account_uuid.clone(),
@@ -337,25 +444,39 @@ async fn apply_fetch_outcome(
                 } else {
                     AuthSource::OAuth
                 },
+                origin,
+                carried_fetched_at,
             };
             state.cached_usage_by_slot.write().insert(slot, cached.clone());
             if origin == SnapshotOrigin::Http {
                 state.backoff_by_slot.write().remove(&slot);
+            }
+            if origin == SnapshotOrigin::Statusline {
+                *state.statusline_last_adopted.write() = Some(Utc::now());
             }
             // Persist the raw snapshot so a cold start can rehydrate
             // last-known-good data (see hydrated_caches). Best-effort: a
             // storage hiccup must never interrupt polling. Note the
             // re-serialize drops forward-compat `unknown` fields — the UI
             // and hydration only rely on the typed buckets.
-            match serde_json::to_string(&snapshot) {
-                Ok(payload) => {
-                    if let Err(e) =
-                        state.db.insert_snapshot(&acc.account_uuid, snapshot.fetched_at, &payload)
-                    {
-                        tracing::warn!("persist snapshot for slot {slot} failed: {e}");
+            if persist {
+                match serde_json::to_string(&snapshot) {
+                    Ok(payload) => {
+                        if let Err(e) = state.db.insert_snapshot(
+                            &acc.account_uuid,
+                            snapshot.fetched_at,
+                            &payload,
+                        ) {
+                            tracing::warn!("persist snapshot for slot {slot} failed: {e}");
+                        } else if origin == SnapshotOrigin::Statusline {
+                            state
+                                .statusline_last_persisted
+                                .write()
+                                .insert(slot, Utc::now());
+                        }
                     }
+                    Err(e) => tracing::warn!("serialize snapshot for slot {slot} failed: {e}"),
                 }
-                Err(e) => tracing::warn!("serialize snapshot for slot {slot} failed: {e}"),
             }
             let _ = handle.emit(
                 "usage_updated",
@@ -580,6 +701,9 @@ async fn poll_all(
     // 4. A 429 ban only bounds this app's own /usage calls: keep banned
     //    slots' numbers current from local sources meanwhile.
     adopt_local_during_bans(handle, state, burn_buffers, &accounts, active_slot).await;
+    // Backstop for the observation watcher (which can miss events on network
+    // volumes or before the directory exists).
+    adopt_fresh_statusline(handle, state, burn_buffers, &accounts, active_slot).await;
 
     // 5. Pick at most one due slot, fetch it, advance its deadline.
     let now = Instant::now();
@@ -670,6 +794,47 @@ async fn adopt_local_during_bans(
     }
 }
 
+/// Adopt statusline observations newer than what each slot shows. Runs on
+/// every watcher wake-up and every loop tick, so the popover follows Claude
+/// Code's own numbers within about a second instead of once per interval.
+async fn adopt_fresh_statusline(
+    handle: &AppHandle,
+    state: &AppState,
+    burn_buffers: &mut HashMap<u32, VecDeque<(DateTime<Utc>, f64)>>,
+    accounts: &[ManagedAccount],
+    active_slot: Option<u32>,
+) {
+    let interval = Duration::from_secs(state.settings.read().polling_interval_secs.max(60));
+    let now = Instant::now();
+    for acc in accounts {
+        let banned = state
+            .backoff_by_slot
+            .read()
+            .get(&acc.slot)
+            .is_some_and(|b| b.reason == BackoffReason::RateLimited && now < b.until);
+        let max_age = if banned { MAX_LOCAL_AGE_DURING_BAN } else { interval };
+        let Some(snap) = crate::statusline_source::snapshot_for(state, acc, active_slot, max_age)
+        else {
+            continue;
+        };
+        if !is_newer_than_shown(state, acc.slot, snap.fetched_at) {
+            continue;
+        }
+        tracing::debug!(target: "switchboard.poll", "slot {}: adopted Statusline snapshot", acc.slot);
+        apply_fetch_outcome(
+            handle,
+            state,
+            burn_buffers,
+            acc.slot,
+            acc,
+            active_slot,
+            FetchOutcome::Ok(snap),
+            SnapshotOrigin::Statusline,
+        )
+        .await;
+    }
+}
+
 /// A local snapshot adopted mid-ban while under a poll interval old shows as
 /// live (no `last_error`). Once it ages past the interval with the ban still
 /// in force, label it rate-limited again, so the row reads "showing last good
@@ -730,6 +895,8 @@ fn placeholder_cached(
         last_error: Some(err.to_string()),
         burn_rate: None,
         auth_source: AuthSource::OAuth,
+        origin: SnapshotOrigin::Http,
+        carried_fetched_at: None,
     }
 }
 
@@ -829,7 +996,7 @@ pub fn read_cli_usage_cache(
 
 /// Whether `fetched_at` is at most `max_age` old, rejecting clock-skewed
 /// future timestamps beyond a 30 s grace.
-fn is_within_age(fetched_at: DateTime<Utc>, max_age: Duration, now: DateTime<Utc>) -> bool {
+pub(crate) fn is_within_age(fetched_at: DateTime<Utc>, max_age: Duration, now: DateTime<Utc>) -> bool {
     let Ok(max_age) = ChronoDuration::from_std(max_age) else { return false };
     fetched_at <= now + ChronoDuration::seconds(30) && now - fetched_at <= max_age
 }
@@ -853,7 +1020,16 @@ fn local_snapshot(
         })
         .flatten()
         .map(|snap| (snap, SnapshotOrigin::SharedFile));
-    [cli_cache, shared_file]
+    let statusline = crate::statusline_source::snapshot_for(state, acc, active_slot, max_age)
+        .map(|snap| (snap, SnapshotOrigin::Statusline));
+    pick_freshest([cli_cache, shared_file, statusline])
+}
+
+/// The newest of the local sources' answers.
+fn pick_freshest(
+    candidates: impl IntoIterator<Item = Option<(UsageSnapshot, SnapshotOrigin)>>,
+) -> Option<(UsageSnapshot, SnapshotOrigin)> {
+    candidates
         .into_iter()
         .flatten()
         .max_by_key(|(snap, _)| snap.fetched_at)
@@ -869,7 +1045,7 @@ fn is_newer_than_shown(state: &AppState, slot: u32, fetched_at: DateTime<Utc>) -
     }
 }
 
-fn has_usage_data(snapshot: &UsageSnapshot) -> bool {
+pub(crate) fn has_usage_data(snapshot: &UsageSnapshot) -> bool {
     snapshot.five_hour.is_some()
         || snapshot.seven_day.is_some()
         || snapshot.seven_day_sonnet.is_some()
@@ -910,6 +1086,8 @@ pub fn hydrated_caches(
                         last_error: None,
                         burn_rate: None,
                         auth_source: AuthSource::OAuth,
+                        origin: SnapshotOrigin::Http,
+                        carried_fetched_at: None,
                     },
                 );
             }
@@ -1139,6 +1317,8 @@ mod tests {
                     fetched_at,
                     unknown: Default::default(),
                 },
+                origin: SnapshotOrigin::Http,
+                carried_fetched_at: None,
                 account_id: "uuid".into(),
                 account_email: "a@example.com".into(),
                 last_error: last_error.map(str::to_string),
@@ -1165,6 +1345,89 @@ mod tests {
             let mut auth = cached(now - ChronoDuration::seconds(400), Some("auth_required"));
             assert!(!relabel_aged_during_ban(&mut auth, d(300), now));
             assert_eq!(auth.last_error.as_deref(), Some("auth_required"));
+        }
+    }
+
+    mod freshest {
+        use super::*;
+
+        fn snap(fetched_at: DateTime<Utc>) -> UsageSnapshot {
+            UsageSnapshot {
+                five_hour: None,
+                seven_day: None,
+                seven_day_sonnet: None,
+                seven_day_opus: None,
+                extra_usage: None,
+                fetched_at,
+                unknown: Default::default(),
+            }
+        }
+
+        #[test]
+        fn a_statusline_snapshot_beats_an_older_cli_cache() {
+            let now = Utc::now();
+            let older = now - ChronoDuration::seconds(40);
+            let (picked, origin) = pick_freshest([
+                Some((snap(older), SnapshotOrigin::CliCache)),
+                None,
+                Some((snap(now), SnapshotOrigin::Statusline)),
+            ])
+            .unwrap();
+            assert_eq!(origin, SnapshotOrigin::Statusline);
+            assert_eq!(picked.fetched_at, now);
+        }
+
+        #[test]
+        fn no_source_yields_none() {
+            assert!(pick_freshest([None, None, None]).is_none());
+        }
+    }
+
+    mod local_only {
+        use super::*;
+
+        fn snap(fetched_at: DateTime<Utc>) -> UsageSnapshot {
+            UsageSnapshot {
+                five_hour: Some(crate::usage_api::Utilization {
+                    utilization: 33.0,
+                    resets_at: None,
+                }),
+                seven_day: None,
+                seven_day_sonnet: None,
+                seven_day_opus: None,
+                extra_usage: None,
+                fetched_at,
+                unknown: Default::default(),
+            }
+        }
+
+        #[test]
+        fn local_only_adopts_a_newer_local_snapshot() {
+            let at = Utc::now();
+            match resolve_local_only(Some((snap(at), SnapshotOrigin::Statusline)), true) {
+                LocalOnly::Adopt(s, origin) => {
+                    assert_eq!(s.fetched_at, at);
+                    assert_eq!(origin, SnapshotOrigin::Statusline);
+                }
+                other => panic!("expected Adopt, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn local_only_keeps_shown_data_when_local_is_not_newer() {
+            let at = Utc::now();
+            match resolve_local_only(Some((snap(at), SnapshotOrigin::Statusline)), false) {
+                LocalOnly::KeepShown(fetched_at) => assert_eq!(fetched_at, at),
+                other => panic!("expected KeepShown, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn local_only_without_local_data_is_not_supported() {
+            assert!(matches!(
+                resolve_local_only(None, true),
+                LocalOnly::NotSupported
+            ));
         }
     }
 

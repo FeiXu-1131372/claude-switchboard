@@ -662,18 +662,52 @@ pub struct SwapReport {
     pub running: RunningClaudeCode,
 }
 
+/// `last_error` of an account that can't ask `/usage` (an inference-only
+/// token) and has nothing to show.
+pub(crate) const USAGE_NOT_SUPPORTED: &str = "usage_not_supported";
+/// Same account, but the status-line bridge is running and this is the login
+/// Claude Code is using, so a reading is expected after some activity.
+pub(crate) const AWAITING_STATUSLINE: &str = "awaiting_statusline";
+
+/// Which of the two markers an empty token account carries. Only the active
+/// login can be fed: the bridge matches an observation to a token account
+/// only while that account is the one Claude Code is signed in with.
+pub(crate) fn local_only_marker(bridge_feeds_usage: bool, is_active: bool) -> &'static str {
+    if bridge_feeds_usage && is_active {
+        AWAITING_STATUSLINE
+    } else {
+        USAGE_NOT_SUPPORTED
+    }
+}
+
+/// The error an account row carries. A token account that holds a reading
+/// (one the bridge adopted) is not "unsupported": it reports whatever its
+/// cache says. `marker` is only evaluated when the account has nothing.
+pub(crate) fn row_last_error(
+    supports_usage: bool,
+    cached: Option<&CachedUsage>,
+    marker: impl FnOnce() -> &'static str,
+) -> Option<String> {
+    let cached_error = || cached.and_then(|c| c.last_error.clone());
+    if supports_usage {
+        return cached_error();
+    }
+    match cached {
+        Some(c) if crate::poll_loop::has_usage_data(&c.snapshot) => cached_error(),
+        _ => Some(marker().to_string()),
+    }
+}
+
 pub(crate) fn entry_for(
     state: &AppState,
     acc: &ManagedAccount,
     active: Option<u32>,
 ) -> AccountListEntry {
-    let cache = state.cached_usage_by_slot.read();
-    let cached = cache.get(&acc.slot).cloned();
-    let last_error = if !acc.supports_usage() {
-        Some("usage_not_supported".to_string())
-    } else {
-        cached.as_ref().and_then(|c| c.last_error.clone())
-    };
+    let cached = state.cached_usage_by_slot.read().get(&acc.slot).cloned();
+    let is_active = Some(acc.slot) == active;
+    let last_error = row_last_error(acc.supports_usage(), cached.as_ref(), || {
+        local_only_marker(state.statusline_setup.feeds_usage(), is_active)
+    });
 
     // Prefer the live subscriptionType from the blob (which capture_live_into_slot
     // keeps current on every swap) over the snapshot stored at import time —
@@ -1241,6 +1275,76 @@ fn reconcile_sqlite_mirror(
 mod tests {
     use super::*;
 
+    fn cached(five_hour: Option<f64>, last_error: Option<&str>) -> CachedUsage {
+        use crate::app_state::SnapshotOrigin;
+        use crate::auth::AuthSource;
+        use crate::usage_api::types::{UsageSnapshot, Utilization};
+        CachedUsage {
+            snapshot: UsageSnapshot {
+                five_hour: five_hour.map(|u| Utilization { utilization: u, resets_at: None }),
+                seven_day: None,
+                seven_day_sonnet: None,
+                seven_day_opus: None,
+                extra_usage: None,
+                fetched_at: Utc::now(),
+                unknown: Default::default(),
+            },
+            account_id: "token:abc".into(),
+            account_email: "Catch".into(),
+            last_error: last_error.map(str::to_string),
+            burn_rate: None,
+            auth_source: AuthSource::OAuth,
+            origin: SnapshotOrigin::Http,
+            carried_fetched_at: None,
+        }
+    }
+
+    #[test]
+    fn an_empty_token_account_waits_only_while_it_is_the_active_login_and_the_bridge_runs() {
+        assert_eq!(local_only_marker(true, true), AWAITING_STATUSLINE);
+        // The bridge can't feed a token account that isn't signed in.
+        assert_eq!(local_only_marker(true, false), USAGE_NOT_SUPPORTED);
+        // No bridge: nothing will ever arrive.
+        assert_eq!(local_only_marker(false, true), USAGE_NOT_SUPPORTED);
+        assert_eq!(local_only_marker(false, false), USAGE_NOT_SUPPORTED);
+    }
+
+    #[test]
+    fn a_token_account_with_an_adopted_reading_is_not_reported_unsupported() {
+        // Before: every refresh of the account list stamped
+        // `usage_not_supported` over a reading the bridge had adopted, and
+        // the row swapped its meters for "unavailable".
+        let adopted = cached(Some(7.0), None);
+        assert_eq!(row_last_error(false, Some(&adopted), || USAGE_NOT_SUPPORTED), None);
+    }
+
+    #[test]
+    fn a_token_account_with_nothing_gets_the_marker_and_one_without_a_cache_too() {
+        let placeholder = cached(None, Some(USAGE_NOT_SUPPORTED));
+        assert_eq!(
+            row_last_error(false, Some(&placeholder), || AWAITING_STATUSLINE),
+            Some(AWAITING_STATUSLINE.to_string()),
+            "the marker is recomputed, not copied from the stale placeholder",
+        );
+        assert_eq!(
+            row_last_error(false, None, || USAGE_NOT_SUPPORTED),
+            Some(USAGE_NOT_SUPPORTED.to_string()),
+        );
+    }
+
+    #[test]
+    fn an_account_that_can_ask_usage_reports_its_own_error_and_never_looks_up_the_bridge() {
+        let failing = cached(Some(7.0), Some("rate_limited"));
+        let looked_up = std::cell::Cell::new(false);
+        let err = row_last_error(true, Some(&failing), || {
+            looked_up.set(true);
+            USAGE_NOT_SUPPORTED
+        });
+        assert_eq!(err.as_deref(), Some("rate_limited"));
+        assert!(!looked_up.get());
+        assert_eq!(row_last_error(true, None, || USAGE_NOT_SUPPORTED), None);
+    }
+
     #[test]
     fn compact_resize_keeps_top_edge_glued() {
         // Collapsing 380 → 208 must not move the top edge — a menu-bar
@@ -1578,4 +1682,101 @@ pub async fn list_resumable_sessions(
 
     *state.sessions_cache.write() = Some((newest, rows.clone()));
     Ok(rows)
+}
+
+// ---- Live usage from Claude Code (the statusline bridge) ----
+//
+// Each runs on a blocking thread: they spawn shells and rewrite a file the
+// user and Claude Code also write. Every error reaches the UI as text.
+
+async fn bridge_call<T: Send + 'static>(
+    state: &State<'_, Arc<AppState>>,
+    f: impl FnOnce(Arc<crate::statusline_setup::BridgeManager>) -> Result<T, crate::statusline_setup::BridgeError> + Send + 'static,
+) -> Result<T, String> {
+    let manager = state.statusline_setup.clone();
+    tauri::async_runtime::spawn_blocking(move || f(manager))
+        .await
+        .map_err(|e| format!("The status line task failed: {e}"))?
+        .map_err(|e| e.to_string())
+}
+
+#[command]
+#[specta::specta]
+pub async fn get_statusline_bridge_status(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<crate::statusline_setup::BridgeTargetStatus>, String> {
+    let adopted = *state.statusline_last_adopted.read();
+    bridge_call(&state, move |m| m.status(adopted)).await
+}
+
+#[command]
+#[specta::specta]
+pub async fn preflight_statusline_bridge(
+    config_home: Option<String>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<crate::statusline_setup::PreflightReport, String> {
+    bridge_call(&state, move |m| m.preflight(config_home.map(std::path::PathBuf::from))).await
+}
+
+#[command]
+#[specta::specta]
+pub async fn enable_statusline_bridge(
+    config_home: Option<String>,
+    accepted_shared_file: bool,
+    state: State<'_, Arc<AppState>>,
+) -> Result<crate::statusline_setup::BridgeTargetStatus, String> {
+    let status = bridge_call(&state, move |m| {
+        m.enable(config_home.map(std::path::PathBuf::from), accepted_shared_file)
+    })
+    .await?;
+    // Token accounts show "waiting for Claude Code" while the bridge runs.
+    state.force_refresh.notify_one();
+    Ok(status)
+}
+
+#[command]
+#[specta::specta]
+pub async fn disable_statusline_bridge(
+    target_id: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<crate::statusline_setup::DisableOutcomeDto, String> {
+    let outcome = bridge_call(&state, move |m| m.disable(&target_id)).await?;
+    state.force_refresh.notify_one();
+    Ok(outcome)
+}
+
+#[command]
+#[specta::specta]
+pub async fn rewrap_statusline_bridge(
+    target_id: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<crate::statusline_setup::BridgeTargetStatus, String> {
+    bridge_call(&state, move |m| m.rewrap(&target_id)).await
+}
+
+/// The Broken state's **Retry**: repair our own files and re-run the same
+/// check the app runs at startup, then report the fresh status. Never edits
+/// `settings.json`.
+#[command]
+#[specta::specta]
+pub async fn recheck_statusline_bridge(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<crate::statusline_setup::BridgeTargetStatus>, String> {
+    let adopted = *state.statusline_last_adopted.read();
+    bridge_call(&state, move |m| {
+        m.reconcile_on_startup()?;
+        m.status(adopted)
+    })
+    .await
+}
+
+#[command]
+#[specta::specta]
+pub async fn restore_original_statusline(
+    target_id: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<crate::statusline_setup::DisableOutcomeDto, String> {
+    let outcome = bridge_call(&state, move |m| m.restore_original(&target_id)).await?;
+    state.force_refresh.notify_one();
+    Ok(outcome)
 }
