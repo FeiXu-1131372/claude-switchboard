@@ -7,6 +7,9 @@ license = "MIT"
 edition = "2021"
 rust-version = "1.90"
 
+[workspace]
+members = [".", "statusline-bridge"]
+
 [lib]
 name = "claude_switchboard_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
@@ -58,6 +61,7 @@ tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
 tauri-plugin-positioner = { version = "2.0.0-beta.12", features = ["tray-icon"] }
 async-trait = "0.1.89"
 which = "8.0.5"
+statusline-bridge = { path = "statusline-bridge" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 
@@ -85,3 +89,10 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+
+# The statusline bridge binary is built with this profile instead of
+# `release`: `panic = "abort"` would defeat its `catch_unwind` guard, and
+# `panic` cannot be overridden per package.
+[profile.bridge]
+inherits = "release"
+panic = "unwind"

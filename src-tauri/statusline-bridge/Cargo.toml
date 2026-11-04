@@ -1,0 +1,42 @@
+[package]
+name = "statusline-bridge"
+version = "0.1.0"
+description = "Statusline bridge for Claude Switchboard: records Claude Code's rate_limits and runs the user's original status line unchanged"
+license = "MIT"
+edition = "2021"
+rust-version = "1.90"
+
+[lib]
+name = "statusline_bridge"
+
+[[bin]]
+name = "switchboard-statusline"
+path = "src/main.rs"
+
+[features]
+# Test-only: makes the observation step panic so the integration tests can
+# prove a panic never reaches stdout or the exit code.
+inject-panic = []
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+fs2 = "0.4"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+# Job object (kill the original's tree with us) and parent-process wait.
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tempfile = "3"
+filetime = "0.2"

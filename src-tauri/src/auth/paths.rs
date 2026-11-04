@@ -1,11 +1,11 @@
 //! Path resolution mirroring claude-code's own behavior.
 //!
-//! 1. If `$CLAUDE_CONFIG_DIR` is set → `$CLAUDE_CONFIG_DIR/.claude.json`
-//! 2. Else if `<config_home>/.config.json` exists → that (legacy fallback,
-//!    filename is `.config.json` not `.claude.json` — intentional)
-//! 3. Else `<homedir>/.claude.json`
+//! `<config_home> = $CLAUDE_CONFIG_DIR ?? <homedir>/.claude`.
 //!
-//! Where `<config_home> = $CLAUDE_CONFIG_DIR ?? <homedir>/.claude`.
+//! The global config is `<config_home>/.config.json` when that legacy file is
+//! non-empty (or writable while the new path is missing), else
+//! `($CLAUDE_CONFIG_DIR ?? <homedir>)/.claude.json`. The rule lives in
+//! `statusline_bridge::config_paths`, shared with the bridge binary.
 
 use std::path::PathBuf;
 
@@ -16,21 +16,16 @@ pub fn claude_config_home() -> Option<PathBuf> {
     home_dir().map(|h| h.join(".claude"))
 }
 
+/// The global config holding `oauthAccount`. Delegates to the statusline
+/// bridge crate so the app and the bridge always pick the same file, and so
+/// both follow Claude Code's own `h_()`: a legacy `<config_home>/.config.json`
+/// wins only when non-empty (or writable while the new path is missing),
+/// whether or not `CLAUDE_CONFIG_DIR` is set.
 pub fn claude_global_config() -> Option<PathBuf> {
-    // Step 1: env var wins outright.
-    if let Some(env) = std::env::var_os("CLAUDE_CONFIG_DIR") {
-        return Some(PathBuf::from(env).join(".claude.json"));
-    }
-    // Step 2: legacy `<config_home>/.config.json` if present.
-    if let Some(home) = home_dir() {
-        let legacy = home.join(".claude").join(".config.json");
-        if legacy.exists() {
-            return Some(legacy);
-        }
-        // Step 3: standard location.
-        return Some(home.join(".claude.json"));
-    }
-    None
+    use statusline_bridge::config_paths::{config_home, global_config_path, EnvView};
+    let env = EnvView::from_process()?;
+    let home = config_home(&env, None);
+    Some(global_config_path(&env, &home))
 }
 
 #[cfg(unix)]
@@ -58,6 +53,10 @@ mod tests {
         unsafe { std::env::set_var("CLAUDE_CONFIG_DIR", dir.path()) };
         let p = claude_global_config().unwrap();
         assert_eq!(p, dir.path().join(".claude.json"));
+        // A non-empty legacy file under the config home wins even with the
+        // variable set (the old rule only looked at `~/.claude` without it).
+        std::fs::write(dir.path().join(".config.json"), "{\"a\":1}").unwrap();
+        assert_eq!(claude_global_config().unwrap(), dir.path().join(".config.json"));
         match prev {
             Some(v) => unsafe { std::env::set_var("CLAUDE_CONFIG_DIR", v) },
             None => unsafe { std::env::remove_var("CLAUDE_CONFIG_DIR") },

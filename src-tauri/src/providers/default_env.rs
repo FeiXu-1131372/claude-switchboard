@@ -172,12 +172,22 @@ fn env_object(map: &Map<String, Value>) -> Map<String, Value> {
         .unwrap_or_default()
 }
 
+/// The process-wide lock every `settings.json` writer takes (shared with the
+/// statusline bridge's editor, which splices the same file).
+fn settings_write_lock() -> std::sync::MutexGuard<'static, ()> {
+    statusline_bridge::settings_edit::SETTINGS_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
 /// Merge `env` into `settings.json`. Returns the undo manifest: every key
 /// written, mapped to the value it held beforehand (`None` = absent).
 pub fn apply(
     path: &Path,
     env: &BTreeMap<String, String>,
 ) -> Result<BTreeMap<String, Option<String>>> {
+    // The statusline bridge edits this same file; one writer at a time.
+    let _write = settings_write_lock();
     let before = stamp(path)?;
     let mut settings = read_settings(path)?;
     let mut env_map = env_object(&settings);
@@ -209,6 +219,7 @@ pub fn clear(
     if manifest.is_empty() {
         return Ok(Vec::new());
     }
+    let _write = settings_write_lock();
     let before = stamp(path)?;
     let mut settings = read_settings(path)?;
     let mut env_map = env_object(&settings);
@@ -571,6 +582,29 @@ mod tests {
     }
 
     /// Spec §4 defense #7 — a concurrent writer must not be clobbered.
+    #[test]
+    fn apply_waits_for_the_shared_settings_write_lock() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("settings.json");
+        std::fs::write(&p, "{}").unwrap();
+        let held = statusline_bridge::settings_edit::SETTINGS_WRITE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (flag, path) = (done.clone(), p.clone());
+        let writer = std::thread::spawn(move || {
+            let mut env = BTreeMap::new();
+            env.insert("ANTHROPIC_BASE_URL".to_string(), "https://x.example".to_string());
+            apply(&path, &env).unwrap();
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(!done.load(std::sync::atomic::Ordering::SeqCst), "must not write while the lock is held");
+        drop(held);
+        writer.join().unwrap();
+        assert!(done.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
     #[test]
     fn write_aborts_when_the_file_changed_under_us() {
         let d = tempdir().unwrap();
