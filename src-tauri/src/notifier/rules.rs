@@ -99,6 +99,11 @@ pub fn evaluate(
         let (Some(util), resets_at) = utilization_of(bucket, snapshot) else {
             continue;
         };
+        // A snapshot older than its window's reset (adopted from a local
+        // source mid-ban) describes a window that is already over.
+        if resets_at.is_some_and(|reset| reset <= now) {
+            continue;
+        }
         for &threshold in thresholds {
             if util < threshold as f64 {
                 continue;
@@ -205,15 +210,27 @@ mod tests {
             fetched_at: later_reset,
             unknown: Default::default(),
         };
+        // Inside the later window (it started at later_reset - 5h, after the
+        // first fire) and before that window resets.
         let fired = evaluate(
             &db,
             "a",
             &fresh_snap,
             &[75],
-            later_reset + Duration::minutes(1),
+            later_reset - Duration::minutes(1),
         )
         .unwrap();
         assert_eq!(fired.len(), 1);
+    }
+
+    #[test]
+    fn skips_window_that_has_already_reset() {
+        // A snapshot adopted from a local source mid-ban can predate its own
+        // window's reset; warning about that window would be about the past.
+        let (_d, db) = fresh();
+        let s = snap_five_hour(92.0, -1);
+        assert!(evaluate(&db, "a", &s, &[90], Utc::now()).unwrap().is_empty());
+        assert_eq!(db.notification_last_fired("a", Bucket::FiveHour.label(), 90).unwrap(), None);
     }
 
     #[test]

@@ -146,7 +146,7 @@ pub struct AppState {
     /// When the live Claude Code account last changed — a swap, an external
     /// `cswap`, or a Claude Code / cowork instance started on another machine.
     ///
-    /// Guards the shared-snapshot fast path: `statusline-usage.json` carries no
+    /// Guards the shared-file local source: `statusline-usage.json` carries no
     /// account identity, so a snapshot written before this instant describes
     /// the previous account and must not be adopted for the new one.
     pub active_since: RwLock<Option<DateTime<Utc>>>,
@@ -171,6 +171,39 @@ pub struct AppState {
 #[derive(Debug, Clone, Copy)]
 pub struct BackoffState {
     pub until: Instant,
+    pub reason: BackoffReason,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackoffReason {
+    /// 429 with a positive `Retry-After`. The server named when it will take
+    /// the next call; calling earlier can restart the ban, so user actions
+    /// (manual refresh, swap) must not lift it.
+    RateLimited,
+    /// 401/403 or a failed token refresh. Lifted by any user action, since
+    /// the user may have just fixed the credentials.
+    AuthFailure,
+}
+
+impl AppState {
+    /// Lift `slot`'s auth-failure backoff so a user action retries now,
+    /// keeping any 429 ban (see [`BackoffReason::RateLimited`]).
+    pub fn lift_auth_backoff(&self, slot: u32) {
+        let mut backoff = self.backoff_by_slot.write();
+        if backoff
+            .get(&slot)
+            .is_some_and(|b| b.reason == BackoffReason::AuthFailure)
+        {
+            backoff.remove(&slot);
+        }
+    }
+
+    /// [`Self::lift_auth_backoff`] for every slot.
+    pub fn lift_all_auth_backoffs(&self) {
+        self.backoff_by_slot
+            .write()
+            .retain(|_, b| b.reason == BackoffReason::RateLimited);
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

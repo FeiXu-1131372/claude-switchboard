@@ -393,7 +393,7 @@ pub async fn force_refresh(
     match scope {
         RefreshScope::Active => {
             if let Some(active) = *state.active_slot.read() {
-                state.backoff_by_slot.write().remove(&active);
+                state.lift_auth_backoff(active);
                 state.schedule_by_slot.write().insert(
                     active,
                     ScheduleState { next_poll_at: now },
@@ -407,7 +407,7 @@ pub async fn force_refresh(
                 state.settings.read().polling_interval_secs.max(60),
             );
             let slot_ids: Vec<u32> = accounts.iter().map(|a| a.slot).collect();
-            state.backoff_by_slot.write().clear();
+            state.lift_all_auth_backoffs();
             // Manual refresh is a rare user-initiated burst: use the minimum
             // stagger so every slot refreshes within seconds rather than
             // riding the steady-state 30s stagger, which left later slots
@@ -867,14 +867,13 @@ pub async fn swap_to_account(
     // polling interval.
     *state.active_since.write() = Some(Utc::now());
 
-    // Drop per-slot backoff state. The previous backoff was earned by a
-    // different token (the prior active slot's live CC blob, or a stale
-    // OAuth refresh token) — a swap rotates which token authenticates each
-    // slot's usage fetch, so prior 429s no longer apply. Without this, an
-    // unlucky run of throttling can leave every slot waiting out a 30-min
-    // window with no successful fetch, which strands the popover on the
-    // empty LoadingShell because state.snapshot() has nothing to return.
-    state.backoff_by_slot.write().clear();
+    // Drop auth-failure backoff: the swap may have fixed the token that
+    // earned it. Without this, an unlucky run of failures can leave every
+    // slot waiting out a 30-min window with no successful fetch. 429 bans
+    // stay — a swap writes the same account's tokens into the live slot, so
+    // the ban still applies, and calling into it can restart it. Banned
+    // slots keep showing hydrated or local-source data meanwhile.
+    state.lift_all_auth_backoffs();
 
     // Re-seed per-slot schedules so the new active slot polls first
     // (next_poll_at = now), with previously-active and other inactive
@@ -932,7 +931,7 @@ pub async fn refresh_account(
     slot: u32,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
-    state.backoff_by_slot.write().remove(&slot);
+    state.lift_auth_backoff(slot);
     let active = *state.active_slot.read();
     if let Some(account) = state.accounts.get(slot).map_err(err_to_string)? {
         if !account.can_refresh() {

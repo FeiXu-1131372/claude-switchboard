@@ -11,11 +11,13 @@ use chrono::{DateTime, Utc};
 pub use errors::WarmupOutcome;
 
 /// Whether the slot's 5h bucket is currently active. Read from the most-recent
-/// usage snapshot. Spec §6 active-window precondition.
+/// usage snapshot. Spec §6 active-window precondition. A `resets_at` in the
+/// past means the snapshot predates the window's reset (e.g. polling sat out
+/// a 429 ban), so the window is no longer active.
 pub fn is_five_hour_window_active(
     five_hour_resets_at: Option<DateTime<Utc>>,
 ) -> bool {
-    five_hour_resets_at.is_some()
+    five_hour_resets_at.is_some_and(|resets_at| resets_at > Utc::now())
 }
 
 /// Per-account warm-up entry point. The caller (`scheduler::tick_for_account`)
@@ -59,6 +61,12 @@ mod tests {
         let future = now + chrono::Duration::hours(2);
         assert!(is_five_hour_window_active(Some(future)));
         assert!(!is_five_hour_window_active(None));
+    }
+
+    #[test]
+    fn active_window_check_returns_false_once_resets_at_has_passed() {
+        let past = Utc::now() - chrono::Duration::minutes(5);
+        assert!(!is_five_hour_window_active(Some(past)));
     }
 
     #[tokio::test]

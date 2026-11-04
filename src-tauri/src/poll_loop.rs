@@ -1,4 +1,4 @@
-use crate::app_state::{AppState, BackoffState, BurnRateProjection, CachedUsage};
+use crate::app_state::{AppState, BackoffReason, BackoffState, BurnRateProjection, CachedUsage};
 use crate::auth::AuthSource;
 use crate::auth::accounts::ManagedAccount;
 use crate::notifier;
@@ -26,6 +26,32 @@ pub const DEFAULT_STAGGER_GAP_SECS: u64 = 30;
 /// 1-hour 429 bans from Anthropic) while waiting for the user to re-authenticate.
 /// Cleared immediately on OAuth completion, manual refresh, or account swap.
 pub const AUTH_FAILURE_BACKOFF: Duration = Duration::from_secs(30 * 60);
+
+/// `last_error` shown while a slot is rate-limited.
+const RATE_LIMITED_ERROR: &str = "rate-limited (429)";
+
+/// Added to a server-supplied `Retry-After`. A retry landing at the very end
+/// of a 1-hour ban was observed to start a fresh 1-hour ban (2026-10-27).
+const RETRY_AFTER_MARGIN: Duration = Duration::from_secs(60);
+
+/// Upper bound on a 429 backoff, so a misconfigured server can't lock a slot
+/// out indefinitely. The real bans observed are 1 hour.
+const MAX_RATE_LIMIT_BACKOFF: Duration = Duration::from_secs(2 * 60 * 60);
+
+/// Oldest local snapshot adopted while a slot sits out a 429 ban. Matches the
+/// upstream CLI's own cut-off for its persisted `cachedUsageUtilization`.
+const MAX_LOCAL_AGE_DURING_BAN: Duration = Duration::from_secs(60 * 60);
+
+/// Where an adopted usage snapshot came from. Every origin but `Http` is a
+/// local source that costs no `/usage` call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SnapshotOrigin {
+    Http,
+    /// The upstream CLI's persisted `/usage` response in its global config.
+    CliCache,
+    /// `statusline-usage.json` written by an external poller.
+    SharedFile,
+}
 
 /// Pull the polling interval + base stagger gap from settings as Durations,
 /// clamping each to a safe lower bound that mirrors the validation in
@@ -111,12 +137,25 @@ pub fn pick_due_slot(state: &crate::app_state::AppState, now: Instant) -> Option
 /// sleep target when nothing is currently due. Falls back to 60 s out
 /// when the schedule is empty (e.g., before any account is added).
 pub fn next_wake_time(state: &crate::app_state::AppState, now: Instant) -> Instant {
-    let schedule = state.schedule_by_slot.read();
-    schedule
-        .values()
-        .map(|s| s.next_poll_at)
-        .min()
+    earliest_deadline(&state.schedule_by_slot.read(), &state.backoff_by_slot.read())
         .unwrap_or(now + Duration::from_secs(60))
+}
+
+/// The earliest moment any slot can actually be fetched: its poll deadline,
+/// or its backoff end when that is later. Without the backoff term, a slot
+/// whose deadline passed mid-ban stays "due" but unpickable, and the loop
+/// spins with zero sleep until the ban ends.
+fn earliest_deadline(
+    schedule: &HashMap<u32, crate::app_state::ScheduleState>,
+    backoff: &HashMap<u32, BackoffState>,
+) -> Option<Instant> {
+    schedule
+        .iter()
+        .map(|(slot, sched)| match backoff.get(slot) {
+            Some(b) if b.until > sched.next_poll_at => b.until,
+            _ => sched.next_poll_at,
+        })
+        .min()
 }
 
 pub fn spawn(handle: AppHandle, state: Arc<AppState>) {
@@ -139,16 +178,20 @@ pub fn spawn(handle: AppHandle, state: Arc<AppState>) {
     });
 }
 
+/// Fetch one slot's usage, from a local source when one is fresh enough and
+/// over HTTP otherwise. Returns the local snapshot's `fetched_at` when a local
+/// source answered, so the caller can schedule the next poll for when that
+/// data ages out rather than a full interval from now.
 async fn fetch_and_apply_one(
     handle: &AppHandle,
     state: &AppState,
     burn_buffers: &mut HashMap<u32, VecDeque<(DateTime<Utc>, f64)>>,
     slot: u32,
     accounts: &[ManagedAccount],
-) {
+) -> Option<DateTime<Utc>> {
     let acc = match accounts.iter().find(|a| a.slot == slot).cloned() {
         Some(a) => a,
-        None => return, // slot disappeared between poll_all's accounts read and now
+        None => return None, // slot disappeared between poll_all's accounts read and now
     };
     // Re-read active_slot here; in the rare race where swap_to_account
     // fires between poll_all's reconciliation and this point, we accept
@@ -164,24 +207,21 @@ async fn fetch_and_apply_one(
             tray::set_level(handle, None, None, None, None, false);
         }
         let _ = handle.emit("usage_updated", json!({ "slot": slot, "cached": cached }));
-        return;
+        return None;
     }
 
-    // Shared-snapshot fast path (active slot only): when an external poller
-    // — the user's statusline daemon — already has fresh data for the live
-    // account, adopt it instead of spending the account's scarce /usage rate
-    // budget on a duplicate call. Valid only for the active slot because the
-    // daemon polls the live Claude Code account, which is what active_slot
-    // tracks; inactive slots keep their normal (uncontended) fetch path.
-    // Freshness window = the polling interval, so a healthy daemon always
-    // wins and a dead one hands control back to the HTTP path within a cycle.
-    if Some(slot) == active_slot {
-        let interval = Duration::from_secs(state.settings.read().polling_interval_secs.max(60));
-        let active_since = *state.active_since.read();
-        if let Some(snap) = read_shared_snapshot(&shared_usage_file_path(), interval, active_since)
-        {
-            tracing::debug!(target: "switchboard.poll", "slot {slot}: adopted shared snapshot");
-            return self::apply_fetch_outcome(
+    // Local-source waterfall: when another local consumer already holds data
+    // for this account younger than one polling interval, use it instead of
+    // spending the account's /usage rate budget on a duplicate call. If that
+    // data is no newer than what the slot already shows, the slot is fresh
+    // enough as it is — skip the call without re-applying. A dead source
+    // ages out within a cycle and hands control back to the HTTP path.
+    let interval = Duration::from_secs(state.settings.read().polling_interval_secs.max(60));
+    if let Some((snap, origin)) = local_snapshot(state, &acc, active_slot, interval) {
+        let fetched_at = snap.fetched_at;
+        if is_newer_than_shown(state, slot, fetched_at) {
+            tracing::debug!(target: "switchboard.poll", "slot {slot}: adopted {origin:?} snapshot");
+            apply_fetch_outcome(
                 handle,
                 state,
                 burn_buffers,
@@ -189,9 +229,11 @@ async fn fetch_and_apply_one(
                 &acc,
                 active_slot,
                 FetchOutcome::Ok(snap),
+                origin,
             )
             .await;
         }
+        return Some(fetched_at);
     }
 
     let token_result = state
@@ -209,6 +251,7 @@ async fn fetch_and_apply_one(
                 slot,
                 BackoffState {
                     until: Instant::now() + AUTH_FAILURE_BACKOFF,
+                    reason: BackoffReason::AuthFailure,
                 },
             );
             let _ = handle.emit(
@@ -232,16 +275,28 @@ async fn fetch_and_apply_one(
                 "usage_updated",
                 json!({ "slot": slot, "cached": entry }),
             );
-            return;
+            return None;
         }
     };
-    let Some(outcome) = outcome else { return };
-    apply_fetch_outcome(handle, state, burn_buffers, slot, &acc, active_slot, outcome).await;
+    let outcome = outcome?;
+    apply_fetch_outcome(
+        handle,
+        state,
+        burn_buffers,
+        slot,
+        &acc,
+        active_slot,
+        outcome,
+        SnapshotOrigin::Http,
+    )
+    .await;
+    None
 }
 
 /// Apply a fetch outcome for one slot: update the per-slot cache, emit
 /// `usage_updated`, and on success also persist + update tray/notifier.
-/// Shared by the HTTP path and the shared-snapshot fast path.
+/// Shared by the HTTP path and the local-source waterfall; `origin` says
+/// which one produced an `Ok` snapshot.
 #[allow(clippy::too_many_arguments)]
 async fn apply_fetch_outcome(
     handle: &AppHandle,
@@ -251,16 +306,31 @@ async fn apply_fetch_outcome(
     acc: &ManagedAccount,
     active_slot: Option<u32>,
     outcome: FetchOutcome,
+    origin: SnapshotOrigin,
 ) {
     match outcome {
         FetchOutcome::Ok(snapshot) => {
+            // A local snapshot adopted mid-ban leaves the ban in force (it
+            // only bounds this app's own calls). Keep the 429 label while the
+            // data is older than a poll interval, so the row reads "showing
+            // last good data from 20m ago" rather than passing it off as live.
+            let banned = origin != SnapshotOrigin::Http
+                && state
+                    .backoff_by_slot
+                    .read()
+                    .get(&slot)
+                    .is_some_and(|b| b.reason == BackoffReason::RateLimited);
+            let interval = Duration::from_secs(state.settings.read().polling_interval_secs.max(60));
+            let last_error = (banned
+                && !is_within_age(snapshot.fetched_at, interval, Utc::now()))
+            .then(|| RATE_LIMITED_ERROR.to_string());
             let buf = burn_buffers.entry(slot).or_default();
-            let burn_rate = update_burn_rate(buf, &snapshot, Utc::now());
+            let burn_rate = update_burn_rate(buf, &snapshot, snapshot.fetched_at);
             let cached = CachedUsage {
                 snapshot: snapshot.clone(),
                 account_id: acc.account_uuid.clone(),
                 account_email: acc.email.clone(),
-                last_error: None,
+                last_error,
                 burn_rate,
                 auth_source: if Some(slot) == active_slot {
                     AuthSource::ClaudeCode
@@ -269,7 +339,9 @@ async fn apply_fetch_outcome(
                 },
             };
             state.cached_usage_by_slot.write().insert(slot, cached.clone());
-            state.backoff_by_slot.write().remove(&slot);
+            if origin == SnapshotOrigin::Http {
+                state.backoff_by_slot.write().remove(&slot);
+            }
             // Persist the raw snapshot so a cold start can rehydrate
             // last-known-good data (see hydrated_caches). Best-effort: a
             // storage hiccup must never interrupt polling. Note the
@@ -278,7 +350,7 @@ async fn apply_fetch_outcome(
             match serde_json::to_string(&snapshot) {
                 Ok(payload) => {
                     if let Err(e) =
-                        state.db.insert_snapshot(&acc.account_uuid, Utc::now(), &payload)
+                        state.db.insert_snapshot(&acc.account_uuid, snapshot.fetched_at, &payload)
                     {
                         tracing::warn!("persist snapshot for slot {slot} failed: {e}");
                     }
@@ -330,6 +402,7 @@ async fn apply_fetch_outcome(
                 slot,
                 BackoffState {
                     until: Instant::now() + AUTH_FAILURE_BACKOFF,
+                    reason: BackoffReason::AuthFailure,
                 },
             );
             let _ = handle.emit(
@@ -359,7 +432,10 @@ async fn apply_fetch_outcome(
                     state
                         .backoff_by_slot
                         .write()
-                        .insert(slot, BackoffState { until: Instant::now() + delay });
+                        .insert(slot, BackoffState {
+                            until: Instant::now() + delay,
+                            reason: BackoffReason::RateLimited,
+                        });
                 }
                 None => {
                     // Retry-After: 0 or absent — retry at the next scheduled
@@ -373,8 +449,8 @@ async fn apply_fetch_outcome(
                 .cached_usage_by_slot
                 .write()
                 .remove(&slot)
-                .unwrap_or_else(|| placeholder_cached(acc, "rate-limited (429)"));
-            entry.last_error = Some("rate-limited (429)".into());
+                .unwrap_or_else(|| placeholder_cached(acc, RATE_LIMITED_ERROR));
+            entry.last_error = Some(RATE_LIMITED_ERROR.into());
             state.cached_usage_by_slot.write().insert(slot, entry.clone());
             let _ = handle.emit(
                 "usage_updated",
@@ -501,25 +577,113 @@ async fn poll_all(
         }
     }
 
-    // 4. Pick at most one due slot, fetch it, advance its deadline.
+    // 4. A 429 ban only bounds this app's own /usage calls: keep banned
+    //    slots' numbers current from local sources meanwhile.
+    adopt_local_during_bans(handle, state, burn_buffers, &accounts, active_slot).await;
+
+    // 5. Pick at most one due slot, fetch it, advance its deadline.
     let now = Instant::now();
     if let Some(slot) = pick_due_slot(state, now) {
-        fetch_and_apply_one(handle, state, burn_buffers, slot, &accounts).await;
+        let local_fetched_at = fetch_and_apply_one(handle, state, burn_buffers, slot, &accounts).await;
         let interval = Duration::from_secs(
             state.settings.read().polling_interval_secs.max(60),
         );
+        let wait = next_poll_wait(interval, local_fetched_at, Utc::now());
         if let Some(entry) = state.schedule_by_slot.write().get_mut(&slot) {
-            entry.next_poll_at = Instant::now() + interval;
+            entry.next_poll_at = Instant::now() + wait;
         }
     }
 
     Ok(())
 }
 
-fn clamp_backoff(d: Duration) -> Duration {
-    let min = Duration::from_secs(60);
-    let max = Duration::from_secs(10 * 60);
-    d.clamp(min, max)
+/// How long until a slot's next poll. A local snapshot already spent part of
+/// the interval, so poll again when it ages out — otherwise a source that
+/// goes quiet lets the shown data reach nearly twice the interval.
+fn next_poll_wait(
+    interval: Duration,
+    local_fetched_at: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> Duration {
+    // A future-skewed timestamp fails `to_std` and gets the full interval.
+    local_fetched_at
+        .and_then(|fetched_at| (now - fetched_at).to_std().ok())
+        .map_or(interval, |age| interval.saturating_sub(age))
+}
+
+/// Adopt local snapshots newer than what each 429-banned slot shows. Runs
+/// every loop tick (at most 60 s apart), so a ban no longer freezes the
+/// numbers for its full hour whenever another local consumer is active.
+/// When nothing newer turns up, restores the 429 label once the shown data
+/// ages past a poll interval (see [`relabel_aged_during_ban`]).
+async fn adopt_local_during_bans(
+    handle: &AppHandle,
+    state: &AppState,
+    burn_buffers: &mut HashMap<u32, VecDeque<(DateTime<Utc>, f64)>>,
+    accounts: &[ManagedAccount],
+    active_slot: Option<u32>,
+) {
+    let now = Instant::now();
+    let banned: Vec<u32> = state
+        .backoff_by_slot
+        .read()
+        .iter()
+        .filter(|(_, b)| b.reason == BackoffReason::RateLimited && now < b.until)
+        .map(|(&slot, _)| slot)
+        .collect();
+    let interval = Duration::from_secs(state.settings.read().polling_interval_secs.max(60));
+    for slot in banned {
+        let Some(acc) = accounts.iter().find(|a| a.slot == slot) else { continue };
+        if !acc.supports_usage() {
+            continue;
+        }
+        let adoptable = local_snapshot(state, acc, active_slot, MAX_LOCAL_AGE_DURING_BAN)
+            .filter(|(snap, _)| is_newer_than_shown(state, slot, snap.fetched_at));
+        if let Some((snap, origin)) = adoptable {
+            tracing::info!(target: "switchboard.poll", "slot {slot}: rate-limited; adopted {origin:?} snapshot");
+            apply_fetch_outcome(
+                handle,
+                state,
+                burn_buffers,
+                slot,
+                acc,
+                active_slot,
+                FetchOutcome::Ok(snap),
+                origin,
+            )
+            .await;
+            continue;
+        }
+        let relabeled = state
+            .cached_usage_by_slot
+            .write()
+            .get_mut(&slot)
+            .and_then(|cached| {
+                relabel_aged_during_ban(cached, interval, Utc::now()).then(|| cached.clone())
+            });
+        if let Some(cached) = relabeled {
+            if Some(slot) == active_slot {
+                *state.cached_usage.write() = Some(cached.clone());
+            }
+            let _ = handle.emit("usage_updated", json!({ "slot": slot, "cached": cached }));
+        }
+    }
+}
+
+/// A local snapshot adopted mid-ban while under a poll interval old shows as
+/// live (no `last_error`). Once it ages past the interval with the ban still
+/// in force, label it rate-limited again, so the row reads "showing last good
+/// data from 40m ago" instead of passing it off as current. Returns whether
+/// the entry changed; never overwrites another error.
+fn relabel_aged_during_ban(cached: &mut CachedUsage, interval: Duration, now: DateTime<Utc>) -> bool {
+    if cached.last_error.is_some()
+        || !has_usage_data(&cached.snapshot)
+        || is_within_age(cached.snapshot.fetched_at, interval, now)
+    {
+        return false;
+    }
+    cached.last_error = Some(RATE_LIMITED_ERROR.to_string());
+    true
 }
 
 /// Decide the backoff for a 429 response, or `None` for "no extra backoff —
@@ -534,12 +698,15 @@ fn clamp_backoff(d: Duration) -> Duration {
 /// 2→4→8→10 min, which stretched each transient 429 into a multi-minute
 /// "usage unavailable" window for no benefit.
 ///
-/// Explicit positive `Retry-After` values are honored, clamped into
-/// [60s, 10min] so a misconfigured server can't lock us out indefinitely
-/// or sub-minute-poll us.
+/// A positive `Retry-After` is a ban — typically 3600s, counting down on a
+/// fixed window — and is honored in full plus [`RETRY_AFTER_MARGIN`], capped
+/// at [`MAX_RATE_LIMIT_BACKOFF`]. An earlier 10-minute cap retried into the
+/// ban five times per hour, and a retry at its edge restarted it.
 fn backoff_for_429(retry_after: Option<Duration>) -> Option<Duration> {
     match retry_after {
-        Some(d) if d > Duration::ZERO => Some(clamp_backoff(d)),
+        Some(d) if d > Duration::ZERO => {
+            Some(d.saturating_add(RETRY_AFTER_MARGIN).min(MAX_RATE_LIMIT_BACKOFF))
+        }
         _ => None,
     }
 }
@@ -566,10 +733,10 @@ fn placeholder_cached(
     }
 }
 
-/// Location of the shared usage snapshot written by an external poller —
-/// the user's statusline daemon (`statusline-daemon.sh`), which already
-/// polls `/api/oauth/usage` for the live Claude Code account on a 60s
-/// cadence. `SWITCHBOARD_SHARED_USAGE_FILE` overrides for testing.
+/// Location of the shared usage snapshot written by an external poller, such
+/// as a statusline daemon that polls `/api/oauth/usage` for the live Claude
+/// Code account. Absent unless the user set one up.
+/// `SWITCHBOARD_SHARED_USAGE_FILE` overrides for testing.
 fn shared_usage_file_path() -> std::path::PathBuf {
     if let Some(p) = std::env::var_os("SWITCHBOARD_SHARED_USAGE_FILE") {
         return std::path::PathBuf::from(p);
@@ -586,10 +753,8 @@ fn shared_usage_file_path() -> std::path::PathBuf {
 /// so a file without one can't be freshness-checked and is ignored).
 ///
 /// Why this exists: the /usage endpoint's rate budget is per-account and is
-/// shared by every consumer — Claude Code sessions, the statusline daemon,
-/// and this app. On a busy account the budget is saturated, so the app's own
-/// fetches 429 constantly. Adopting the daemon's fresh snapshot removes this
-/// app as a competitor for the active account's budget entirely.
+/// shared by every consumer, so a poller already fetching for the live
+/// account makes this app's own call for it pure overhead.
 pub fn read_shared_snapshot(
     path: &std::path::Path,
     max_age: Duration,
@@ -600,12 +765,7 @@ pub fn read_shared_snapshot(
     let obj = value.as_object_mut()?;
     let fetched_at = obj.remove("fetched_at")?.as_i64()?;
     let fetched_at = DateTime::from_timestamp(fetched_at, 0)?;
-    let now = Utc::now();
-    // Reject clock-skewed future timestamps (30s grace) and stale data.
-    if fetched_at > now + ChronoDuration::seconds(30) {
-        return None;
-    }
-    if now - fetched_at > ChronoDuration::from_std(max_age).ok()? {
+    if !is_within_age(fetched_at, max_age, Utc::now()) {
         return None;
     }
     // The file carries NO account identity — it describes whichever account
@@ -627,6 +787,94 @@ pub fn read_shared_snapshot(
     let mut snap: UsageSnapshot = serde_json::from_value(value).ok()?;
     snap.fetched_at = fetched_at;
     Some(snap)
+}
+
+/// Adopt the upstream CLI's persisted `/usage` response for `account_uuid`
+/// when younger than `max_age`. CLI 2.1.311+ keeps one in its global config
+/// as `cachedUsageUtilization: {fetchedAtMs, accountUuid?, utilization}`,
+/// where `utilization` is the raw `/usage` body. It writes one only after
+/// its own `/usage` call, at most once a minute, and only for the account it
+/// is logged in as.
+///
+/// Unlike [`read_shared_snapshot`] this source names its account, so it is
+/// valid for any slot — after a swap, a cache left behind by the previous
+/// account still lands on that account's own row. An entry without an
+/// `accountUuid` is ignored: it can't be attributed.
+pub fn read_cli_usage_cache(
+    path: &std::path::Path,
+    account_uuid: &str,
+    max_age: Duration,
+) -> Option<UsageSnapshot> {
+    if account_uuid.is_empty() {
+        return None;
+    }
+    let raw = std::fs::read_to_string(path).ok()?;
+    let config: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let cache = config.get("cachedUsageUtilization")?;
+    if cache.get("accountUuid")?.as_str()? != account_uuid {
+        return None;
+    }
+    let fetched_at_ms = cache.get("fetchedAtMs")?;
+    let fetched_at_ms = fetched_at_ms
+        .as_i64()
+        .or_else(|| fetched_at_ms.as_f64().map(|ms| ms as i64))?;
+    let fetched_at = DateTime::from_timestamp_millis(fetched_at_ms)?;
+    if !is_within_age(fetched_at, max_age, Utc::now()) {
+        return None;
+    }
+    let mut snap: UsageSnapshot = serde_json::from_value(cache.get("utilization")?.clone()).ok()?;
+    snap.fetched_at = fetched_at;
+    Some(snap)
+}
+
+/// Whether `fetched_at` is at most `max_age` old, rejecting clock-skewed
+/// future timestamps beyond a 30 s grace.
+fn is_within_age(fetched_at: DateTime<Utc>, max_age: Duration, now: DateTime<Utc>) -> bool {
+    let Ok(max_age) = ChronoDuration::from_std(max_age) else { return false };
+    fetched_at <= now + ChronoDuration::seconds(30) && now - fetched_at <= max_age
+}
+
+/// The freshest snapshot for `acc` that a local source holds within
+/// `max_age`, or `None` when no source has one.
+fn local_snapshot(
+    state: &AppState,
+    acc: &ManagedAccount,
+    active_slot: Option<u32>,
+    max_age: Duration,
+) -> Option<(UsageSnapshot, SnapshotOrigin)> {
+    let cli_cache = crate::auth::paths::claude_global_config()
+        .and_then(|path| read_cli_usage_cache(&path, &acc.account_uuid, max_age))
+        .map(|snap| (snap, SnapshotOrigin::CliCache));
+    // The shared file carries no account identity; it describes the live
+    // account, so only the active slot may adopt it.
+    let shared_file = (Some(acc.slot) == active_slot)
+        .then(|| {
+            read_shared_snapshot(&shared_usage_file_path(), max_age, *state.active_since.read())
+        })
+        .flatten()
+        .map(|snap| (snap, SnapshotOrigin::SharedFile));
+    [cli_cache, shared_file]
+        .into_iter()
+        .flatten()
+        .max_by_key(|(snap, _)| snap.fetched_at)
+}
+
+/// Whether a snapshot fetched at `fetched_at` is newer than the data `slot`
+/// currently shows. A placeholder entry (an error with no buckets) shows no
+/// data, so anything beats it.
+fn is_newer_than_shown(state: &AppState, slot: u32, fetched_at: DateTime<Utc>) -> bool {
+    match state.cached_usage_by_slot.read().get(&slot) {
+        Some(cached) if has_usage_data(&cached.snapshot) => fetched_at > cached.snapshot.fetched_at,
+        _ => true,
+    }
+}
+
+fn has_usage_data(snapshot: &UsageSnapshot) -> bool {
+    snapshot.five_hour.is_some()
+        || snapshot.seven_day.is_some()
+        || snapshot.seven_day_sonnet.is_some()
+        || snapshot.seven_day_opus.is_some()
+        || snapshot.extra_usage.is_some()
 }
 
 /// Build per-slot cache entries from the most recent persisted API snapshot
@@ -807,11 +1055,142 @@ mod tests {
     }
 
     #[test]
-    fn backoff_for_429_positive_retry_after_is_honored_and_clamped() {
-        // Explicit server guidance wins, clamped into [60s, 10min].
-        assert_eq!(backoff_for_429(Some(d(120))), Some(d(120)));
-        assert_eq!(backoff_for_429(Some(d(5))), Some(d(60)));
-        assert_eq!(backoff_for_429(Some(d(3600))), Some(d(600)));
+    fn backoff_for_429_positive_retry_after_is_honored_in_full_plus_margin() {
+        assert_eq!(backoff_for_429(Some(d(120))), Some(d(180)));
+        assert_eq!(backoff_for_429(Some(d(5))), Some(d(65)));
+        // The observed 1-hour ban: a retry inside it, or right at its edge,
+        // can restart it — so wait it out completely.
+        assert_eq!(backoff_for_429(Some(d(3600))), Some(d(3660)));
+    }
+
+    #[test]
+    fn backoff_for_429_caps_absurd_retry_after() {
+        assert_eq!(backoff_for_429(Some(d(86_400))), Some(d(2 * 60 * 60)));
+        // Adding the margin must not overflow (a panic aborts in release).
+        assert_eq!(backoff_for_429(Some(d(u64::MAX))), Some(d(2 * 60 * 60)));
+    }
+
+    mod deadlines {
+        use super::*;
+        use crate::app_state::ScheduleState;
+
+        fn banned_until(until: Instant) -> BackoffState {
+            BackoffState { until, reason: BackoffReason::RateLimited }
+        }
+
+        #[test]
+        fn a_banned_slot_wakes_the_loop_at_its_ban_end_not_its_past_deadline() {
+            let now = Instant::now();
+            let schedule = HashMap::from([
+                (1, ScheduleState { next_poll_at: now - d(10) }),
+                (2, ScheduleState { next_poll_at: now + d(100) }),
+            ]);
+            let backoff = HashMap::from([(1, banned_until(now + d(3000)))]);
+            assert_eq!(earliest_deadline(&schedule, &backoff), Some(now + d(100)));
+
+            let only_banned = HashMap::from([(1, ScheduleState { next_poll_at: now - d(10) })]);
+            assert_eq!(earliest_deadline(&only_banned, &backoff), Some(now + d(3000)));
+        }
+
+        #[test]
+        fn an_expired_backoff_leaves_the_deadline_alone() {
+            let now = Instant::now();
+            let schedule = HashMap::from([(1, ScheduleState { next_poll_at: now + d(50) })]);
+            let backoff = HashMap::from([(1, banned_until(now + d(20)))]);
+            assert_eq!(earliest_deadline(&schedule, &backoff), Some(now + d(50)));
+            assert_eq!(earliest_deadline(&HashMap::new(), &backoff), None);
+        }
+
+        #[test]
+        fn next_poll_wait_subtracts_the_local_snapshots_age() {
+            let now = Utc::now();
+            let interval = d(300);
+            assert_eq!(next_poll_wait(interval, None, now), interval);
+            assert_eq!(
+                next_poll_wait(interval, Some(now - ChronoDuration::seconds(290)), now),
+                d(10)
+            );
+            assert_eq!(
+                next_poll_wait(interval, Some(now - ChronoDuration::seconds(400)), now),
+                Duration::ZERO
+            );
+            // Future-skewed timestamp: no age to subtract.
+            assert_eq!(
+                next_poll_wait(interval, Some(now + ChronoDuration::seconds(5)), now),
+                interval
+            );
+        }
+    }
+
+    mod relabel {
+        use super::*;
+
+        fn cached(fetched_at: DateTime<Utc>, last_error: Option<&str>) -> CachedUsage {
+            CachedUsage {
+                snapshot: UsageSnapshot {
+                    five_hour: Some(crate::usage_api::Utilization {
+                        utilization: 40.0,
+                        resets_at: None,
+                    }),
+                    seven_day: None,
+                    seven_day_sonnet: None,
+                    seven_day_opus: None,
+                    extra_usage: None,
+                    fetched_at,
+                    unknown: Default::default(),
+                },
+                account_id: "uuid".into(),
+                account_email: "a@example.com".into(),
+                last_error: last_error.map(str::to_string),
+                burn_rate: None,
+                auth_source: AuthSource::OAuth,
+            }
+        }
+
+        #[test]
+        fn restores_the_429_label_once_the_data_ages_past_an_interval() {
+            let now = Utc::now();
+            let mut c = cached(now - ChronoDuration::seconds(400), None);
+            assert!(relabel_aged_during_ban(&mut c, d(300), now));
+            assert_eq!(c.last_error.as_deref(), Some(RATE_LIMITED_ERROR));
+        }
+
+        #[test]
+        fn leaves_young_data_and_other_errors_alone() {
+            let now = Utc::now();
+            let mut young = cached(now - ChronoDuration::seconds(100), None);
+            assert!(!relabel_aged_during_ban(&mut young, d(300), now));
+            assert_eq!(young.last_error, None);
+
+            let mut auth = cached(now - ChronoDuration::seconds(400), Some("auth_required"));
+            assert!(!relabel_aged_during_ban(&mut auth, d(300), now));
+            assert_eq!(auth.last_error.as_deref(), Some("auth_required"));
+        }
+    }
+
+    #[test]
+    fn has_usage_data_is_false_for_placeholders() {
+        let snap = UsageSnapshot {
+            five_hour: None,
+            seven_day: None,
+            seven_day_sonnet: None,
+            seven_day_opus: None,
+            extra_usage: None,
+            fetched_at: Utc::now(),
+            unknown: Default::default(),
+        };
+        assert!(!has_usage_data(&snap));
+    }
+
+    #[test]
+    fn is_within_age_bounds() {
+        let now = Utc::now();
+        let max = d(120);
+        assert!(is_within_age(now - ChronoDuration::seconds(120), max, now));
+        assert!(!is_within_age(now - ChronoDuration::seconds(121), max, now));
+        // 30 s of clock-skew grace, then reject.
+        assert!(is_within_age(now + ChronoDuration::seconds(30), max, now));
+        assert!(!is_within_age(now + ChronoDuration::seconds(31), max, now));
     }
 
     mod hydrate {
@@ -1020,6 +1399,92 @@ mod tests {
             let dir = tempdir().unwrap();
             let p = write(&dir, &payload(Utc::now().timestamp()));
             assert!(read_shared_snapshot(&p, Duration::from_secs(120), None).is_some());
+        }
+    }
+
+    mod cli_usage_cache {
+        use super::*;
+        use tempfile::tempdir;
+
+        const UUID: &str = "fa86dfa1-0000-0000-0000-000000000000";
+
+        /// A global config shaped like the upstream CLI 2.1.311's: unrelated
+        /// keys around a `cachedUsageUtilization` entry.
+        fn write_config(dir: &tempfile::TempDir, cache: serde_json::Value) -> std::path::PathBuf {
+            let p = dir.path().join(".claude.json");
+            let config = serde_json::json!({
+                "numStartups": 12,
+                "oauthAccount": { "accountUuid": UUID, "emailAddress": "a@example.com" },
+                "cachedUsageUtilization": cache,
+            });
+            std::fs::write(&p, config.to_string()).unwrap();
+            p
+        }
+
+        fn cache(account_uuid: Option<&str>, fetched_at: DateTime<Utc>) -> serde_json::Value {
+            let mut cache = serde_json::json!({
+                "fetchedAtMs": fetched_at.timestamp_millis(),
+                "utilization": {
+                    "five_hour": { "utilization": 42.5, "resets_at": "2026-10-27T18:00:00Z" },
+                    "seven_day": { "utilization": 63.1, "resets_at": "2026-10-30T09:00:00Z" },
+                    "seven_day_opus": null,
+                    "cinder_cove": null
+                }
+            });
+            if let Some(uuid) = account_uuid {
+                cache["accountUuid"] = serde_json::json!(uuid);
+            }
+            cache
+        }
+
+        #[test]
+        fn adopts_fresh_entry_for_its_account() {
+            let dir = tempdir().unwrap();
+            let fetched_at = Utc::now() - ChronoDuration::seconds(30);
+            let p = write_config(&dir, cache(Some(UUID), fetched_at));
+            let snap = read_cli_usage_cache(&p, UUID, d(180)).expect("fresh entry adopted");
+            assert_eq!(snap.five_hour.unwrap().utilization, 42.5);
+            assert_eq!(snap.seven_day.unwrap().utilization, 63.1);
+            assert_eq!(snap.fetched_at.timestamp_millis(), fetched_at.timestamp_millis());
+        }
+
+        #[test]
+        fn rejects_another_accounts_entry() {
+            let dir = tempdir().unwrap();
+            let p = write_config(&dir, cache(Some(UUID), Utc::now()));
+            assert!(read_cli_usage_cache(&p, "some-other-uuid", d(180)).is_none());
+        }
+
+        #[test]
+        fn rejects_entry_without_account_identity() {
+            let dir = tempdir().unwrap();
+            let p = write_config(&dir, cache(None, Utc::now()));
+            assert!(read_cli_usage_cache(&p, UUID, d(180)).is_none());
+        }
+
+        #[test]
+        fn empty_account_uuid_never_matches() {
+            let dir = tempdir().unwrap();
+            let p = write_config(&dir, cache(Some(""), Utc::now()));
+            assert!(read_cli_usage_cache(&p, "", d(180)).is_none());
+        }
+
+        #[test]
+        fn rejects_stale_and_future_entries() {
+            let dir = tempdir().unwrap();
+            let p = write_config(&dir, cache(Some(UUID), Utc::now() - ChronoDuration::minutes(10)));
+            assert!(read_cli_usage_cache(&p, UUID, d(180)).is_none());
+            let p = write_config(&dir, cache(Some(UUID), Utc::now() + ChronoDuration::minutes(5)));
+            assert!(read_cli_usage_cache(&p, UUID, d(180)).is_none());
+        }
+
+        #[test]
+        fn missing_entry_or_file_returns_none() {
+            let dir = tempdir().unwrap();
+            let p = dir.path().join(".claude.json");
+            std::fs::write(&p, r#"{"numStartups": 1}"#).unwrap();
+            assert!(read_cli_usage_cache(&p, UUID, d(180)).is_none());
+            assert!(read_cli_usage_cache(&dir.path().join("absent.json"), UUID, d(180)).is_none());
         }
     }
 }
