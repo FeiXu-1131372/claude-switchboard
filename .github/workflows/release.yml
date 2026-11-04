@@ -63,5 +63,7 @@ jobs:
           tagName: ${{ inputs.tag || github.ref_name }}
           releaseName: ${{ inputs.tag || github.ref_name }}
           releaseBody: 'Unsigned build — see README for first-launch instructions on each OS.'
-          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+          # The bundle config adds the statusline bridge as a sidecar (it is
+          # kept out of the default config so `cargo test` needs no sidecar).
+          args: --config src-tauri/tauri.bundle.conf.json --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
           includeUpdaterJson: true

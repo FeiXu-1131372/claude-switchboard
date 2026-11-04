@@ -50,8 +50,8 @@ jobs:
 
       - name: Rust tests
         working-directory: src-tauri
-        run: cargo test --all-features --no-fail-fast
+        run: cargo test --workspace --all-features --no-fail-fast
 
       - name: Rust clippy
         working-directory: src-tauri
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings

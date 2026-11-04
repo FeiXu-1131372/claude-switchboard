@@ -8,6 +8,7 @@ dist/
 !.env.example
 src-tauri/target/
 src-tauri/gen/
+src-tauri/binaries/
 !src/lib/generated/
 *.tsbuildinfo
 vite.config.js

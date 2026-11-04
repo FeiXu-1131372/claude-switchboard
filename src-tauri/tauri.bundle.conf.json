@@ -1,0 +1,8 @@
+{
+  "build": {
+    "beforeBuildCommand": "pnpm bridge:build && pnpm build"
+  },
+  "bundle": {
+    "externalBin": ["binaries/switchboard-statusline"]
+  }
+}
