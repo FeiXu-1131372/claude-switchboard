@@ -273,11 +273,33 @@ Three ways to add an account:
 2. **OAuth in-app** — opens a local-redirect OAuth flow. Useful for adding accounts you haven't logged into via `claude` yet.
 3. **Import long-lived token** — paste the OAuth token produced by `claude setup-token`, optionally give it a label, then select **Add account**. Available on Windows and macOS, including first-run setup. Importing does not change the active Claude Code account; select **Switch account** separately when ready.
 
-**Token-only limitations.** Switchboard checks the profile endpoint without making a model request. If profile permission is available, it uses the verified identity. Inference-only tokens cannot reveal an email, account UUID, or usage limits, so they appear as **Token account N** (or your label), with usage tracking explicitly unavailable. Switchboard does not invent an identity or mistake a missing profile scope for an expired login. The opaque token does not reveal its expiry, so imported expiry is shown as unknown rather than assumed to be one year from import. Imported tokens have no refresh token; use the account menu's **Replace token…** action when necessary. Switch to another account before replacing an active token.
+**Token-only limitations.** Switchboard checks the profile endpoint without making a model request. If profile permission is available, it uses the verified identity. Inference-only tokens cannot reveal an email, account UUID, or usage limits, so they appear as **Token account N** (or your label), with polled usage explicitly unavailable (turn on [live usage from Claude Code's status line](#live-usage-from-claude-codes-status-line) to see it). Switchboard does not invent an identity or mistake a missing profile scope for an expired login. The opaque token does not reveal its expiry, so imported expiry is shown as unknown rather than assumed to be one year from import. Imported tokens have no refresh token; use the account menu's **Replace token…** action when necessary. Switch to another account before replacing an active token.
 
 Keep tokens private: anyone holding one can spend the account's quota. An imported token does not create a new subscription or separate quota. Removing an entry from Switchboard does not revoke the token with Anthropic. Existing browser sign-ins and duplicate accounts are not overwritten by token import.
 
 **Hot reload, not restart.** A swap rewrites the OS-level credentials atomically — running Claude Code sessions pick up the new account within ~30 seconds (Claude Code's own keychain cache TTL on macOS, one API tick on Windows). A 60-second `KeychainGuardian` protects against the narrow race where a Claude Code process started its OAuth refresh just before the swap.
+
+## Live usage from Claude Code's status line
+
+Accounts added with a long-lived token (`claude setup-token`) can't read their usage from Anthropic's API, but Claude Code itself still knows it and passes it to your status line. This option listens there.
+
+**Turn it on:** Settings → Polling → **Live usage from Claude Code**. Switchboard first runs your status line once with sample data to prove nothing breaks, then shows exactly what it will change and waits for **Turn on**. The only edit is `statusLine.command` in your Claude Code `settings.json`, which will run Switchboard's bridge. The bridge runs your original command, shows its output, and exits with its exit code, so your status line looks and behaves as before. If you had none, Claude Code hides its built-in footer hint while this is on, because it now has a status line.
+
+**What it records:** the 5-hour and 7-day percentages, their reset times, and the signed-in account's ID, in `~/.claude-switchboard/statusline/`. Nothing leaves your computer.
+
+**Which sessions report.** Interactive Claude Code sessions in the CLI. These keep using normal polling instead: sessions started with a `CLAUDE_CODE_OAUTH_TOKEN` environment variable (Claude Code never passes that variable on, so the account can't be identified), non-interactive runs (`-p`, the Agent SDK), IDE sessions, WSL and remote hosts, projects that set their own `statusLine`, and any session where `disableAllHooks` is on. Accounts that can poll keep polling; the status line is used only when it is fresher or polling is rate-limited.
+
+**Account switches.** An observation is matched to an account by the identity it was recorded under. Right after a switch Claude Code can still report the previous account's numbers, so for the first 30 seconds Switchboard waits for fresh data, and it never applies a record to an account it can't match.
+
+**Turn it off:** flip the switch. `settings.json` goes back exactly as it was, even if Claude Code or you edited other keys in the meantime; if the command was changed by someone else, Switchboard leaves it alone and says so. Without the app, run:
+
+```bash
+~/.claude-switchboard/statusline/bridge --restore --all
+```
+
+A copy of the file from before the first change is kept next to it as `settings.json.switchboard-statusline-anchor`.
+
+**Platform.** macOS today. The Windows runtime (Git Bash and PowerShell resolution, the quoting, the process tree) is written to the same design but has not been run on Windows, so the switch is hidden there.
 
 ## Warm-up & scheduling
 
@@ -305,6 +327,7 @@ Your old install is preserved — you can launch the legacy `Claude Limits.app` 
 - With no custom provider configured, the only outbound traffic is to Anthropic's official API.
 - **Third-party providers are third parties.** When you launch a session against a custom provider, your prompts go to that provider's endpoint — `api.z.ai`, `api.kimi.com`, `api.deepseek.com`, `api.minimax.io`, `openrouter.ai`, or whatever base URL you enter — not to Anthropic. Switchboard stores the API key you give it locally alongside your usage database and sends it only to that endpoint.
 - **Setting a global default writes one file.** Choosing a provider as the default for bare `claude` invocations writes `~/.claude/settings.json`. Switchboard backs the file up first, records an undo manifest, asks before overwriting `ANTHROPIC_*` keys it did not write, and on removal restores your values — telling you which of your own edits it deliberately left in place.
+- **Live usage edits one setting.** Turning it on changes `statusLine.command` in your Claude Code `settings.json` (after a consent screen and a one-time anchor backup) and records usage percentages, reset times and your account ID under `~/.claude-switchboard/statusline/`. Turning it off restores the file exactly.
 - No telemetry, no analytics — Switchboard itself never phones home.
 - **Opt-in warm-up:** With your explicit per-account consent, Switchboard can send 1-token warm-up messages to `/v1/messages` to start the 5-hour window deliberately. No other content is ever sent. Off by default; revocable any time.
 
