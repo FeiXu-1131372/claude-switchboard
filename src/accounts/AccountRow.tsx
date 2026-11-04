@@ -248,7 +248,12 @@ export function AccountRow({
     return () => clearTimeout(t);
   }, [warmupStatus]);
 
+  // Not a fault: the bridge is running and this token's first reading is on
+  // its way. Shown muted rather than in the warning colour.
+  const awaitingStatusline = entry.last_error === 'awaiting_statusline';
+
   const errLabel = (() => {
+    if (awaitingStatusline) return 'Waiting for Claude Code activity';
     if (entry.last_error === 'usage_not_supported')
       return 'Usage tracking unavailable for this token';
     if (entry.last_error === 'auth_required')
@@ -479,7 +484,11 @@ export function AccountRow({
 
       {errLabel ? (
         <div className="flex items-center gap-[var(--space-xs)]">
-          <span className="flex-1 text-[length:var(--text-micro)] text-[color:var(--color-warn)]">
+          <span
+            className={`flex-1 text-[length:var(--text-micro)] ${
+              awaitingStatusline ? 'text-[color:var(--color-text-muted)]' : 'text-[color:var(--color-warn)]'
+            }`}
+          >
             {errLabel}
           </span>
           {entry.last_error === 'auth_required' && onReauth && (

@@ -63,6 +63,16 @@ describe('AccountRow error rendering', () => {
     expect(screen.queryByRole('button', { name: /re-authenticate/i })).toBeNull();
   });
 
+  it('shows a muted waiting line, not a warning, while the bridge has no reading yet', () => {
+    render(<AccountRow entry={entry({ source: 'LongLivedToken', last_error: 'awaiting_statusline' })} thresholds={[75, 90]} onReauth={vi.fn()} />);
+    const line = screen.getByText('Waiting for Claude Code activity');
+    expect(line).toBeInTheDocument();
+    expect(line.className).toContain('--color-text-muted');
+    expect(line.className).not.toContain('--color-warn');
+    expect(screen.queryByText(/unavailable/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: /re-authenticate|replace token$/i })).toBeNull();
+  });
+
   it('offers token replacement in the account menu', () => {
     const replace = vi.fn();
     render(<AccountRow entry={entry({ source: 'LongLivedToken', is_active: false })} thresholds={[75, 90]} onReauth={replace} onRemove={vi.fn()} />);

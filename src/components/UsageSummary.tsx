@@ -35,6 +35,13 @@ export function UsageSummary({
   detailsOpen,
   onToggleDetails,
 }: UsageSummaryProps) {
+  if (usage.last_error === 'awaiting_statusline') {
+    return (
+      <p role="status" className="px-[var(--popover-pad)] py-[var(--space-md)] text-[length:var(--text-label)] leading-[var(--leading-label)] text-[color:var(--color-text-secondary)]">
+        Waiting for Claude Code. Usage for this token comes from Claude Code&apos;s status line, so it shows up about a minute after you use Claude Code with it.
+      </p>
+    );
+  }
   if (usage.last_error === 'usage_not_supported') {
     return (
       <p role="status" className="px-[var(--popover-pad)] py-[var(--space-md)] text-[length:var(--text-label)] leading-[var(--leading-label)] text-[color:var(--color-text-secondary)]">

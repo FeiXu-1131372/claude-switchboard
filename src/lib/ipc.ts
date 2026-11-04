@@ -89,6 +89,20 @@ export const ipc = {
   /** Resolves to the keys left untouched because the user edited them (spec §4.2). */
   clearDefaultProvider: () => commands.clearDefaultProvider().then(unwrap),
 
+  // Live usage from Claude Code's status line (statusline bridge)
+  getStatuslineBridgeStatus: () => commands.getStatuslineBridgeStatus().then(unwrap),
+  preflightStatuslineBridge: (configHome: string | null) =>
+    commands.preflightStatuslineBridge(configHome).then(unwrap),
+  enableStatuslineBridge: (configHome: string | null, acceptedSharedFile: boolean) =>
+    commands.enableStatuslineBridge(configHome, acceptedSharedFile).then(unwrap),
+  disableStatuslineBridge: (targetId: string) =>
+    commands.disableStatuslineBridge(targetId).then(unwrap),
+  rewrapStatuslineBridge: (targetId: string) =>
+    commands.rewrapStatuslineBridge(targetId).then(unwrap),
+  restoreOriginalStatusline: (targetId: string) =>
+    commands.restoreOriginalStatusline(targetId).then(unwrap),
+  recheckStatuslineBridge: () => commands.recheckStatuslineBridge().then(unwrap),
+
   // Session browser
   listResumableSessions: () => commands.listResumableSessions().then(unwrap),
 };

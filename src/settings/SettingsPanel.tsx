@@ -16,6 +16,7 @@ import {
 } from '@tauri-apps/plugin-autostart';
 import { ipc } from '../lib/ipc';
 import { WarmupSettings } from './WarmupSettings';
+import { StatuslineBridgeCard } from './StatuslineBridgeCard';
 
 const POLL_MIN_SECS = 60;
 const POLL_MAX_SECS = 1800;
@@ -217,6 +218,7 @@ export function SettingsPanel() {
               )}
           </div>
         </Card>
+        <StatuslineBridgeCard />
       </section>
 
       {/* Thresholds */}

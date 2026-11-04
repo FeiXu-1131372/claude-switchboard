@@ -434,6 +434,67 @@ async listResumableSessions() : Promise<Result<SessionSummary[], string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async getStatuslineBridgeStatus() : Promise<Result<BridgeTargetStatus[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_statusline_bridge_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async preflightStatuslineBridge(configHome: string | null) : Promise<Result<PreflightReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("preflight_statusline_bridge", { configHome }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async enableStatuslineBridge(configHome: string | null, acceptedSharedFile: boolean) : Promise<Result<BridgeTargetStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("enable_statusline_bridge", { configHome, acceptedSharedFile }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async disableStatuslineBridge(targetId: string) : Promise<Result<DisableOutcomeDto, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("disable_statusline_bridge", { targetId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async rewrapStatuslineBridge(targetId: string) : Promise<Result<BridgeTargetStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("rewrap_statusline_bridge", { targetId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async restoreOriginalStatusline(targetId: string) : Promise<Result<DisableOutcomeDto, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("restore_original_statusline", { targetId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The Broken state's **Retry**: repair our own files and re-run the same
+ * check the app runs at startup, then report the fresh status. Never edits
+ * `settings.json`.
+ */
+async recheckStatuslineBridge() : Promise<Result<BridgeTargetStatus[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("recheck_statusline_bridge") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -466,6 +527,42 @@ export type AuthSource = "OAuth" | "ClaudeCode"
  * concrete number instead of just the bare current %. None when we don't
  * yet have enough samples (need at least 2 polls ≥ 2 minutes apart).
  */
+/**
+ * What the settings card shows for one config folder (spec §7).
+ * 
+ * [`derive_state`] is a pure function of facts the manager gathers, so every
+ * state in the table is testable on its own.
+ */
+export type BridgeState = { kind: "off" } | 
+/**
+ * No config home and no global config: Claude Code isn't installed here.
+ */
+{ kind: "claude_code_not_set_up" } | 
+/**
+ * Enabled, nothing received yet.
+ */
+{ kind: "waiting" } | { kind: "live"; last_update_ms: number } | 
+/**
+ * Enabled and quiet: normal, not a warning.
+ */
+{ kind: "quiet"; last_update_ms: number | null } | 
+/**
+ * The bridge runs but no usage was adopted.
+ */
+{ kind: "running_without_usage"; reason: string } | { kind: "blocked"; reason: string } | { kind: "broken"; error: string } | 
+/**
+ * `statusLine.command` no longer runs the bridge.
+ */
+{ kind: "changed_outside" } | 
+/**
+ * `settings.json` can't be edited as it is.
+ */
+{ kind: "edit_refused"; message: string }
+export type BridgeTargetStatus = { 
+/**
+ * Empty when the config folder doesn't exist yet.
+ */
+id: string; config_home: string; settings_path: string; bridge_path: string; installed_command: string | null; original_command: string | null; shared_warning: string | null; state: BridgeState }
 export type BurnRateProjection = { 
 /**
  * Slope of five_hour.utilization, in percentage points per minute.
@@ -480,7 +577,17 @@ utilization_per_min: number;
  */
 projected_at_reset: number }
 export type CacheStats = { total_cache_read_tokens: number; total_cache_creation_tokens: number; estimated_savings_usd: number; hit_ratio: number }
-export type CachedUsage = { snapshot: UsageSnapshot; account_id: string; account_email: string; last_error: string | null; burn_rate?: BurnRateProjection | null; auth_source: AuthSource }
+export type CachedUsage = { snapshot: UsageSnapshot; account_id: string; account_email: string; last_error: string | null; burn_rate?: BurnRateProjection | null; auth_source: AuthSource; 
+/**
+ * Which source produced `snapshot`'s headline 5h/7d numbers.
+ */
+origin?: SnapshotOrigin; 
+/**
+ * For a `Statusline` snapshot: when the slower buckets it carries over
+ * (Sonnet, Opus, extra usage) were last fetched. They are not in the
+ * status line's `rate_limits`, so they keep their own age.
+ */
+carried_fetched_at?: string | null }
 export type DailyBucket = { date: string; input_tokens: number; output_tokens: number; cost_usd: number }
 export type DailyModelBucket = { date: string; models: ModelStats[] }
 /**
@@ -489,6 +596,7 @@ export type DailyModelBucket = { date: string; models: ModelStats[] }
  * of what we own and the undo record.
  */
 export type DefaultProviderState = { provider_id: string; managed_env: Partial<{ [key in string]: string | null }>; applied_at: number }
+export type DisableOutcomeDto = "restored" | "released_user_changed"
 export type ExtraUsage = { is_enabled?: boolean; monthly_limit_cents?: number; used_credits_cents?: number; utilization?: number | null; resets_at?: string | null }
 /**
  * Wall-clock time-of-day in user's local timezone.
@@ -517,6 +625,22 @@ export type ModelStats = { model: string; input_tokens: number; output_tokens: n
  * Serializable mirror of `Preset` for the frontend.
  */
 export type PresetInfo = { id: string; name: string; base_url: string; website: string; env: Partial<{ [key in string]: string }> }
+/**
+ * What the consent panel needs, gathered without changing any setting.
+ */
+export type PreflightReport = { 
+/**
+ * The command that would go into `statusLine.command`.
+ */
+command: string; shells: ShellResult[]; 
+/**
+ * How much the bridge adds to each status-line refresh.
+ */
+latency_ms: number; settings_path: string; bridge_path: string; 
+/**
+ * The user's current command, `None` when there is none.
+ */
+original_command: string | null; original_direct: string | null; original_via_bridge: string | null; shared_warning: string | null }
 export type PricingEntry = { prefix: string; input_per_mtok: number; output_per_mtok: number; cache_read_per_mtok: number; cache_5m_per_mtok: number; cache_1h_per_mtok: number; 
 /**
  * Optional 1M-context tier (Sonnet 4 only at time of writing). When
@@ -634,8 +758,26 @@ stagger_gap_secs: number; thresholds: number[]; theme: string; launch_at_login: 
  */
 terminal?: Terminal | null }
 /**
+ * Where a usage snapshot came from. Every origin but `Http` is a local
+ * source that costs no `/usage` call.
+ */
+export type SnapshotOrigin = "http" | 
+/**
+ * The upstream CLI's persisted `/usage` response in its global config.
+ */
+"cli_cache" | 
+/**
+ * `statusline-usage.json` written by an external poller.
+ */
+"shared_file" | 
+/**
+ * A `rate_limits` observation recorded by the statusline bridge.
+ */
+"statusline"
+/**
  * A `/compact` boundary inside one session transcript.
  */
+export type ShellResult = { shell: string; ok: boolean; detail: string }
 export type StoredCompaction = { ts: string; source_file: string; 
 /**
  * "manual" (`/compact`) or "auto" (context exhausted).

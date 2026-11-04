@@ -39,6 +39,14 @@ describe('UsageSummary collapsible details', () => {
     expect(screen.queryByRole('button', { name: /details/i })).toBeNull();
   });
 
+  it('says it is waiting for Claude Code while the status line bridge has not delivered a reading', () => {
+    render(<UsageSummary usage={{ ...usage(), last_error: 'awaiting_statusline' }} thresholds={[75, 90]} />);
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent('Waiting for Claude Code');
+    expect(status).not.toHaveTextContent('unavailable');
+    expect(screen.queryByText('19')).toBeNull();
+  });
+
   it('renders only the hero numbers plus a disclosure row when collapsed', () => {
     const onToggle = vi.fn();
     render(

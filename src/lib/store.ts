@@ -92,7 +92,9 @@ export const useAppStore = create<AppStore>((set, _get) => ({
               accounts: next,
               usage: isActive ? cached : s.usage,
               stale: isActive
-                ? cached.last_error != null && cached.last_error !== 'usage_not_supported'
+                ? cached.last_error != null &&
+                  cached.last_error !== 'usage_not_supported' &&
+                  cached.last_error !== 'awaiting_statusline'
                 : s.stale,
             };
           });
