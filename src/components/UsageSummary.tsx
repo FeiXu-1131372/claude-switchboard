@@ -35,6 +35,13 @@ export function UsageSummary({
   detailsOpen,
   onToggleDetails,
 }: UsageSummaryProps) {
+  if (usage.last_error === 'usage_not_supported') {
+    return (
+      <p role="status" className="px-[var(--popover-pad)] py-[var(--space-md)] text-[length:var(--text-label)] leading-[var(--leading-label)] text-[color:var(--color-text-secondary)]">
+        Usage tracking is unavailable for this inference-only token. Manage or replace it in Accounts.
+      </p>
+    );
+  }
   const snap = usage.snapshot;
   const extra = snap.extra_usage;
   const [warn, danger] = thresholds;

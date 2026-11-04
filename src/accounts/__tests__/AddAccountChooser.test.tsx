@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { AddAccountChooser } from '../AddAccountChooser';
 
@@ -16,6 +16,13 @@ vi.mock('../../lib/store', () => ({
 }));
 
 describe('AddAccountChooser', () => {
+  it('offers token import without opening browser OAuth', () => {
+    render(<AddAccountChooser onClose={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /import long-lived token/i }));
+    expect(screen.getByLabelText('Long-lived token')).toHaveAttribute('type', 'password');
+    expect(screen.queryByText('Connect to Claude')).toBeNull();
+  });
+
   it('renders the Cancel button in fullpane mode (default fallback caller)', () => {
     render(<AddAccountChooser presentation="fullpane" onClose={() => {}} />);
     expect(screen.getByRole('button', { name: /cancel/i })).toBeInTheDocument();

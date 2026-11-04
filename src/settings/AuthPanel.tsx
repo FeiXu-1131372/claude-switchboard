@@ -9,6 +9,7 @@ import { fadeIn } from '../lib/motion';
 import { IconAuth, IconRefresh, IconTimer, ExternalLink, X, ChevronRight } from '../lib/icons';
 import { ipc } from '../lib/ipc';
 import { useAppStore } from '../lib/store';
+import { ImportTokenPanel } from '../accounts/ImportTokenPanel';
 import { handleDragStart, closeWindow } from '../lib/window-chrome';
 
 type Step = 'choose' | 'waiting';
@@ -25,14 +26,16 @@ function toMessage(e: unknown, fallback: string): string {
 interface Props {
   onBack?: () => void;
   onSuccess?: () => void;
+  onBusyChange?: (busy: boolean) => void;
   /** 'fullpane' renders the drag handle + close-window chrome (first-run callers).
    *  'modal' skips that chrome and renders a slim Back-only header when onBack is provided. */
   presentation?: 'modal' | 'fullpane';
 }
 
-export function AuthPanel({ onBack, onSuccess, presentation = 'fullpane' }: Props) {
+export function AuthPanel({ onBack, onSuccess, onBusyChange, presentation = 'fullpane' }: Props) {
   const [step, setStep] = useState<Step>('choose');
   const [error, setError] = useState<string | null>(null);
+  const [showToken, setShowToken] = useState(false);
   const refreshAccounts = useAppStore((s) => s.refreshAccounts);
 
   useEffect(() => {
@@ -89,6 +92,10 @@ export function AuthPanel({ onBack, onSuccess, presentation = 'fullpane' }: Prop
   }
 
   const outerClass = presentation === 'fullpane' ? 'relative flex flex-col h-full' : 'relative flex flex-col';
+
+  if (showToken) {
+    return <ImportTokenPanel onBack={() => setShowToken(false)} onSuccess={onSuccess ?? (() => setShowToken(false))} onBusyChange={onBusyChange} />;
+  }
 
   return (
     <div className={outerClass}>
@@ -152,6 +159,7 @@ export function AuthPanel({ onBack, onSuccess, presentation = 'fullpane' }: Prop
 
           {step === 'choose' && (
             <div className="flex flex-col gap-[var(--space-sm)]">
+              <Button onClick={() => setShowToken(true)}>Import long-lived token</Button>
               <Card hover className="p-[var(--space-md)]">
                 <button
                   type="button"

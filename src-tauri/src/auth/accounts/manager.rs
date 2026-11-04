@@ -5,7 +5,7 @@ use super::{
     identity::{self, AccountIdentity},
     store::{self, AccountsLock, AddSource, ManagedAccount},
 };
-use crate::auth::{oauth_account_io, paths};
+use crate::auth::keychain_guardian::{ClaudeCodeCredIO, CredIO};
 use anyhow::{anyhow, Context, Result};
 use chrono::{TimeZone, Utc};
 use std::path::{Path, PathBuf};
@@ -37,9 +37,9 @@ impl AccountManager {
             .context("read upstream credentials")?
             .ok_or_else(|| anyhow!("no upstream credentials present"))?;
 
-        let global = paths::claude_global_config()
+        let global = crate::auth::paths::claude_global_config()
             .ok_or_else(|| anyhow!("could not resolve upstream global config path"))?;
-        let oauth_account = oauth_account_io::read_oauth_account(&global)
+        let oauth_account = crate::auth::oauth_account_io::read_oauth_account(&global)
             .context("read upstream oauthAccount slice")?
             .ok_or_else(|| anyhow!("upstream global config missing oauthAccount"))?;
 
@@ -58,13 +58,14 @@ impl AccountManager {
         let mut store = store::load(&self.data_dir)?;
 
         let now = Utc::now();
-        let token_expires_at = extract_expires_at(&cc_blob).unwrap_or(now);
+        let token_expires_at = extract_expires_at(&cc_blob);
 
         if let Some(existing) = store.find_by_account_uuid(&id.account_uuid).cloned() {
             let slot = existing.slot;
             let updated = ManagedAccount {
                 slot,
                 email: id.email,
+                label: existing.label,
                 account_uuid: id.account_uuid,
                 organization_uuid: id.organization_uuid,
                 organization_name: id.organization_name,
@@ -85,6 +86,7 @@ impl AccountManager {
         let acc = ManagedAccount {
             slot,
             email: id.email,
+            label: None,
             account_uuid: id.account_uuid,
             organization_uuid: id.organization_uuid,
             organization_name: id.organization_name,
@@ -145,6 +147,10 @@ impl AccountManager {
     /// On step-c failure: try to restore step-b. If restore also fails:
     /// return Critical so the UI can surface a hard-error banner.
     pub async fn swap_to(&self, slot: u32) -> Result<(), SwapError> {
+        self.swap_to_with_io(slot, &ClaudeCodeCredIO).await
+    }
+
+    pub async fn swap_to_with_io<I: CredIO>(&self, slot: u32, io: &I) -> Result<(), SwapError> {
         let target = self
             .get(slot)?
             .ok_or(SwapError::NotFound(slot))?;
@@ -154,20 +160,19 @@ impl AccountManager {
                 "claude_code_oauth_blob is not an object".into(),
             ));
         }
-        if !target.oauth_account_blob.is_object() {
+        if !(target.oauth_account_blob.is_object()
+            || target.source == AddSource::LongLivedToken && target.oauth_account_blob.is_null()) {
             return Err(SwapError::IncompleteAccount(
                 "oauth_account_blob is not an object".into(),
             ));
         }
 
         // Step a: snapshot.
-        let prev_cc = crate::auth::claude_code_creds::load_full_blob()
+        let prev_cc = io.load_cc()
             .await
             .map_err(|e| SwapError::Other(anyhow!("snapshot CC creds: {e}")))?;
 
-        let global = paths::claude_global_config()
-            .ok_or_else(|| SwapError::Other(anyhow!("resolve global config path")))?;
-        let prev_oauth_account = oauth_account_io::read_oauth_account(&global)
+        let prev_oauth_account = io.load_oauth_account().await
             .map_err(|e| SwapError::Other(anyhow!("snapshot oauthAccount: {e}")))?;
 
         // Step a': capture live tokens for the outgoing slot. We do this here
@@ -195,22 +200,20 @@ impl AccountManager {
 
         // Step b: write CC creds.
         if let Err(e) =
-            crate::auth::claude_code_creds::write_full_blob(&target.claude_code_oauth_blob).await
+            io.write_cc(&target.claude_code_oauth_blob).await
         {
             return Err(SwapError::CredentialWriteFailed(e.to_string()));
         }
 
         // Step c: write global config.
-        if let Err(e) = oauth_account_io::write_oauth_account(&global, &target.oauth_account_blob)
+        if let Err(e) = io.write_oauth_account(&target.oauth_account_blob).await
         {
             // Roll back step b.
             let restore_result = match prev_cc {
-                Some(blob) => crate::auth::claude_code_creds::write_full_blob(&blob).await,
-                None => Ok(()),
+                Some(blob) => io.write_cc(&blob).await,
+                None => io.write_cc(&serde_json::Value::Null).await,
             };
-            if let Some(prev) = prev_oauth_account {
-                let _ = oauth_account_io::write_oauth_account(&global, &prev);
-            }
+            let _ = io.write_oauth_account(&prev_oauth_account.unwrap_or(serde_json::Value::Null)).await;
             return match restore_result {
                 Ok(_) => Err(SwapError::ConfigWriteFailed(e.to_string())),
                 Err(restore_err) => Err(SwapError::Critical(format!(
@@ -246,7 +249,7 @@ impl AccountManager {
             acc.claude_code_oauth_blob = live_cc_blob.clone();
             acc.oauth_account_blob = live_oauth_account.clone();
             if let Some(exp) = extract_expires_at(live_cc_blob) {
-                acc.token_expires_at = exp;
+                acc.token_expires_at = Some(exp);
             }
             store::save(&self.data_dir, &data, &lock)?;
         }
@@ -303,7 +306,7 @@ impl AccountManager {
             "expiresAt".to_string(),
             serde_json::json!(new_token.expires_at.timestamp_millis()),
         );
-        acc.token_expires_at = new_token.expires_at;
+        acc.token_expires_at = Some(new_token.expires_at);
 
         store::save(&self.data_dir, &store, &lock)?;
         tracing::info!(
@@ -338,6 +341,80 @@ pub fn synthesize_blobs(
 }
 
 impl AccountManager {
+    pub async fn import_long_lived_token(
+        &self,
+        access_token: &str,
+        label: Option<&str>,
+        replace_slot: Option<u32>,
+        identity: &crate::auth::account_identity::IdentityFetcher,
+    ) -> Result<u32> {
+        let access_token = super::token_import::validate_token(access_token)?;
+        let label = super::token_import::validate_label(label)?;
+        let profile = identity.fetch_for_token_import(access_token).await?;
+        let lock = store::acquire_lock(&self.data_dir)?;
+        let mut data = store::load(&self.data_dir)?;
+        let previous = replace_slot
+            .map(|slot| {
+                data.accounts.get(&slot).cloned()
+                    .ok_or_else(|| anyhow!("The token account no longer exists."))
+            })
+            .transpose()?;
+        if previous.as_ref().is_some_and(|a| a.source != AddSource::LongLivedToken) {
+            return Err(anyhow!("Only an imported token can be replaced here. Your browser sign-in was not changed."));
+        }
+        if data.accounts.values().any(|a| {
+            Some(a.slot) != replace_slot
+                && (a.claude_code_oauth_blob["accessToken"].as_str() == Some(access_token)
+                    || profile.as_ref().is_some_and(|p| a.account_uuid == p.id))
+        }) {
+            return Err(anyhow!("This token or account is already saved. Its existing sign-in was not changed."));
+        }
+        let slot = replace_slot.unwrap_or_else(|| data.next_slot());
+        let mut cc = serde_json::json!({
+            "accessToken": access_token,
+            "refreshToken": null,
+            "scopes": ["user:inference"],
+        });
+        let (account_uuid, email, oauth_account_blob) = match profile {
+            Some(profile) => {
+                cc["scopes"] = serde_json::json!(["user:inference", "user:profile"]);
+                let oa = serde_json::json!({
+                    "accountUuid": profile.id,
+                    "emailAddress": profile.email,
+                    "displayName": profile.name,
+                    "organizationUuid": null,
+                    "organizationName": null,
+                });
+                (profile.id, profile.email, oa)
+            }
+            None => {
+                let id = previous.as_ref()
+                    .filter(|a| a.account_uuid.starts_with("token:"))
+                    .map(|a| a.account_uuid.clone())
+                    .unwrap_or_else(|| super::token_import::token_id(access_token));
+                (id, String::new(), serde_json::Value::Null)
+            }
+        };
+        let now = Utc::now();
+        data.accounts.insert(slot, ManagedAccount {
+            slot,
+            email,
+            label: label.or_else(|| previous.as_ref().and_then(|a| a.label.clone())),
+            account_uuid,
+            organization_uuid: None,
+            organization_name: None,
+            subscription_type: None,
+            source: AddSource::LongLivedToken,
+            claude_code_oauth_blob: cc,
+            oauth_account_blob,
+            token_expires_at: None,
+            added_at: previous.as_ref().map(|a| a.added_at).unwrap_or(now),
+            last_seen_active: None,
+        });
+        store::save(&self.data_dir, &data, &lock)?;
+        Ok(slot)
+    }
+
     pub fn remove(&self, slot: u32) -> Result<()> {
         let lock = store::acquire_lock(&self.data_dir)?;
         let mut store = store::load(&self.data_dir)?;
@@ -484,7 +561,7 @@ mod tests {
         assert_eq!(after.claude_code_oauth_blob["refreshToken"], "FRESH_RT");
         assert_eq!(after.claude_code_oauth_blob["accessToken"], "FRESH_AT");
         assert_eq!(
-            after.token_expires_at.timestamp_millis(),
+            after.token_expires_at.unwrap().timestamp_millis(),
             fresh_exp,
             "token_expires_at must track the live blob's expiresAt"
         );

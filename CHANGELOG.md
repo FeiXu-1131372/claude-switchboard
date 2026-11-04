@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Import long-lived OAuth tokens.** Add an account by pasting a `claude setup-token` token into a masked field on Windows or macOS, with an optional label and no browser or Claude Code process required. Token-only accounts support switching without fabricated profile metadata, clearly explain unavailable usage tracking and unknown expiry, and offer token replacement without overwriting existing browser sign-ins.
+
 ## v1.3.1 — 2026-08-04
 
 ### Fixed

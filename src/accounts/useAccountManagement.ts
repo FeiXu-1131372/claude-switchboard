@@ -19,6 +19,7 @@ export function useAccountManagement() {
   const setPendingSwapReport = useAppStore((s) => s.setPendingSwapReport);
 
   const [chooserOpen, setChooserOpen] = useState(false);
+  const [tokenAccount, setTokenAccount] = useState<AccountListEntry | null>(null);
   const [pending, setPending] = useState<PendingSwap | null>(null);
   const [swappingSlot, setSwappingSlot] = useState<number | null>(null);
   const [confirmError, setConfirmError] = useState<string | null>(null);
@@ -68,7 +69,10 @@ export function useAccountManagement() {
   );
 
   const openChooser = useCallback(() => setChooserOpen(true), []);
-  const closeChooser = useCallback(() => setChooserOpen(false), []);
+  const closeChooser = useCallback(() => {
+    setChooserOpen(false);
+    setTokenAccount(null);
+  }, []);
 
   const requestSwap = useCallback(
     async (entry: AccountListEntry) => {
@@ -107,6 +111,11 @@ export function useAccountManagement() {
   }, []);
 
   const handleReauth = useCallback(async (entry: AccountListEntry) => {
+    if (entry.source === 'LongLivedToken') {
+      setTokenAccount(entry);
+      setChooserOpen(true);
+      return;
+    }
     if (reauthSlot !== null) return;
     setReauthSlot(entry.slot);
     try {
@@ -159,6 +168,7 @@ export function useAccountManagement() {
     refreshing,
     reauthSlot,
     chooserOpen,
+    tokenAccount,
     requestSwap,
     confirmSwap,
     cancelSwap,

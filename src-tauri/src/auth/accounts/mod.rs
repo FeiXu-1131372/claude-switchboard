@@ -2,6 +2,7 @@ pub mod identity;
 pub mod manager;
 pub mod migration;
 pub mod store;
+pub mod token_import;
 
 pub use identity::{from_blobs, AccountIdentity};
 pub use manager::AccountManager;

@@ -32,6 +32,13 @@ function proUsage(): CachedUsage {
 }
 
 describe('UsageSummary collapsible details', () => {
+  it('explains unsupported token scopes instead of showing misleading usage', () => {
+    render(<UsageSummary usage={{ ...usage(), last_error: 'usage_not_supported' }} thresholds={[75, 90]} />);
+    expect(screen.getByRole('status')).toHaveTextContent('Usage tracking is unavailable');
+    expect(screen.queryByText('19')).toBeNull();
+    expect(screen.queryByRole('button', { name: /details/i })).toBeNull();
+  });
+
   it('renders only the hero numbers plus a disclosure row when collapsed', () => {
     const onToggle = vi.fn();
     render(

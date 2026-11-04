@@ -15,7 +15,7 @@ pub fn read_oauth_account(path: &Path) -> Result<Option<serde_json::Value>> {
     let text = std::fs::read_to_string(path).with_context(|| format!("read {path:?}"))?;
     let parsed: serde_json::Value = serde_json::from_str(&text)
         .with_context(|| format!("parse {path:?} as json"))?;
-    Ok(parsed.get("oauthAccount").cloned())
+    Ok(parsed.get("oauthAccount").filter(|value| !value.is_null()).cloned())
 }
 
 pub fn write_oauth_account(path: &Path, slice: &serde_json::Value) -> Result<()> {
@@ -31,7 +31,11 @@ pub fn write_oauth_account(path: &Path, slice: &serde_json::Value) -> Result<()>
     let obj = existing
         .as_object_mut()
         .ok_or_else(|| anyhow!("{path:?} is not a JSON object"))?;
-    obj.insert("oauthAccount".to_string(), slice.clone());
+    if slice.is_null() {
+        obj.remove("oauthAccount");
+    } else {
+        obj.insert("oauthAccount".to_string(), slice.clone());
+    }
 
     let payload = serde_json::to_string_pretty(&existing)?;
     let tmp = path.with_extension("json.tmp");
@@ -47,6 +51,18 @@ pub fn write_oauth_account(path: &Path, slice: &serde_json::Value) -> Result<()>
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn clearing_unknown_identity_preserves_other_config() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(".claude.json");
+        std::fs::write(&path, r#"{"hasCompletedOnboarding":true,"oauthAccount":{"accountUuid":"old"}}"#).unwrap();
+        write_oauth_account(&path, &serde_json::Value::Null).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(config["hasCompletedOnboarding"], true);
+        assert!(config.get("oauthAccount").is_none());
+        assert!(read_oauth_account(&path).unwrap().is_none());
+    }
 
     #[test]
     fn read_returns_none_when_file_absent() {

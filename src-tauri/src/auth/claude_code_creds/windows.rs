@@ -66,7 +66,7 @@ pub fn load_full_blob() -> Result<Option<serde_json::Value>> {
         Ok(v) => v,
         Err(_) => return Ok(None),
     };
-    Ok(parsed.get("claudeAiOauth").cloned())
+    Ok(parsed.get("claudeAiOauth").filter(|value| value.is_object()).cloned())
 }
 
 /// Atomic write: temp file + rename. ACL inherited from parent dir

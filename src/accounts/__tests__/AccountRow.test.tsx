@@ -56,6 +56,21 @@ function entry(overrides: Partial<AccountListEntry>): AccountListEntry {
 }
 
 describe('AccountRow error rendering', () => {
+  it('explains unsupported usage without requesting browser reauthentication', () => {
+    render(<AccountRow entry={entry({ source: 'LongLivedToken', last_error: 'usage_not_supported' })} thresholds={[75, 90]} onReauth={vi.fn()} />);
+    expect(screen.getByText('Usage tracking unavailable for this token')).toBeInTheDocument();
+    expect(screen.queryByText(/token expired/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: /re-authenticate/i })).toBeNull();
+  });
+
+  it('offers token replacement in the account menu', () => {
+    const replace = vi.fn();
+    render(<AccountRow entry={entry({ source: 'LongLivedToken', is_active: false })} thresholds={[75, 90]} onReauth={replace} onRemove={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Replace token…' }));
+    expect(replace).toHaveBeenCalledOnce();
+  });
+
   it('shows last-good meters with a stale hint on transient errors', () => {
     render(
       <AccountRow

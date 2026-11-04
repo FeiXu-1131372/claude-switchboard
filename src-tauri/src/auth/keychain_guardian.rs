@@ -101,12 +101,20 @@ async fn run_guardian<I: CredIO>(
             }
         };
 
-        let drifted = match live_uuid.as_deref() {
-            Some(uuid) => uuid != target_account_uuid,
-            // oauthAccount slice absent — treat as drift; we expect our
-            // own swap to have written it. If it's gone, something
-            // upstream cleared it and we should restore.
-            None => true,
+        let drifted = if target_oauth_account.is_null() {
+            match io.load_cc().await {
+                Ok(Some(cc)) => cc["accessToken"].as_str() != target_cc_blob["accessToken"].as_str(),
+                Ok(None) => true,
+                Err(_) => continue,
+            }
+        } else {
+            match live_uuid.as_deref() {
+                Some(uuid) => uuid != target_account_uuid,
+                // oauthAccount slice absent — treat as drift; we expect our
+                // own swap to have written it. If it's gone, something
+                // upstream cleared it and we should restore.
+                None => true,
+            }
         };
 
         if !drifted {
@@ -213,6 +221,27 @@ mod tests {
 
     fn oa(uuid: &str) -> Value {
         serde_json::json!({ "accountUuid": uuid, "emailAddress": "u@x" })
+    }
+
+    #[tokio::test]
+    async fn token_only_guardian_does_not_require_an_account_uuid() {
+        let token = serde_json::json!({"accessToken": "same-token"});
+        let io = MockIO::new(token.clone(), Value::Null);
+        let guardian = KeychainGuardian::arm(token, Value::Null, "token:local-id".into(), io.clone());
+        tokio::time::sleep(Duration::from_millis(2100)).await;
+        assert_eq!(io.cc_writes.load(Ordering::SeqCst), 0);
+        guardian.cancel();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn token_only_guardian_restores_a_different_live_token() {
+        let target = serde_json::json!({"accessToken": "target-token"});
+        let io = MockIO::new(serde_json::json!({"accessToken": "different-token"}), oa("old"));
+        let guardian = KeychainGuardian::arm(target.clone(), Value::Null, "token:local-id".into(), io.clone());
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        assert_eq!(io.cc.lock().unwrap().as_ref(), Some(&target));
+        assert!(io.oa.lock().unwrap().as_ref().unwrap().is_null());
+        guardian.cancel();
     }
 
     #[tokio::test]

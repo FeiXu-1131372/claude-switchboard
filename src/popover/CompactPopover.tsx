@@ -122,7 +122,7 @@ export function CompactPopover() {
   }
 
   if (!usage) {
-    return <LoadingShell refreshing={refreshing} onRefresh={handleRefresh} onSettings={() => setView('settings')} />;
+    return <LoadingShell refreshing={refreshing} onRefresh={handleRefresh} onSettings={() => setView('settings')} onAccounts={() => setView('accounts')} />;
   }
 
   const warn = thresholds[0] ?? 75;
@@ -180,10 +180,12 @@ function LoadingShell({
   refreshing,
   onRefresh,
   onSettings,
+  onAccounts,
 }: {
   refreshing: boolean;
   onRefresh: () => void;
   onSettings: () => void;
+  onAccounts: () => void;
 }) {
   const refreshUsage = useAppStore((s) => s.refreshUsage);
   const [hint, setHint] = useState(false);
@@ -209,12 +211,19 @@ function LoadingShell({
         live={false}
         stale={false}
         refreshing={refreshing}
-        accountEmail={null}
+        accountEmail="Accounts"
         onRefresh={onRefresh}
         onSettings={onSettings}
-        onAccounts={() => { }}
+        onAccounts={onAccounts}
       />
       <div className="flex flex-1 flex-col items-center justify-center gap-[var(--space-sm)] px-[var(--popover-pad)] text-center">
+        <button
+          type="button"
+          onClick={onAccounts}
+          className="text-[length:var(--text-label)] text-[color:var(--color-accent)] hover:underline"
+        >
+          Choose an account
+        </button>
         <span className="text-[length:var(--text-label)] text-[color:var(--color-text-muted)]">
           Loading usage…
         </span>

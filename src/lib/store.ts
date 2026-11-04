@@ -91,7 +91,9 @@ export const useAppStore = create<AppStore>((set, _get) => ({
             return {
               accounts: next,
               usage: isActive ? cached : s.usage,
-              stale: isActive ? cached.last_error != null : s.stale,
+              stale: isActive
+                ? cached.last_error != null && cached.last_error !== 'usage_not_supported'
+                : s.stale,
             };
           });
           break;

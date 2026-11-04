@@ -14,12 +14,15 @@ use std::path::{Path, PathBuf};
 pub enum AddSource {
     OAuth,
     ImportedFromClaudeCode,
+    LongLivedToken,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct ManagedAccount {
     pub slot: u32,
     pub email: String,
+    #[serde(default)]
+    pub label: Option<String>,
     pub account_uuid: String,
     pub organization_uuid: Option<String>,
     pub organization_name: Option<String>,
@@ -27,9 +30,48 @@ pub struct ManagedAccount {
     pub source: AddSource,
     pub claude_code_oauth_blob: serde_json::Value,
     pub oauth_account_blob: serde_json::Value,
-    pub token_expires_at: DateTime<Utc>,
+    pub token_expires_at: Option<DateTime<Utc>>,
     pub added_at: DateTime<Utc>,
     pub last_seen_active: Option<DateTime<Utc>>,
+}
+
+impl ManagedAccount {
+    pub fn display_name(&self) -> String {
+        self.label.clone().unwrap_or_else(|| {
+            if self.email.is_empty() {
+                format!("Token account {}", self.slot)
+            } else {
+                self.email.clone()
+            }
+        })
+    }
+
+    pub fn supports_usage(&self) -> bool {
+        self.claude_code_oauth_blob["scopes"]
+            .as_array()
+            .map(|scopes| scopes.iter().any(|scope| scope == "user:profile"))
+            .unwrap_or(self.source != AddSource::LongLivedToken)
+    }
+
+    pub fn can_refresh(&self) -> bool {
+        self.claude_code_oauth_blob["refreshToken"]
+            .as_str()
+            .is_some_and(|token| !token.is_empty())
+    }
+
+    pub fn matches_credentials(
+        &self,
+        cc: &serde_json::Value,
+        oauth_account: &serde_json::Value,
+    ) -> bool {
+        if self.source == AddSource::LongLivedToken {
+            return self.claude_code_oauth_blob["accessToken"]
+                .as_str()
+                .filter(|token| !token.is_empty())
+                .is_some_and(|token| cc["accessToken"].as_str() == Some(token));
+        }
+        oauth_account["accountUuid"].as_str() == Some(self.account_uuid.as_str())
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -142,6 +184,7 @@ mod tests {
         ManagedAccount {
             slot,
             email: format!("user{slot}@x.com"),
+            label: None,
             account_uuid: uuid.to_string(),
             organization_uuid: None,
             organization_name: None,
@@ -160,7 +203,7 @@ mod tests {
                 "organizationUuid": null,
                 "organizationName": null
             }),
-            token_expires_at: Utc::now(),
+            token_expires_at: Some(Utc::now()),
             added_at: Utc::now(),
             last_seen_active: None,
         }

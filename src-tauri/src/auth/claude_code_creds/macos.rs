@@ -166,7 +166,7 @@ async fn read_one_blob(service: String) -> Result<Option<serde_json::Value>> {
         Ok(v) => v,
         Err(_) => return Ok(None),
     };
-    Ok(parsed.get("claudeAiOauth").cloned())
+    Ok(parsed.get("claudeAiOauth").filter(|value| value.is_object()).cloned())
 }
 
 /// Write the full `claudeAiOauth` blob to the canonical Keychain service.

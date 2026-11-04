@@ -56,6 +56,36 @@ impl IdentityFetcher {
         self.client.clone()
     }
 
+    pub async fn fetch_for_token_import(&self, access_token: &str) -> Result<Option<UserInfo>> {
+        let response = self.client
+            .get(&self.endpoint)
+            .bearer_auth(access_token)
+            .header("anthropic-beta", ANTHROPIC_BETA)
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .await
+            .map_err(|_| anyhow!("Could not check the token with Anthropic. Check your connection and try again."))?;
+        match response.status() {
+            reqwest::StatusCode::FORBIDDEN => Ok(None),
+            reqwest::StatusCode::UNAUTHORIZED => {
+                Err(anyhow!("Anthropic rejected this token. It may be expired or revoked."))
+            }
+            status if status.is_success() => {
+                let profile: ProfileResponse = response.json().await
+                    .map_err(|_| anyhow!("Anthropic returned an unreadable account profile."))?;
+                if profile.account.uuid.trim().is_empty() || profile.account.email.trim().is_empty() {
+                    return Err(anyhow!("Anthropic returned an incomplete account profile."));
+                }
+                Ok(Some(UserInfo {
+                    id: profile.account.uuid,
+                    email: profile.account.email,
+                    name: profile.account.display_name,
+                }))
+            }
+            status => Err(anyhow!("Could not check the token with Anthropic (HTTP {}). Try again later.", status.as_u16())),
+        }
+    }
+
     pub async fn fetch(&self, access_token: &str) -> Result<UserInfo> {
         tracing::debug!(target: "switchboard.http", "GET {} (profile) starting", self.endpoint);
         let start = std::time::Instant::now();

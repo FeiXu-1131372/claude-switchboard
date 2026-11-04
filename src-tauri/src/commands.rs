@@ -642,9 +642,10 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct AccountListEntry {
     pub slot: u32,
+    /// Display label, falling back to the verified email when available.
     pub email: String,
-    /// The stable UUID that identifies this account in the SQLite `accounts`
-    /// table. Pass this as `accountId` to all warmup-related Tauri commands.
+    /// Stable local account identifier (a UUID or token fingerprint).
+    /// Pass this as `accountId` to warmup-related Tauri commands.
     pub account_uuid: String,
     pub org_name: Option<String>,
     pub org_uuid: Option<String>,
@@ -668,7 +669,11 @@ pub(crate) fn entry_for(
 ) -> AccountListEntry {
     let cache = state.cached_usage_by_slot.read();
     let cached = cache.get(&acc.slot).cloned();
-    let last_error = cached.as_ref().and_then(|c| c.last_error.clone());
+    let last_error = if !acc.supports_usage() {
+        Some("usage_not_supported".to_string())
+    } else {
+        cached.as_ref().and_then(|c| c.last_error.clone())
+    };
 
     // Prefer the live subscriptionType from the blob (which capture_live_into_slot
     // keeps current on every swap) over the snapshot stored at import time —
@@ -681,7 +686,7 @@ pub(crate) fn entry_for(
 
     AccountListEntry {
         slot: acc.slot,
-        email: acc.email.clone(),
+        email: acc.display_name(),
         account_uuid: acc.account_uuid.clone(),
         org_name: acc.organization_name.clone(),
         org_uuid: acc.organization_uuid.clone(),
@@ -730,10 +735,45 @@ pub async fn add_account_from_claude_code(
 
 #[command]
 #[specta::specta]
+pub async fn import_long_lived_token(
+    access_token: String,
+    label: Option<String>,
+    replace_slot: Option<u32>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<u32, String> {
+    let access_token = zeroize::Zeroizing::new(access_token);
+    let _account_change = state.account_change_lock.lock().await;
+    if replace_slot.is_some() && replace_slot == *state.active_slot.read() {
+        return Err("Switch to another account before replacing the active token.".into());
+    }
+    let previous = replace_slot.and_then(|slot| state.accounts.get(slot).ok().flatten());
+    let slot = state.accounts.import_long_lived_token(
+        &access_token, label.as_deref(), replace_slot, &state.auth.identity,
+    ).await.map_err(err_to_string)?;
+    if let Err(e) = mirror_account_to_sqlite(&state, slot) {
+        tracing::warn!("token import: SQLite mirror failed: {e:#}");
+    }
+    if let Some(previous) = previous {
+        if let Ok(Some(updated)) = state.accounts.get(slot) {
+            if previous.account_uuid != updated.account_uuid {
+                let _ = state.db.delete_account(&previous.account_uuid);
+            }
+        }
+    }
+    state.cached_usage_by_slot.write().remove(&slot);
+    state.backoff_by_slot.write().remove(&slot);
+    state.force_refresh.notify_one();
+    tracing::info!(target: "switchboard.accounts", "imported long-lived token (slot={slot})");
+    Ok(slot)
+}
+
+#[command]
+#[specta::specta]
 pub async fn remove_account(
     slot: u32,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
+    let _account_change = state.account_change_lock.lock().await;
     // Look up the account_uuid before removal so we can also drop the
     // SQLite mirror row. accounts.json holds the canonical mapping
     // (slot → account_uuid); after .remove() it's gone.
@@ -771,6 +811,7 @@ pub async fn swap_to_account(
     slot: u32,
     state: State<'_, Arc<AppState>>,
 ) -> Result<SwapReport, String> {
+    let _account_change = state.account_change_lock.lock().await;
     tracing::info!(target: "switchboard.swap", "swap_to_account(slot={slot}) starting");
     // Refresh the target slot's token if it's expired or about to expire
     // before handing its blob to swap_to. swap_to writes whatever is
@@ -786,8 +827,8 @@ pub async fn swap_to_account(
     // post-swap poll will surface auth_required the same way it does
     // today, and the user can re-authenticate.
     if let Ok(Some(target)) = state.accounts.get(slot) {
-        let near_expiry = target.token_expires_at
-            <= chrono::Utc::now() + chrono::Duration::minutes(2);
+        let near_expiry = target.can_refresh() && target.token_expires_at
+            .is_some_and(|expiry| expiry <= chrono::Utc::now() + chrono::Duration::minutes(2));
         if near_expiry {
             tracing::info!(
                 target: "switchboard.swap",
@@ -803,6 +844,9 @@ pub async fn swap_to_account(
         }
     }
 
+    if let Some(guardian) = state.keychain_guardian.lock().take() {
+        guardian.cancel();
+    }
     state
         .accounts
         .swap_to(slot)
@@ -890,6 +934,12 @@ pub async fn refresh_account(
 ) -> Result<(), String> {
     state.backoff_by_slot.write().remove(&slot);
     let active = *state.active_slot.read();
+    if let Some(account) = state.accounts.get(slot).map_err(err_to_string)? {
+        if !account.can_refresh() {
+            state.force_refresh.notify_one();
+            return Ok(());
+        }
+    }
     if Some(slot) == active {
         state.force_refresh.notify_one();
         return Ok(());

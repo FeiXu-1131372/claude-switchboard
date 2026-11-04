@@ -156,6 +156,17 @@ async fn fetch_and_apply_one(
     // adding a lock or capturing the value at the call site.
     let active_slot = *state.active_slot.read();
 
+    if !acc.supports_usage() {
+        let cached = placeholder_cached(&acc, "usage_not_supported");
+        state.cached_usage_by_slot.write().insert(slot, cached.clone());
+        if Some(slot) == active_slot {
+            *state.cached_usage.write() = Some(cached.clone());
+            tray::set_level(handle, None, None, None, None, false);
+        }
+        let _ = handle.emit("usage_updated", json!({ "slot": slot, "cached": cached }));
+        return;
+    }
+
     // Shared-snapshot fast path (active slot only): when an external poller
     // — the user's statusline daemon — already has fresh data for the live
     // account, adopt it instead of spending the account's scarce /usage rate
@@ -397,7 +408,7 @@ async fn poll_all(
     let active_slot = live.as_ref().and_then(|l| {
         accounts
             .iter()
-            .find(|a| a.account_uuid == l.account_uuid)
+            .find(|a| a.matches_credentials(&l.claude_code_oauth_blob, &l.oauth_account_blob))
             .map(|a| a.slot)
     });
     let prev_active_slot = std::mem::replace(&mut *state.active_slot.write(), active_slot);
@@ -548,7 +559,7 @@ fn placeholder_cached(
             unknown: Default::default(),
         },
         account_id: acc.account_uuid.clone(),
-        account_email: acc.email.clone(),
+        account_email: acc.display_name(),
         last_error: Some(err.to_string()),
         burn_rate: None,
         auth_source: AuthSource::OAuth,
@@ -813,6 +824,7 @@ mod tests {
             ManagedAccount {
                 slot,
                 email: format!("slot{slot}@example.com"),
+                label: None,
                 account_uuid: uuid.to_string(),
                 organization_uuid: None,
                 organization_name: None,
@@ -820,7 +832,7 @@ mod tests {
                 source: AddSource::OAuth,
                 claude_code_oauth_blob: serde_json::json!({}),
                 oauth_account_blob: serde_json::json!({}),
-                token_expires_at: Utc::now(),
+                token_expires_at: Some(Utc::now()),
                 added_at: Utc::now(),
                 last_seen_active: None,
             }

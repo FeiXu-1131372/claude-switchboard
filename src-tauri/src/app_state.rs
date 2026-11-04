@@ -139,6 +139,8 @@ pub struct AppState {
     pub cached_usage: RwLock<Option<CachedUsage>>,
     pub force_refresh: Notify,
     pub accounts: Arc<AccountManager>,
+    /// Serialize token replacement with account switches across windows.
+    pub account_change_lock: tokio::sync::Mutex<()>,
     pub cached_usage_by_slot: RwLock<HashMap<u32, CachedUsage>>,
     pub active_slot: RwLock<Option<u32>>,
     /// When the live Claude Code account last changed — a swap, an external

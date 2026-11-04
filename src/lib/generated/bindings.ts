@@ -161,6 +161,14 @@ async addAccountFromClaudeCode() : Promise<Result<number, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async importLongLivedToken(accessToken: string, label: string | null, replaceSlot: number | null) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("import_long_lived_token", { accessToken, label, replaceSlot }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e as any };
+}
+},
 async removeAccount(slot: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("remove_account", { slot }) };
@@ -439,13 +447,17 @@ async listResumableSessions() : Promise<Result<SessionSummary[], string>> {
 
 /** user-defined types **/
 
-export type AccountListEntry = { slot: number; email: string; 
+export type AccountListEntry = { slot: number;
 /**
- * The stable UUID that identifies this account in the SQLite `accounts`
- * table. Pass this as `accountId` to all warmup-related Tauri commands.
+ * Display label, falling back to the verified email when available.
+ */
+email: string;
+/**
+ * Stable local account identifier (a UUID or token fingerprint).
+ * Pass this as `accountId` to warmup-related Tauri commands.
  */
 account_uuid: string; org_name: string | null; org_uuid: string | null; subscription_type: string | null; source: AddSource; is_active: boolean; cached_usage: CachedUsage | null; last_error: string | null }
-export type AddSource = "OAuth" | "ImportedFromClaudeCode"
+export type AddSource = "OAuth" | "ImportedFromClaudeCode" | "LongLivedToken"
 export type AuthSource = "OAuth" | "ClaudeCode"
 /**
  * Linear projection of where 5h utilization will land at the current

@@ -249,8 +249,12 @@ export function AccountRow({
   }, [warmupStatus]);
 
   const errLabel = (() => {
+    if (entry.last_error === 'usage_not_supported')
+      return 'Usage tracking unavailable for this token';
     if (entry.last_error === 'auth_required')
-      return 'token expired — re-authenticate';
+      return entry.source === 'LongLivedToken'
+        ? 'token expired — replace token'
+        : 'token expired — re-authenticate';
     // Transient failures (429, timeout, network) only replace the meters when
     // there's no usable snapshot to fall back on.
     if (entry.last_error && !hasUsableData) return 'usage unavailable';
@@ -305,6 +309,11 @@ export function AccountRow({
           {entry.email}
         </span>
         <PlanBadge plan={entry.subscription_type ?? null} />
+        {entry.source === 'LongLivedToken' && (
+          <span className="text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]" title="Long-lived token; expiry is unknown. Replace it when it expires.">
+            Token
+          </span>
+        )}
         {entry.is_active && (
           <span
             className="
@@ -427,6 +436,17 @@ export function AccountRow({
                     </div>
                   </div>
                 ) : (
+                  <>
+                  {entry.source === 'LongLivedToken' && onReauth && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => { setMenuOpen(false); onReauth(); }}
+                      className="w-full rounded-[var(--radius-sm)] px-[var(--space-xs)] py-[var(--space-xs)] text-left text-[length:var(--text-label)] text-[color:var(--color-text-secondary)] hover:bg-[var(--color-bg-card)]"
+                    >
+                      Replace token…
+                    </button>
+                  )}
                   <button
                     type="button"
                     role="menuitem"
@@ -444,6 +464,7 @@ export function AccountRow({
                     <Trash2 size={12} />
                     Remove account…
                   </button>
+                  </>
                 )}
                 {removeError && (
                   <p className="px-[var(--space-xs)] pt-[var(--space-xs)] text-[length:var(--text-micro)] text-[color:var(--color-danger)]">
@@ -477,7 +498,7 @@ export function AccountRow({
                 focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] focus-visible:outline-offset-2
               "
             >
-              {reauthBusy ? 'Opening browser…' : 'Re-authenticate'}
+              {entry.source === 'LongLivedToken' ? 'Replace token' : reauthBusy ? 'Opening browser…' : 'Re-authenticate'}
             </button>
           )}
         </div>

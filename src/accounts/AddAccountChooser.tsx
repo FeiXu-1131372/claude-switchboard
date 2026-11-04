@@ -2,18 +2,23 @@ import { useState } from 'react';
 import { ipc } from '../lib/ipc';
 import { useAppStore } from '../lib/store';
 import { AuthPanel } from '../settings/AuthPanel';
+import { ImportTokenPanel } from './ImportTokenPanel';
+import type { AccountListEntry } from '../lib/generated/bindings';
 
 interface Props {
   onClose: () => void;
+  onBusyChange?: (busy: boolean) => void;
+  tokenAccount?: AccountListEntry | null;
   /** 'modal' hides the in-body heading and Cancel — parent ModalShell provides them. Default 'modal'. */
   presentation?: 'modal' | 'fullpane';
 }
 
-export function AddAccountChooser({ onClose, presentation = 'modal' }: Props) {
+export function AddAccountChooser({ onClose, onBusyChange, tokenAccount, presentation = 'modal' }: Props) {
   const refreshAccounts = useAppStore((s) => s.refreshAccounts);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showOauth, setShowOauth] = useState(false);
+  const [showToken, setShowToken] = useState(!!tokenAccount);
 
   async function importLive() {
     setError(null);
@@ -30,7 +35,11 @@ export function AddAccountChooser({ onClose, presentation = 'modal' }: Props) {
   }
 
   if (showOauth) {
-    return <AuthPanel presentation={presentation} onBack={() => setShowOauth(false)} onSuccess={onClose} />;
+    return <AuthPanel presentation={presentation} onBack={() => setShowOauth(false)} onSuccess={onClose} onBusyChange={onBusyChange} />;
+  }
+
+  if (showToken) {
+    return <ImportTokenPanel account={tokenAccount} onBack={tokenAccount ? onClose : () => setShowToken(false)} onSuccess={onClose} onBusyChange={onBusyChange} />;
   }
 
   return (
@@ -54,11 +63,23 @@ export function AddAccountChooser({ onClose, presentation = 'modal' }: Props) {
       <button
         type="button"
         onClick={() => setShowOauth(true)}
+        disabled={busy}
         className="rounded-[var(--radius-sm)] border border-[var(--color-border)] px-[var(--space-md)] py-[var(--space-sm)] text-left hover:bg-[var(--color-track)]"
       >
         <div className="text-[length:var(--text-body)]">Sign in with a different account</div>
         <div className="text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]">
           Opens browser for paste-back OAuth
+        </div>
+      </button>
+      <button
+        type="button"
+        onClick={() => setShowToken(true)}
+        disabled={busy}
+        className="rounded-[var(--radius-sm)] border border-[var(--color-border)] px-[var(--space-md)] py-[var(--space-sm)] text-left hover:bg-[var(--color-track)]"
+      >
+        <div className="text-[length:var(--text-body)]">Import long-lived token</div>
+        <div className="text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]">
+          Paste a setup-token without signing in
         </div>
       </button>
       {error && (

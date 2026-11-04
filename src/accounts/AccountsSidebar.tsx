@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion';
+import { useState } from 'react';
 import { useAppStore } from '../lib/store';
 import { IconButton } from '../components/ui/IconButton';
 import { AccountRow } from './AccountRow';
@@ -9,6 +10,7 @@ import { IconRefresh } from '../lib/icons';
 import { useAccountManagement } from './useAccountManagement';
 
 export function AccountsSidebar() {
+  const [importBusy, setImportBusy] = useState(false);
   const thresholds = useAppStore(
     (s) => (s.settings?.thresholds ?? [75, 90]) as [number, number],
   );
@@ -23,6 +25,7 @@ export function AccountsSidebar() {
     refreshing,
     reauthSlot,
     chooserOpen,
+    tokenAccount,
     requestSwap,
     confirmSwap,
     cancelSwap,
@@ -98,8 +101,8 @@ export function AccountsSidebar() {
       </div>
 
       {chooserOpen && (
-        <ModalShell id="add-account-chooser" onDismiss={closeChooser} title="Add account">
-          <AddAccountChooser presentation="modal" onClose={closeChooser} />
+        <ModalShell id="add-account-chooser" onDismiss={closeChooser} title={tokenAccount ? 'Replace token' : 'Add account'} dismissable={!importBusy}>
+          <AddAccountChooser presentation="modal" onClose={closeChooser} tokenAccount={tokenAccount} onBusyChange={setImportBusy} />
         </ModalShell>
       )}
 

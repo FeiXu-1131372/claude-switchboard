@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion';
+import { useState } from 'react';
 import { useAppStore } from '../lib/store';
 import { IconButton } from '../components/ui/IconButton';
 import { AccountRow } from './AccountRow';
@@ -14,6 +15,7 @@ interface Props {
 }
 
 export function AccountsPanel({ onBack }: Props) {
+  const [importBusy, setImportBusy] = useState(false);
   const thresholds = useAppStore(
     (s) => (s.settings?.thresholds ?? [75, 90]) as [number, number],
   );
@@ -28,6 +30,7 @@ export function AccountsPanel({ onBack }: Props) {
     refreshing,
     reauthSlot,
     chooserOpen,
+    tokenAccount,
     requestSwap,
     confirmSwap,
     cancelSwap,
@@ -108,8 +111,8 @@ export function AccountsPanel({ onBack }: Props) {
       </div>
 
       {chooserOpen && (
-        <ModalShell id="add-account-chooser" onDismiss={closeChooser} title="Add account">
-          <AddAccountChooser presentation="modal" onClose={closeChooser} />
+        <ModalShell id="add-account-chooser" onDismiss={closeChooser} title={tokenAccount ? 'Replace token' : 'Add account'} dismissable={!importBusy}>
+          <AddAccountChooser presentation="modal" onClose={closeChooser} tokenAccount={tokenAccount} onBusyChange={setImportBusy} />
         </ModalShell>
       )}
 

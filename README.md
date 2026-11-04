@@ -150,7 +150,9 @@ For accounts you haven't logged into with `claude` yet, Switchboard runs a stand
   <img src="docs/screenshots/macos-oauth-complete.png" alt="Authorization complete confirmation in the browser, plus the in-app auth method picker with sign-in and long-lived-token options" width="880" />
 </p>
 
-Credentials live in your OS keychain. They never leave the device. Switchboard never logs in on your behalf — it only reads tokens your OS already holds and uses them against `api.anthropic.com`.
+Already have a token from `claude setup-token`? Choose **Import long-lived token** and paste it into the masked field. An optional label helps you recognize it; no browser login, account metadata file, or running Claude Code process is required.
+
+Managed credentials are stored locally in `accounts.json`. Switching writes the selected credentials to the macOS Keychain or Windows Claude Code credential file. Switchboard sends these OAuth tokens only to Anthropic's official API for profile checks, usage polling, and opt-in warm-ups.
 
 ---
 
@@ -265,12 +267,15 @@ Update integrity: every release artifact is signed with our ed25519 updater key,
 
 Switchboard manages as many Claude accounts as you have. Each account lives in its own slot with its own polled usage; the **Accounts** sub-screen shows all of them stacked, with the currently-active one highlighted. Every slot has a **Switch account** button — click it to make Claude Code (CLI and the VS Code extension) point at that account.
 
-Two ways to add an account:
+Three ways to add an account:
 
 1. **Import the upstream login** — sign in with `claude login` first, then in Switchboard hit "Use upstream's current login". Captures the live credentials in one click.
 2. **OAuth in-app** — opens a local-redirect OAuth flow. Useful for adding accounts you haven't logged into via `claude` yet.
+3. **Import long-lived token** — paste the OAuth token produced by `claude setup-token`, optionally give it a label, then select **Add account**. Available on Windows and macOS, including first-run setup. Importing does not change the active Claude Code account; select **Switch account** separately when ready.
 
-The app never logs in on your behalf. It only reads tokens your OS already holds and uses them against `api.anthropic.com`.
+**Token-only limitations.** Switchboard checks the profile endpoint without making a model request. If profile permission is available, it uses the verified identity. Inference-only tokens cannot reveal an email, account UUID, or usage limits, so they appear as **Token account N** (or your label), with usage tracking explicitly unavailable. Switchboard does not invent an identity or mistake a missing profile scope for an expired login. The opaque token does not reveal its expiry, so imported expiry is shown as unknown rather than assumed to be one year from import. Imported tokens have no refresh token; use the account menu's **Replace token…** action when necessary. Switch to another account before replacing an active token.
+
+Keep tokens private: anyone holding one can spend the account's quota. An imported token does not create a new subscription or separate quota. Removing an entry from Switchboard does not revoke the token with Anthropic. Existing browser sign-ins and duplicate accounts are not overwritten by token import.
 
 **Hot reload, not restart.** A swap rewrites the OS-level credentials atomically — running Claude Code sessions pick up the new account within ~30 seconds (Claude Code's own keychain cache TTL on macOS, one API tick on Windows). A 60-second `KeychainGuardian` protects against the narrow race where a Claude Code process started its OAuth refresh just before the swap.
 

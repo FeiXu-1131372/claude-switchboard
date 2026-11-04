@@ -23,6 +23,8 @@ export const ipc = {
 
   listAccounts: () => commands.listAccounts().then(unwrap),
   addAccountFromClaudeCode: () => commands.addAccountFromClaudeCode().then(unwrap),
+  importLongLivedToken: (accessToken: string, label: string | null, replaceSlot: number | null) =>
+    commands.importLongLivedToken(accessToken, label, replaceSlot).then(unwrap),
   removeAccount: (slot: number) => commands.removeAccount(slot).then(unwrap),
   swapToAccount: (slot: number) => commands.swapToAccount(slot).then(unwrap),
   detectRunningClaudeCode: () => commands.detectRunningClaudeCode().then(unwrap),

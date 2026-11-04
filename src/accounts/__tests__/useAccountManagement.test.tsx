@@ -109,6 +109,17 @@ describe('useAccountManagement', () => {
     expect(result.current.reauthSlot).toBe(2);
   });
 
+  it('opens token replacement without browser OAuth for imported tokens', async () => {
+    const { result } = renderHook(() => useAccountManagement());
+    const account = { ...ACCOUNTS[1], source: 'LongLivedToken' };
+    await act(async () => { await result.current.handleReauth(account as any); });
+    expect(result.current.tokenAccount?.slot).toBe(2);
+    expect(result.current.chooserOpen).toBe(true);
+    expect(ipcMock.startOauthFlow).not.toHaveBeenCalled();
+    act(() => result.current.closeChooser());
+    expect(result.current.tokenAccount).toBeNull();
+  });
+
   it('reauth listener clears reauthSlot on oauth_complete', async () => {
     const { result } = renderHook(() => useAccountManagement());
     await act(async () => { await result.current.handleReauth(ACCOUNTS[1] as any); });
