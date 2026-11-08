@@ -131,7 +131,7 @@ describe('UsageSummary collapsible details', () => {
     expect(labelRow.textContent).not.toContain('19');
     // Exactly one reset countdown per bucket — not duplicated below the meter.
     expect(screen.getAllByText(/^1h \d+m$/)).toHaveLength(1);
-    expect(screen.getAllByText(/^2[56]h \d+m$/)).toHaveLength(1);
+    expect(screen.getAllByText(/^1d [12]h$/)).toHaveLength(1);
   });
 
   it('keeps the burn-rate projection as the sole bottom caption when present', () => {
