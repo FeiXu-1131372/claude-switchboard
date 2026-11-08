@@ -41,6 +41,132 @@ vi.mock('../lib/store', async () => {
 
 import { TrendsTab } from './TrendsTab';
 
+/** Tokens and spend disagree on purpose: the cheap day has 100× the tokens. */
+const DIVERGENT_TRENDS: DailyBucket[] = [
+  { date: '2026-07-24', input_tokens: 1_000_000, output_tokens: 0, cost_usd: 0.1 },
+  { date: '2026-07-25', input_tokens: 10_000, output_tokens: 0, cost_usd: 5 },
+];
+
+describe('TrendsTab — chart metric', () => {
+  beforeEach(() => {
+    ipcMock.getDailyTrends.mockResolvedValue(DIVERGENT_TRENDS);
+    ipcMock.getDailyModelBreakdown.mockResolvedValue([]);
+  });
+
+  it('sizes bars by money spent by default', async () => {
+    render(<TrendsTab />);
+    const cheap = await screen.findByTestId('day-bar-2026-07-24');
+    const pricey = screen.getByTestId('day-bar-2026-07-25');
+    expect(parseFloat(pricey.style.height)).toBeCloseTo(100, 0);
+    expect(parseFloat(cheap.style.height)).toBeCloseTo(2, 0); // $0.10 / $5.00
+  });
+
+  it('switches bar heights to tokens when Tokens is selected', async () => {
+    render(<TrendsTab />);
+    await screen.findByTestId('day-bar-2026-07-24');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tokens' }));
+
+    const cheap = screen.getByTestId('day-bar-2026-07-24');
+    const pricey = screen.getByTestId('day-bar-2026-07-25');
+    expect(parseFloat(cheap.style.height)).toBeCloseTo(100, 0);
+    expect(parseFloat(pricey.style.height)).toBeCloseTo(1, 0); // 10k / 1M
+  });
+
+  it('leads the bar label with the selected metric', async () => {
+    render(<TrendsTab />);
+    expect(
+      await screen.findByRole('button', { name: 'Jul 24: $0.10, 1.0M tokens' }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tokens' }));
+    expect(
+      screen.getByRole('button', { name: 'Jul 24: 1.0M tokens, $0.10' }),
+    ).toBeInTheDocument();
+  });
+});
+
+const WEEKLY_TRENDS: DailyBucket[] = [
+  { date: '2026-07-20', input_tokens: 1_000_000, output_tokens: 0, cost_usd: 1 },
+  { date: '2026-07-22', input_tokens: 2_000_000, output_tokens: 0, cost_usd: 2 },
+  { date: '2026-07-27', input_tokens: 4_000_000, output_tokens: 0, cost_usd: 4 },
+];
+
+const WEEKLY_BREAKDOWN: DailyModelBucket[] = [
+  {
+    date: '2026-07-20',
+    models: [
+      { model: 'claude-sonnet-4-6', input_tokens: 1_000_000, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, cost_usd: 1 },
+    ],
+  },
+  {
+    date: '2026-07-22',
+    models: [
+      { model: 'claude-sonnet-4-6', input_tokens: 2_000_000, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, cost_usd: 2 },
+    ],
+  },
+];
+
+describe('TrendsTab — ranges and weekly bars', () => {
+  beforeEach(() => {
+    ipcMock.getDailyTrends.mockResolvedValue(WEEKLY_TRENDS);
+    ipcMock.getDailyModelBreakdown.mockResolvedValue(WEEKLY_BREAKDOWN);
+  });
+
+  it('offers ranges longer than 30 days and refetches for them', async () => {
+    render(<TrendsTab />);
+    await screen.findByTestId('day-bar-2026-07-20');
+    expect(ipcMock.getDailyTrends).toHaveBeenCalledWith(30);
+
+    fireEvent.click(screen.getByRole('button', { name: '1y' }));
+    await waitFor(() => expect(ipcMock.getDailyTrends).toHaveBeenCalledWith(365));
+    expect(ipcMock.getDailyModelBreakdown).toHaveBeenCalledWith(365);
+  });
+
+  it('defaults the 90-day range to weekly bars', async () => {
+    render(<TrendsTab />);
+    await screen.findByTestId('day-bar-2026-07-20');
+
+    fireEvent.click(screen.getByRole('button', { name: '90d' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Weekly' })).toHaveAttribute('aria-pressed', 'true'),
+    );
+  });
+
+  it('aggregates daily buckets into one bar per week', async () => {
+    render(<TrendsTab />);
+    await screen.findByTestId('day-bar-2026-07-20');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Weekly' }));
+
+    const firstWeek = await screen.findByTestId('day-bar-2026-07-20');
+    const secondWeek = screen.getByTestId('day-bar-2026-07-27');
+    expect(screen.queryByTestId('day-bar-2026-07-22')).toBeNull();
+    // $3.00 against the $4.00 maximum = 75%
+    expect(parseFloat(firstWeek.style.height)).toBeCloseTo(75, 0);
+    expect(parseFloat(secondWeek.style.height)).toBeCloseTo(100, 0);
+    // $3–$4 weeks are not "heavy" spend — the daily $3 danger threshold must
+    // not turn every weekly bar red.
+    expect(firstWeek.className).toContain('bg-[var(--color-accent)]');
+    expect(
+      screen.getByRole('button', { name: 'Jul 20 – Jul 26: $3.00, 3.0M tokens' }),
+    ).toBeInTheDocument();
+  });
+
+  it('rolls a selected week’s model breakdown up across its days', async () => {
+    render(<TrendsTab />);
+    await screen.findByTestId('day-bar-2026-07-20');
+    fireEvent.click(screen.getByRole('button', { name: 'Weekly' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: /Jul 20 – Jul 26/ }));
+    const panel = await screen.findByTestId('day-breakdown-panel');
+    expect(within(panel).getByText('Week of Jul 20')).toBeInTheDocument();
+    expect(within(panel).getByText('sonnet 4-6')).toBeInTheDocument();
+    expect(within(panel).getByText('3.0M')).toBeInTheDocument();
+    expect(within(panel).getByText('$3.00')).toBeInTheDocument();
+  });
+});
+
 describe('TrendsTab — day breakdown panel', () => {
   beforeEach(() => {
     ipcMock.getDailyTrends.mockClear();
@@ -59,9 +185,9 @@ describe('TrendsTab — day breakdown panel', () => {
     expect(badges.map((b) => b.textContent)).toEqual(['sonnet 4-6', 'opus 4-7', 'haiku 4-5']);
 
     const sonnetFill = within(panel).getByTestId('model-fill-claude-sonnet-4-6');
-    // day total = 8_000_000 + 4_400_000 = 12_400_000; sonnet total = 6_000_000 + 2_100_000 = 8_100_000
-    // 8_100_000 / 12_400_000 * 100 = 65.32258064516129 — NOT the 30-day aggregate ModelsTab uses
-    expect(parseFloat(sonnetFill.style.width)).toBeCloseTo(65.32, 1);
+    // The fill follows the Spent metric: $2.94 / $4.82 = 60.99585% — NOT the
+    // 30-day aggregate ModelsTab uses.
+    expect(parseFloat(sonnetFill.style.width)).toBeCloseTo(61.0, 1);
   });
 
   it('collapses the panel when the same bar is clicked again', async () => {

@@ -37,7 +37,9 @@ const TAB_WINDOW_DAYS: Record<string, number | undefined> = {
   browse: undefined,
   cost: WINDOW_DAYS,
   models: 30,
-  trends: 30,
+  // Trends owns its own range selector (7d → 1y), so a fixed header window
+  // would be wrong as soon as the user changes it.
+  trends: undefined,
   projects: 30,
   heatmap: 180,
   cache: 30,
