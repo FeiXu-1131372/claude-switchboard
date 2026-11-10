@@ -27,6 +27,18 @@ CREATE TABLE IF NOT EXISTS api_snapshots (
 CREATE INDEX IF NOT EXISTS idx_snapshots_account_time
     ON api_snapshots(account_id, fetched_at DESC);
 
+CREATE TABLE IF NOT EXISTS warmup_runs (
+    account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+    claim_token TEXT,
+    lease_until INTEGER NOT NULL DEFAULT 0,
+    completed_fire INTEGER,
+    last_attempt_at INTEGER,
+    last_success_at INTEGER,
+    last_result TEXT,
+    last_error TEXT,
+    next_retry_at INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS session_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts INTEGER NOT NULL,

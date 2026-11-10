@@ -33,7 +33,15 @@ impl Db {
     /// correctness. Used by `claude-switchboard --tick` so the dispatcher
     /// can run alongside a running GUI without lock contention.
     pub fn open_for_tick(dir: &Path) -> Result<Self> {
-        Self::open_inner(dir, /*lock = */ false)
+        std::fs::create_dir_all(dir).context("create tick db dir")?;
+        // A periodic process must never mistake a busy/temporarily unreadable
+        // database for corruption and rename the GUI's live database.
+        let conn = Connection::open(dir.join("data.db")).context("open tick database")?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        conn.execute_batch(include_str!("schema.sql")).context("apply tick schema")?;
+        let mut db = Self { conn: Mutex::new(conn), _lock: None, recovered: false };
+        db.migrate()?;
+        Ok(db)
     }
 
     fn open_inner(dir: &Path, lock: bool) -> Result<Self> {
@@ -100,13 +108,13 @@ impl Db {
     }
 
     /// Create a brand-new SQLite database with the current schema and stamp
-    /// schema_version=10 so that migrate() skips steps meant for older upgrades.
+    /// schema_version=11 so that migrate() skips steps meant for older upgrades.
     fn create_fresh_db(db_path: &Path) -> Result<Connection> {
         let conn = Connection::open(db_path).context("open sqlite")?;
         conn.execute_batch(include_str!("schema.sql")).context("apply schema")?;
         conn.execute(
             "INSERT OR REPLACE INTO schema_version (version) VALUES (?1)",
-            [10_i64],
+            [11_i64],
         )
         .context("stamp schema version")?;
         Ok(conn)
@@ -179,9 +187,14 @@ impl Db {
                 .context("apply migration 0010")?;
         }
 
+        if current < 11 {
+            conn.execute_batch(include_str!("migrations/0011_warmup_runs.sql"))
+                .context("apply migration 0011")?;
+        }
+
         conn.execute(
             "INSERT OR REPLACE INTO schema_version (version) VALUES (?1)",
-            [10_i64],
+            [11_i64],
         )?;
         Ok(())
     }
@@ -640,14 +653,38 @@ mod tests {
     }
 
     #[test]
-    fn fresh_database_is_stamped_at_version_10() {
+    fn fresh_database_is_stamped_at_version_11() {
         let dir = tempdir().unwrap();
         let db = Db::open(dir.path()).unwrap();
         let version: i64 = db
             .conn()
             .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 10, "create_fresh_db and migrate() must both stamp 10");
+        assert_eq!(version, 11, "create_fresh_db and migrate() must both stamp 11");
+    }
+
+    #[test]
+    fn tick_does_not_replace_a_corrupt_database() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("data.db");
+        std::fs::write(&path, b"invalid database fixture").unwrap();
+        assert!(Db::open_for_tick(dir.path()).is_err());
+        assert_eq!(std::fs::read(path).unwrap(), b"invalid database fixture");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn warmup_upgrade_preserves_enabled_accounts_and_schedules() {
+        let dir = tempdir().unwrap();
+        let db = Db::open(dir.path()).unwrap();
+        let schedule = r#"{"type":"Every5h","anchor":{"hour":4,"minute":0}}"#;
+        db.conn().execute("INSERT INTO accounts(id,email,last_seen_at,warmup_enabled,schedule) VALUES ('upgrade','fixture@example.invalid',0,1,?1)", [schedule]).unwrap();
+        db.conn().execute_batch("DROP TABLE warmup_runs; DELETE FROM schema_version; INSERT INTO schema_version VALUES (10);").unwrap();
+        drop(db);
+        let upgraded = Db::open_for_tick(dir.path()).unwrap();
+        let actual: (i64,String) = upgraded.conn().query_row("SELECT warmup_enabled,schedule FROM accounts WHERE id='upgrade'", [], |r| Ok((r.get(0)?,r.get(1)?))).unwrap();
+        assert_eq!(actual, (1, schedule.into()));
+        assert!(crate::scheduler::claim::run_state(&upgraded.conn(), "upgrade").is_ok());
     }
 
     /// 0009 adds the compactions table and, like 0008, clears cursors so the
