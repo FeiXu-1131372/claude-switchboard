@@ -17,6 +17,7 @@ import {
 import { ipc } from '../lib/ipc';
 import { WarmupSettings } from './WarmupSettings';
 import { StatuslineBridgeCard } from './StatuslineBridgeCard';
+import { AccountRotationSettings } from './AccountRotationSettings';
 
 const POLL_MIN_SECS = 60;
 const POLL_MAX_SECS = 1800;
@@ -220,6 +221,9 @@ export function SettingsPanel() {
         </Card>
         <StatuslineBridgeCard />
       </section>
+
+      <AccountRotationSettings value={local.account_rotation} accounts={accounts}
+        onChange={(value) => update('account_rotation', value)} />
 
       {/* Thresholds */}
       <section className="flex flex-col gap-[var(--space-sm)]">

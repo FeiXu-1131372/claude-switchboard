@@ -104,6 +104,7 @@ export const useAppStore = create<AppStore>((set, _get) => ({
           set({
             accounts: e.payload,
             activeSlot: e.payload.find((a) => a.is_active)?.slot ?? null,
+            usage: e.payload.find((a) => a.is_active)?.cached_usage ?? null,
           });
           break;
         case 'auth_required_for_slot':
