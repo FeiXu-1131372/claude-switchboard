@@ -881,11 +881,17 @@ mod tests {
         write_obs(dir.path(), "a.1.json", &o);
         let first = freshest_for_slot(dir.path(), &ctx(&t, None)).unwrap().0;
         assert_eq!(first.five_hour.unwrap().utilization, 33.0);
+        let first_len = std::fs::metadata(dir.path().join("a.1.json")).unwrap().len();
 
         // Longer content, so (mtime, len) changes even on a coarse clock.
-        o.rate_limits.as_mut().unwrap().five_hour = Some(window(45.5, 3600));
+        o.rate_limits.as_mut().unwrap().five_hour = Some(window(45.55, 3600));
         write_obs(dir.path(), "a.1.json", &o);
+        assert_ne!(
+            std::fs::metadata(dir.path().join("a.1.json")).unwrap().len(),
+            first_len,
+            "the rewrite must invalidate the cache even when mtime is unchanged"
+        );
         let second = freshest_for_slot(dir.path(), &ctx(&t, None)).unwrap().0;
-        assert_eq!(second.five_hour.unwrap().utilization, 45.5);
+        assert_eq!(second.five_hour.unwrap().utilization, 45.55);
     }
 }
