@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## v1.4.0 — 2026-11-10
+
 ### Added
 
 - **Clearer session costs.** Cost rows show their session titles, with the project kept in the detail line. Sessions project groups show the total cost of their visible rows, respecting filters and omitting unmeasured usage.
@@ -182,7 +184,9 @@ First public release. See the [GitHub release notes](https://github.com/FeiXu-11
 - Settings persistence via SQLite; CSP set; corrupted-DB recovery.
 - Anthropic-warm token system with native vibrancy (macOS) / Mica (Windows 11) / translucent solid (Windows 10).
 
-[Unreleased]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.3.1...v1.4.0
+
 [1.3.1]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.1.3...v1.2.0
