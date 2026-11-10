@@ -125,6 +125,64 @@ describe('ExpandedReport shell', () => {
     expect(screen.getByText('SessionsBrowserTab stub')).toBeInTheDocument();
   });
 
+  it('only the selected tab is in the tab order', () => {
+    render(<ExpandedReport />);
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.filter((t) => t.tabIndex === 0)).toHaveLength(1);
+    expect(tabs.find((t) => t.tabIndex === 0)).toHaveTextContent('Sessions');
+    expect(tabs.filter((t) => t.tabIndex === -1)).toHaveLength(tabs.length - 1);
+  });
+
+  it('arrow keys move and select, wrapping at the ends', () => {
+    render(<ExpandedReport />);
+    const sessions = screen.getByRole('tab', { name: 'Sessions' });
+    sessions.focus();
+    fireEvent.keyDown(sessions, { key: 'ArrowLeft' });
+    const providers = screen.getByRole('tab', { name: 'Providers' });
+    expect(providers).toHaveAttribute('aria-selected', 'true');
+    expect(providers).toHaveFocus();
+    expect(screen.getByText('ProvidersTab stub')).toBeInTheDocument();
+
+    fireEvent.keyDown(providers, { key: 'ArrowRight' });
+    expect(screen.getByRole('tab', { name: 'Sessions' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Sessions' })).toHaveFocus();
+
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Sessions' }), { key: 'ArrowRight' });
+    expect(screen.getByRole('tab', { name: 'Cost' })).toHaveFocus();
+  });
+
+  it('Home and End jump to the first and last tab', () => {
+    render(<ExpandedReport />);
+    const sessions = screen.getByRole('tab', { name: 'Sessions' });
+    sessions.focus();
+    fireEvent.keyDown(sessions, { key: 'End' });
+    expect(screen.getByRole('tab', { name: 'Providers' })).toHaveFocus();
+    expect(screen.getByRole('tab', { name: 'Providers' })).toHaveAttribute('aria-selected', 'true');
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Providers' }), { key: 'Home' });
+    expect(screen.getByRole('tab', { name: 'Sessions' })).toHaveFocus();
+    expect(screen.getByRole('tab', { name: 'Sessions' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('other keys are left alone', () => {
+    render(<ExpandedReport />);
+    const sessions = screen.getByRole('tab', { name: 'Sessions' });
+    sessions.focus();
+    fireEvent.keyDown(sessions, { key: 'a' });
+    expect(sessions).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('the panel is labelled by its tab', () => {
+    render(<ExpandedReport />);
+    const panel = screen.getByRole('tabpanel');
+    expect(panel).toHaveAttribute('aria-labelledby', 'report-tab-browse');
+    expect(panel).toHaveAttribute('tabindex', '0');
+    expect(screen.getByRole('tab', { name: 'Sessions' })).toHaveAttribute('id', 'report-tab-browse');
+    expect(screen.getByRole('tab', { name: 'Sessions' })).toHaveAttribute('aria-controls', panel.id);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Trends' }));
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'report-tab-trends');
+  });
+
   it('still opens and switches tabs when storage is blocked', () => {
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('blocked');

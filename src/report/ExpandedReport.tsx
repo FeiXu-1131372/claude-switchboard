@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type UIEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type KeyboardEvent, type UIEvent } from 'react';
 import { motion } from 'framer-motion';
 import { IconButton } from '../components/ui/IconButton';
 import { SessionsTab, WINDOW_DAYS } from './SessionsTab';
@@ -220,11 +220,21 @@ export function ExpandedReport() {
           <div
             ref={scrollRef}
             data-testid="report-scroll"
+            role="tabpanel"
+            id={PANEL_ID}
+            aria-labelledby={tabDomId(activeTab)}
+            // Focusable so the keyboard can reach and scroll a panel that has
+            // no focusable content of its own (Trends, an empty state).
+            tabIndex={0}
             onScroll={handleScroll}
             onWheel={stopRestoring}
             onPointerDown={stopRestoring}
             onKeyDown={stopRestoring}
-            className="flex-1 overflow-y-auto px-[var(--space-2xl)] pb-[var(--space-2xl)] pt-[var(--space-lg)]"
+            className="
+              flex-1 overflow-y-auto px-[var(--space-2xl)] pb-[var(--space-2xl)] pt-[var(--space-lg)]
+              outline-none focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]
+              focus-visible:-outline-offset-2
+            "
           >
             <motion.div
               ref={contentRef}
@@ -245,11 +255,21 @@ export function ExpandedReport() {
   );
 }
 
+const PANEL_ID = 'report-panel';
+
+function tabDomId(id: string): string {
+  return `report-tab-${id}`;
+}
+
 /* ───────────────────────── TabBar ─────────────────────────
  *
  * Horizontal text nav with one moving underline that slides between tabs
  * (Apple's site nav, Linear's view switcher). Layout-tracked via refs so the
  * underline matches the actual rendered button width — no manual measuring.
+ *
+ * Keyboard follows the ARIA tabs pattern: the tab list is one stop in the Tab
+ * order (the selected tab), and Left/Right/Home/End move between tabs,
+ * selecting as they go. Tab from there lands in the panel.
  */
 function TabBar({
   activeId,
@@ -291,6 +311,22 @@ function TabBar({
     return () => ro.disconnect();
   }, [activeId, tabs.length]);
 
+  function handleKeyDown(e: KeyboardEvent<HTMLButtonElement>) {
+    const index = tabs.findIndex((t) => t.id === activeId);
+    const last = tabs.length - 1;
+    const to: Record<string, number> = {
+      ArrowRight: index >= last ? 0 : index + 1,
+      ArrowLeft: index <= 0 ? last : index - 1,
+      Home: 0,
+      End: last,
+    };
+    const next = tabs[to[e.key]];
+    if (!next) return;
+    e.preventDefault();
+    onSelect(next.id);
+    buttonRefs.current[next.id]?.focus();
+  }
+
   return (
     <div
       ref={containerRef}
@@ -311,9 +347,13 @@ function TabBar({
               buttonRefs.current[tab.id] = el;
             }}
             role="tab"
+            id={tabDomId(tab.id)}
             aria-selected={active}
+            aria-controls={PANEL_ID}
+            tabIndex={active ? 0 : -1}
             type="button"
             onClick={() => onSelect(tab.id)}
+            onKeyDown={handleKeyDown}
             className={[
               'relative inline-flex items-center',
               'h-[44px]',
