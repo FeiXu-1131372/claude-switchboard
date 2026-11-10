@@ -1,0 +1,114 @@
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const ipcMock = vi.hoisted(() => ({
+  forceRefresh: vi.fn(),
+}));
+vi.mock('../lib/ipc', () => ({ ipc: ipcMock }));
+
+const appState = vi.hoisted(() => ({
+  stale: false,
+  sessionDataVersion: 0,
+  toggleViewMode: vi.fn(),
+}));
+vi.mock('../lib/store', () => {
+  const useAppStore: any = (sel: any) => sel(appState);
+  useAppStore.getState = () => appState;
+  return { useAppStore };
+});
+
+const windowMock = vi.hoisted(() => ({ getCurrentWindow: vi.fn() }));
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: windowMock.getCurrentWindow,
+  LogicalPosition: class {},
+}));
+vi.mock('@tauri-apps/api/event', () => ({ emit: vi.fn(), listen: vi.fn() }));
+
+// Each tab is replaced by a stub that renders its own name: these tests are
+// about the shell around the tabs, not what a tab shows.
+vi.mock('./SessionsTab', () => ({ SessionsTab: () => <div>SessionsTab stub</div>, WINDOW_DAYS: 7 }));
+vi.mock('./ModelsTab', () => ({ ModelsTab: () => <div>ModelsTab stub</div> }));
+vi.mock('./TrendsTab', () => ({ TrendsTab: () => <div>TrendsTab stub</div> }));
+vi.mock('./ProjectsTab', () => ({ ProjectsTab: () => <div>ProjectsTab stub</div> }));
+vi.mock('./HeatmapTab', () => ({ HeatmapTab: () => <div>HeatmapTab stub</div> }));
+vi.mock('./CacheTab', () => ({ CacheTab: () => <div>CacheTab stub</div> }));
+vi.mock('../providers/ProvidersTab', () => ({ ProvidersTab: () => <div>ProvidersTab stub</div> }));
+vi.mock('../sessions/SessionsBrowserTab', () => ({
+  SessionsBrowserTab: () => <div>SessionsBrowserTab stub</div>,
+}));
+vi.mock('../accounts/AccountsSidebar', () => ({ AccountsSidebar: () => <aside>Accounts</aside> }));
+vi.mock('../components/modals/SettingsModal', () => ({
+  SettingsModal: () => <div role="dialog">Settings stub</div>,
+}));
+
+import { ExpandedReport } from './ExpandedReport';
+
+beforeEach(() => {
+  // jsdom has no ResizeObserver; the tab underline measures with one.
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+  // …and its Range cannot measure text, which the underline also does.
+  Range.prototype.getBoundingClientRect = () =>
+    ({ x: 0, y: 0, left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0, toJSON() {} }) as DOMRect;
+  // …and no PointerEvent, so a pointer press would carry no `button`.
+  if (!window.PointerEvent) {
+    window.PointerEvent = class extends MouseEvent {
+      pointerId = 1;
+    } as unknown as typeof PointerEvent;
+  }
+  ipcMock.forceRefresh.mockReset().mockResolvedValue(null);
+  appState.toggleViewMode.mockReset();
+  appState.stale = false;
+  windowMock.getCurrentWindow.mockReset().mockImplementation(() => {
+    throw new Error('outside Tauri');
+  });
+});
+
+describe('ExpandedReport shell', () => {
+  it('opens on Sessions and shows every destination', () => {
+    render(<ExpandedReport />);
+    expect(screen.getByRole('tab', { name: 'Sessions' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('SessionsBrowserTab stub')).toBeInTheDocument();
+    expect(screen.getAllByRole('tab')).toHaveLength(8);
+  });
+
+  it('shows the chosen tab', () => {
+    render(<ExpandedReport />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Trends' }));
+    expect(screen.getByRole('tab', { name: 'Trends' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('TrendsTab stub')).toBeInTheDocument();
+    expect(screen.queryByText('SessionsBrowserTab stub')).toBeNull();
+  });
+
+  it('Refresh asks the backend for the active account', async () => {
+    render(<ExpandedReport />);
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(ipcMock.forceRefresh).toHaveBeenCalledWith('active'));
+  });
+
+  it('Settings opens the settings dialog', () => {
+    render(<ExpandedReport />);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('Collapse details returns to the popover', () => {
+    render(<ExpandedReport />);
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse details' }));
+    expect(appState.toggleViewMode).toHaveBeenCalledTimes(1);
+  });
+
+  it('a pointer press on the header starts a window drag, but not on a tab or a button', () => {
+    render(<ExpandedReport />);
+    fireEvent.pointerDown(screen.getByRole('tab', { name: 'Cost' }), { button: 0 });
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Refresh' }), { button: 0 });
+    expect(windowMock.getCurrentWindow).not.toHaveBeenCalled();
+
+    fireEvent.pointerDown(screen.getByRole('banner'), { button: 0 });
+    expect(windowMock.getCurrentWindow).toHaveBeenCalledTimes(1);
+  });
+});
