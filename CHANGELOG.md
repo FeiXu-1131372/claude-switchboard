@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Fable weekly limit.** Max and Ultra accounts have a separate weekly cap for Fable. It now has its own row in the popover's Details, on each account row and in the tray tooltip, with its own reset countdown, and it fires the same threshold notifications as the 5-hour and 7-day windows.
+- **Ultra plan.** The $200 tier is named Ultra everywhere. Ultra has no 5-hour window, so the 5h column is hidden for accounts that report none and the weekly bar takes the full width.
+- **Fable 5.2 and Mythos 5.2 pricing.** Both are priced at $8 in / $40 out per million tokens and counted as 1M-context models; stored session costs are repriced once on first launch. The OpenRouter preset defaults to Fable 5.2 and warm-up pings Haiku 5.5.
+
+### Fixed
+
+- **Plan badge stuck on the plan you signed in with.** An account that signed in on Pro and was upgraded later kept its Pro badge, and an account added through the browser sign-in showed no plan at all. Claude Code only writes the plan into its credentials at sign-in; the plan is now read from the profile Claude Code keeps refreshing, and the active account's badge follows a plan change within a minute. An inactive account still updates the next time you switch to it.
+- **Fable row on plans without Fable.** Anthropic's usage endpoint reports a Fable row for every account, so Pro accounts showed "Fable 0%". The row is now shown only on Max and Ultra, or when it carries actual usage.
+
 ## v1.4.0 — 2026-11-10
 
 ### Added
