@@ -1,5 +1,6 @@
-// Prevents additional console window on Windows in release, DO NOT REMOVE!!
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// Scheduled ticks must not flash a console, including local/debug installs.
+// File logging and explicitly redirected stdout/stderr remain available.
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();

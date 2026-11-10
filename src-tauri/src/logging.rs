@@ -73,8 +73,10 @@ fn restrict_permissions(p: &Path) -> anyhow::Result<()> {
 #[cfg(windows)]
 fn restrict_permissions(p: &Path) -> anyhow::Result<()> {
     use anyhow::Context;
+    use std::os::windows::process::CommandExt;
     use std::process::Command;
     let status = Command::new("icacls")
+        .creation_flags(0x08000000) // Scheduled ticks must not flash a console.
         .arg(p)
         .args([
             "/inheritance:r",

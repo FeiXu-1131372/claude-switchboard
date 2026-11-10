@@ -672,6 +672,18 @@ pub fn run() {
             // accounts with warmup_enabled = 1, calls tick_for_account per
             // account. Mirrors the poll_loop::spawn pattern above.
             {
+                // Refresh an existing OS registration after upgrades or a
+                // local executable move. Never enable scheduling implicitly.
+                tauri::async_runtime::spawn_blocking(|| {
+                    if let Some(scheduler) = crate::os_scheduler::for_current_platform() {
+                        if scheduler.is_registered().unwrap_or(false) {
+                            if let Err(e) = std::env::current_exe().map_err(anyhow::Error::from)
+                                .and_then(|binary| scheduler.register(&binary)) {
+                                tracing::warn!("Could not update background warm-up registration: {e:#}");
+                            }
+                        }
+                    }
+                });
                 let warmup_state = state.clone();
                 tauri::async_runtime::spawn(async move {
                     let mut interval = tokio::time::interval(
