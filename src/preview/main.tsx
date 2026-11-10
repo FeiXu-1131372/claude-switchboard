@@ -6,6 +6,7 @@
  *   ?scale=heavy|light|empty   how much history (default heavy)
  *   ?theme=light|dark          colour theme (default light)
  *   ?view=expanded|compact     which window (default expanded)
+ *   ?delay=800                 answer report queries that many ms late, to see loading states
  */
 import React from 'react';
 import ReactDOM from 'react-dom/client';
@@ -22,6 +23,7 @@ async function start() {
   const scale = scaleParam && SCALES.includes(scaleParam) ? scaleParam : 'heavy';
   const theme = params.get('theme') === 'dark' ? 'dark' : 'light';
   const viewMode = params.get('view') === 'compact' ? 'compact' : 'expanded';
+  const delay = Math.max(0, Number(params.get('delay')) || 0);
 
   try {
     localStorage.setItem('theme-preference', theme);
@@ -37,9 +39,7 @@ async function start() {
   const days = (payload: unknown) => (payload as { days: number }).days;
 
   mockWindows('main');
-  mockIPC(
-    (cmd, payload) => {
-      if (cmd.startsWith('plugin:')) return null;
+  const answer = (cmd: string, payload: unknown): unknown => {
       switch (cmd) {
         case 'get_current_usage':
           return data.accounts.find((a) => a.is_active)?.cached_usage ?? null;
@@ -96,6 +96,17 @@ async function start() {
           console.warn(`[preview] unmocked command: ${cmd}`, payload);
           return null;
       }
+  };
+
+  /** Report queries, which `?delay` slows down. Startup calls stay instant. */
+  const SLOW = /^(get_(session_history|compactions|daily_|model_|project_|cache_|session_costs)|list_resumable_sessions)/;
+
+  mockIPC(
+    (cmd, payload) => {
+      if (cmd.startsWith('plugin:')) return null;
+      const value = answer(cmd, payload);
+      if (delay === 0 || !SLOW.test(cmd)) return value;
+      return new Promise((resolve) => window.setTimeout(() => resolve(value), delay));
     },
     { shouldMockEvents: true },
   );

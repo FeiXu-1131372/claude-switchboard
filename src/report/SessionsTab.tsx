@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { Button } from '../components/ui/Button';
 import { ModelBadge } from '../components/ui/ModelBadge';
 import { EmptyState } from '../components/ui/EmptyState';
+import { SkeletonRows } from '../components/ui/Skeleton';
 import { formatTokens, formatCost, formatCount } from '../lib/format';
 import { ChevronDown, ChevronRight, IconCompact, IconSessions, IconSubagent } from '../lib/icons';
 import { ipc } from '../lib/ipc';
@@ -547,7 +548,7 @@ export function SessionsTab() {
     );
   }
   if (loading || !events) {
-    return <p className="text-[color:var(--color-text-muted)]">Loading…</p>;
+    return <SkeletonRows />;
   }
 
   if (sessions.length === 0) {

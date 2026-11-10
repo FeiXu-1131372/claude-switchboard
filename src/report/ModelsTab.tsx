@@ -3,6 +3,7 @@ import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { EmptyState } from '../components/ui/EmptyState';
+import { SkeletonRows } from '../components/ui/Skeleton';
 import { formatTokens, formatCost } from '../lib/format';
 import { IconChart } from '../lib/icons';
 import { ipc } from '../lib/ipc';
@@ -61,7 +62,7 @@ export function ModelsTab() {
     );
   }
   if (loading || !models || !cache) {
-    return <p className="text-[color:var(--color-text-muted)]">Loading…</p>;
+    return <SkeletonRows />;
   }
 
   if (models.length === 0) {

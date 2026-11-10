@@ -43,6 +43,7 @@ pnpm preview:ui
 | `scale` | `heavy` (300 projects, 136 days, about $13,000 a month), `light`, `empty` | `heavy` |
 | `theme` | `light`, `dark` | `light` |
 | `view` | `expanded` (960×640), `compact` (360×380) | `expanded` |
+| `delay` | milliseconds to hold back report queries, to see loading states | `0` |
 
 For example `http://localhost:1430/preview.html?scale=empty&theme=dark`. Every Tauri command is answered from `src/preview/fixtures.ts`; a command the preview does not know logs a `[preview] unmocked command` warning in the console. The preview is not part of the production bundle. It cannot show what only the packaged app does: window dragging, resizing, launching a session.
 

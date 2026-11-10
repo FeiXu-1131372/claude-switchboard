@@ -4,6 +4,7 @@ import { Banner } from '../components/ui/Banner';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { EmptyState } from '../components/ui/EmptyState';
+import { SkeletonRows } from '../components/ui/Skeleton';
 import { formatCost } from '../lib/format';
 import { ChevronDown, IconSessions, Search, X } from '../lib/icons';
 import { modelLabel } from '../report/modelDisplay';
@@ -469,11 +470,7 @@ export function SessionsBrowserTab() {
         </Banner>
       )}
 
-      {loading && sessions.length === 0 && (
-        <p className="text-[length:var(--text-label)] text-[color:var(--color-text-muted)]">
-          Loading…
-        </p>
-      )}
+      {loading && sessions.length === 0 && <SkeletonRows />}
 
       {!loading && !error && sessions.length === 0 && (
         <EmptyState

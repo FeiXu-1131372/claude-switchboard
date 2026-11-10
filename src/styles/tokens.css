@@ -168,6 +168,7 @@
 
   /* Radii */
   --radius-sharp: 0;
+  --radius-bar: 2px;
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-card: 12px;
@@ -185,6 +186,7 @@
   --duration-normal: 320ms;
   --duration-slow: 520ms;
   --duration-bar: 700ms;
+  --duration-skeleton: 1400ms;
 }
 
 /* Minimal glance view: shrink the hero type so the popover can be
@@ -249,6 +251,21 @@ body[data-theme="dark"] {
 
   --color-track: oklch(95% 0.020 65 / 0.18);
   --color-overlay: oklch(10% 0.010 65 / 0.55);
+}
+
+/* Derived colours. Declared on <body>, below every theme block, because a
+ * custom property that refers to another is resolved where it is declared:
+ * on :root these would be frozen at the light theme's accent. On <body> they
+ * follow whichever theme is set, and a new theme gets them for free.
+ *
+ * Heat steps: how much was used, in the accent hue only. Amber and red are
+ * kept for limits, so volume never borrows them. */
+body {
+  --color-heat-0: var(--color-track);
+  --color-heat-1: color-mix(in oklch, var(--color-accent) 25%, transparent);
+  --color-heat-2: color-mix(in oklch, var(--color-accent) 45%, transparent);
+  --color-heat-3: color-mix(in oklch, var(--color-accent) 70%, transparent);
+  --color-heat-4: var(--color-accent);
 }
 
 /* Variables that aren't part of Tailwind's utility system — kept on :root for

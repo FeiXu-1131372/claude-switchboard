@@ -1,5 +1,6 @@
 import { Card } from '../components/ui/Card';
 import { EmptyState } from '../components/ui/EmptyState';
+import { SkeletonRows } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
 import { formatCost, formatTokens } from '../lib/format';
 import { IconCache } from '../lib/icons';
@@ -26,7 +27,7 @@ export function CacheTab() {
     );
   }
   if (loading || !data) {
-    return <p className="text-[color:var(--color-text-muted)]">Loading…</p>;
+    return <SkeletonRows />;
   }
 
   const totalCacheTokens = data.total_cache_read_tokens + data.total_cache_creation_tokens;

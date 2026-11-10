@@ -129,6 +129,19 @@ body[data-os="windows"] .win-animated-container {
   50%      { transform: scale(2.4); opacity: 0; }
 }
 
+/* Skeleton rows: a slow breath while a list loads for the first time.
+ * Still under reduced motion, where the placeholder alone says "loading". */
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+.skeleton {
+  animation: skeleton-pulse var(--duration-skeleton) var(--ease-in-out) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}
+
 /* Fade-in for transient confirmation messages (e.g. "Settings saved"). */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(4px); }

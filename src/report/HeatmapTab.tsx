@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { EmptyState } from '../components/ui/EmptyState';
+import { SkeletonRows } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
 import type { HeatmapCell, SessionEvent } from '../lib/types';
 import { formatTokens } from '../lib/format';
@@ -96,7 +97,7 @@ export function HeatmapTab() {
   }
 
   if (loading || !events) {
-    return <p className="text-[color:var(--color-text-muted)]">Loading…</p>;
+    return <SkeletonRows />;
   }
 
   if (data.length === 0) {

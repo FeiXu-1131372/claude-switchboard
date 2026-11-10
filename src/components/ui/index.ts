@@ -9,3 +9,6 @@ export { Select } from './Select';
 export { Banner } from './Banner';
 export { Badge } from './Badge';
 export { EmptyState } from './EmptyState';
+export { SegmentedControl } from './SegmentedControl';
+export { ShareBar } from './ShareBar';
+export { SkeletonRows } from './Skeleton';

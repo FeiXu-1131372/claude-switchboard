@@ -1,6 +1,7 @@
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { EmptyState } from '../components/ui/EmptyState';
+import { SkeletonRows } from '../components/ui/Skeleton';
 import { formatCost, formatCount } from '../lib/format';
 import { IconChart } from '../lib/icons';
 import { ipc } from '../lib/ipc';
@@ -26,7 +27,7 @@ export function ProjectsTab() {
     );
   }
   if (loading || !data) {
-    return <p className="text-[color:var(--color-text-muted)]">Loading…</p>;
+    return <SkeletonRows />;
   }
 
   if (data.length === 0) {
