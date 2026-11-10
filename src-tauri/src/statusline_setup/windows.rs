@@ -5,8 +5,8 @@
 //! the preflight that tries these candidates in each shell is wired in when
 //! that gate comes off.
 
-// Wired in when the Windows gate comes off.
-#![cfg_attr(not(windows), allow(dead_code))]
+// Production wiring is gated; the candidates are exercised by unit tests.
+#![cfg_attr(not(test), allow(dead_code))]
 
 /// A path containing any of these needs quoting in at least one of the shells
 /// Claude Code can pick, and the three shells disagree on how.

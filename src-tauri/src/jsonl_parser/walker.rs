@@ -130,12 +130,14 @@ pub fn ingest_file(
         .to_string();
 
     // P1-7: store relative path from the Claude projects root so that
-    // source_file values are not machine-specific absolute paths.
+    // source_file values are not machine-specific absolute paths. Persist
+    // forward slashes on Windows too: subagent grouping and reconciliation
+    // use '/' to associate these calls with the parent's official total.
     let source_file_path = path
         .strip_prefix(projects_root)
         .unwrap_or(path)
         .to_string_lossy()
-        .into_owned();
+        .replace(std::path::MAIN_SEPARATOR, "/");
 
     // Unlogged calls are tracked on parent transcripts only: a subagent's
     // usage is already inside its parent's `cost-state`, and subagents don't
