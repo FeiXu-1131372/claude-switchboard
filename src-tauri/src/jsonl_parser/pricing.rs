@@ -39,7 +39,7 @@ pub struct PricingTable {
 /// Revision of the bundled pricing table. Bump this whenever pricing.json
 /// changes so the startup migration (Db::reprice_outdated_events) recomputes
 /// historical event costs exactly once per correction.
-pub const PRICING_VERSION: u32 = 3;
+pub const PRICING_VERSION: u32 = 4;
 
 const ANTHROPIC_FAMILIES: [&str; 5] = ["fable-", "mythos-", "opus-", "sonnet-", "haiku-"];
 
@@ -174,8 +174,11 @@ mod tests {
     fn every_current_family_is_priced() {
         let tbl = t();
         for m in [
+            "fable-5-2",
             "fable-5-1",
             "fable-5",
+            "mythos-5-2",
+            "mythos-5-1",
             "mythos-5",
             "opus-5-5",
             "opus-5",
@@ -217,6 +220,28 @@ mod tests {
         assert!((e5.input_per_mtok - 10.0).abs() < 0.001);
         assert!((e5.output_per_mtok - 50.0).abs() < 0.001);
         assert!((e5.cache_read_per_mtok - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn fable_5_2_and_mythos_5_2_are_priced_at_official_rates() {
+        let tbl = t();
+        for (model, prefix) in [
+            ("claude-fable-5-2", "fable-5-2"),
+            ("claude-mythos-5-2", "mythos-5-2"),
+        ] {
+            let e = tbl.lookup(model).unwrap();
+            assert_eq!(e.prefix, prefix, "{model}");
+            assert!((e.input_per_mtok - 8.0).abs() < 0.001, "{model}");
+            assert!((e.output_per_mtok - 40.0).abs() < 0.001, "{model}");
+            assert!((e.cache_read_per_mtok - 0.20).abs() < 0.001, "{model}");
+            assert!((e.cache_5m_per_mtok - 10.0).abs() < 0.001, "{model}");
+            assert!((e.cache_1h_per_mtok - 16.0).abs() < 0.001, "{model}");
+            assert!(e.tier.is_none(), "{model}");
+        }
+
+        // Unknown future Fable/Mythos models track the current 5.2 tier.
+        let future = tbl.cost_for("fable-9-future", 1_000_000, 1_000_000, 0, 0, 0);
+        assert!((future - 48.0).abs() < 0.001, "got {future}");
     }
 
     #[test]

@@ -102,7 +102,7 @@ static PRESETS: &[Preset] = &[
             // falls back to a bare `claude-…` id, and OpenRouter needs the
             // `anthropic/` vendor prefix.
             ("ANTHROPIC_DEFAULT_OPUS_MODEL", "anthropic/claude-opus-5.5"),
-            ("ANTHROPIC_DEFAULT_FABLE_MODEL", "anthropic/claude-fable-5.1"),
+            ("ANTHROPIC_DEFAULT_FABLE_MODEL", "anthropic/claude-fable-5.2"),
             ("ANTHROPIC_DEFAULT_SONNET_MODEL", "anthropic/claude-sonnet-5.5"),
             ("ANTHROPIC_DEFAULT_HAIKU_MODEL", "anthropic/claude-haiku-5.5"),
             ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "1000000"),

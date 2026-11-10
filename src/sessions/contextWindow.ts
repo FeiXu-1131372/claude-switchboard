@@ -25,7 +25,8 @@ const LONG_WINDOW = 1_000_000;
 
 /**
  * Models whose registry entry sets `context.native_1m: true` — verified
- * against the model table in Claude Code v2.1.220.
+ * against the model table in Claude Code v2.1.220, plus the Fable/Mythos
+ * 5.2 release (Nov 2026).
  *
  * Deliberately an explicit list rather than a family prefix: the split runs
  * *within* families, not between them. Sonnet 5 is 1M while Sonnet 4.6 is
@@ -41,7 +42,10 @@ const NATIVE_1M_MODELS = new Set([
   'claude-opus-5-5',
   'claude-fable-5',
   'claude-fable-5-1',
+  'claude-fable-5-2',
   'claude-mythos-5',
+  'claude-mythos-5-1',
+  'claude-mythos-5-2',
   'claude-haiku-5',
   'claude-haiku-5-5',
 ]);

@@ -14,8 +14,11 @@ describe('windowFor', () => {
       'claude-opus-5-5',
       'claude-fable-5',
       'claude-fable-5-1',
+      'claude-fable-5-2',
+      'claude-mythos-5-2',
       'claude-haiku-5-5',
       'anthropic/claude-fable-5.1',
+      'anthropic/claude-fable-5.2',
     ]) {
       expect(windowFor(m), m).toEqual({ total: 1_000_000, label: '1M' });
     }
