@@ -247,6 +247,65 @@ describe('SessionsBrowserTab', () => {
     expect(screen.queryByRole('button', { name: /clear filters/i })).toBeNull();
   });
 
+  it('shows each project group’s summed cost in its header', async () => {
+    ipcMock.listResumableSessions.mockResolvedValue([
+      s({ session_id: 'a', project_name: 'alpha', title: 'Alpha one', total_cost_usd: 1.23 }),
+      s({ session_id: 'b', project_name: 'alpha', title: 'Alpha two', total_cost_usd: 4.56 }),
+      s({ session_id: 'c', project_name: 'beta', cwd: '/w/beta', title: 'Beta one', total_cost_usd: 2 }),
+    ]);
+    render(<SessionsBrowserTab />);
+    await waitFor(() => expect(screen.getByText('Alpha one')).toBeTruthy());
+
+    const alphaHeader = screen.getByRole('heading', { name: 'alpha' }).closest('header');
+    expect(alphaHeader).toHaveTextContent('$5.79');
+    const betaHeader = screen.getByRole('heading', { name: 'beta' }).closest('header');
+    expect(betaHeader).toHaveTextContent('$2.00');
+  });
+
+  it('omits the group total when the group has no ingested usage', async () => {
+    ipcMock.listResumableSessions.mockResolvedValue([
+      s({ session_id: 'a', project_name: 'alpha', title: 'Alpha one', total_tokens: 0, total_cost_usd: 0 }),
+    ]);
+    render(<SessionsBrowserTab />);
+    await waitFor(() => expect(screen.getByText('Alpha one')).toBeTruthy());
+
+    const header = screen.getByRole('heading', { name: 'alpha' }).closest('header');
+    expect(header).not.toHaveTextContent('$0.00');
+  });
+
+  it('sums only the rows whose cost is actually displayed', async () => {
+    ipcMock.listResumableSessions.mockResolvedValue([
+      s({ session_id: 'a', project_name: 'alpha', title: 'Visible', total_tokens: 150, total_cost_usd: 1.23 }),
+      // No ingested tokens: the row hides its cost, so the header must not
+      // count it either.
+      s({ session_id: 'b', project_name: 'alpha', title: 'Hidden', total_tokens: 0, total_cost_usd: 5 }),
+    ]);
+    render(<SessionsBrowserTab />);
+    await waitFor(() => expect(screen.getByText('Visible')).toBeTruthy());
+
+    const header = screen.getByRole('heading', { name: 'alpha' }).closest('header');
+    expect(header).toHaveTextContent('$1.23');
+    expect(header).not.toHaveTextContent('$6.23');
+  });
+
+  it('scopes the group total to the active filters', async () => {
+    ipcMock.listResumableSessions.mockResolvedValue([
+      s({ session_id: 'a', project_name: 'alpha', title: 'Opus work', model: 'claude-opus-5', total_cost_usd: 1.23 }),
+      s({ session_id: 'b', project_name: 'alpha', title: 'Haiku work', model: 'claude-haiku-4', total_cost_usd: 4.56 }),
+    ]);
+    render(<SessionsBrowserTab />);
+    await waitFor(() => expect(screen.getByText('Opus work')).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText(/filter by model/i), {
+      target: { value: 'claude-haiku-4' },
+    });
+    await waitFor(() => expect(screen.queryByText('Opus work')).toBeNull());
+
+    const header = screen.getByRole('heading', { name: 'alpha' }).closest('header');
+    expect(header).toHaveTextContent('$4.56');
+    expect(header).not.toHaveTextContent('$5.79');
+  });
+
   it('shows empty filter state with reset action when no sessions match', async () => {
     ipcMock.listResumableSessions.mockResolvedValue([
       s({ session_id: 'a', title: 'Normal task', recap: null }),

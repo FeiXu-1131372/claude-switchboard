@@ -4,6 +4,7 @@ import { Banner } from '../components/ui/Banner';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { EmptyState } from '../components/ui/EmptyState';
+import { formatCost } from '../lib/format';
 import { ChevronDown, IconSessions, Search, X } from '../lib/icons';
 import { modelLabel } from '../report/modelDisplay';
 import { useResumableSessions } from './useResumableSessions';
@@ -501,25 +502,44 @@ export function SessionsBrowserTab() {
       )}
 
       {groups
-        ? groups.map(([project, list]) => (
-            <section key={project} className="flex flex-col gap-[var(--space-xs)]">
-              <header className="flex items-baseline gap-[var(--space-sm)] px-[2px]">
-                <h3
-                  className="
-                    truncate text-[length:var(--text-label)] font-[var(--weight-semibold)]
-                    uppercase tracking-[var(--tracking-label)]
-                    text-[color:var(--color-text-secondary)]
-                  "
-                >
-                  {project}
-                </h3>
-                <span className="mono text-[length:var(--text-micro)] text-[color:var(--color-text-muted)] tabular-nums">
-                  {list.length}
-                </span>
-              </header>
-              <RowGroup>{rows(list, true)}</RowGroup>
-            </section>
-          ))
+        ? groups.map(([project, list]) => {
+            // Sums the same visible rows the group contains, so the header
+            // reconciles with what the user can see (filters included). Rows
+            // hide their cost when no usage was ingested, so those sessions
+            // contribute nothing here either.
+            const groupCost = list.reduce(
+              (sum, s) => sum + (s.total_tokens > 0 ? s.total_cost_usd : 0),
+              0,
+            );
+            return (
+              <section key={project} className="flex flex-col gap-[var(--space-xs)]">
+                <header className="flex items-baseline justify-between gap-[var(--space-sm)] px-[2px]">
+                  <div className="flex min-w-0 items-baseline gap-[var(--space-sm)]">
+                    <h3
+                      className="
+                        truncate text-[length:var(--text-label)] font-[var(--weight-semibold)]
+                        uppercase tracking-[var(--tracking-label)]
+                        text-[color:var(--color-text-secondary)]
+                      "
+                    >
+                      {project}
+                    </h3>
+                    <span className="mono text-[length:var(--text-micro)] text-[color:var(--color-text-muted)] tabular-nums">
+                      {list.length}
+                    </span>
+                  </div>
+                  {/* Same rule as the rows: a group with no ingested usage
+                      stays blank rather than claiming a $0.00 measurement. */}
+                  {groupCost > 0 && (
+                    <span className="mono shrink-0 text-[length:var(--text-micro)] text-[color:var(--color-text-secondary)] tabular-nums">
+                      {formatCost(groupCost)}
+                    </span>
+                  )}
+                </header>
+                <RowGroup>{rows(list, true)}</RowGroup>
+              </section>
+            );
+          })
         : filtered.length > 0 && <RowGroup>{rows(filtered, false)}</RowGroup>}
 
       {dialog}

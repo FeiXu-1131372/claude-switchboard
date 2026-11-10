@@ -141,6 +141,16 @@ function subagentLabel(sourceFile: string): string {
   return m ? `agent ${m[1].slice(0, 8)}` : 'subagent';
 }
 
+/** Cost rows are keyed `<transcript path>#<day>`. `listResumableSessions`
+ * identifies each session by its transcript's file stem, so that same stem on
+ * a row id is the join key for the session's title. */
+function sessionIdOfRowId(rowId: string): string {
+  const hash = rowId.lastIndexOf('#');
+  const file = (hash >= 0 ? rowId.slice(0, hash) : rowId).replace(/\\/g, '/');
+  const name = file.slice(file.lastIndexOf('/') + 1);
+  return name.endsWith('.jsonl') ? name.slice(0, -'.jsonl'.length) : name;
+}
+
 function pickDominant(modelTokens: Map<string, number>, fallback: string): string {
   let best = fallback;
   let bestTokens = -1;
@@ -462,6 +472,33 @@ export function SessionsTab() {
     return () => { cancelled = true; };
   }, []);
 
+  // Session titles come from the same summaries the Sessions tab renders.
+  // Fetched once per mount on purpose: ExpandedReport remounts the tab when
+  // you switch back to it, which is when titles need refreshing. Keying this
+  // on `version` would re-run the backend's transcript scan on every
+  // ingestion tick (roughly every turn while a session is active), and the
+  // scan cache is invalidated by exactly that activity. Best-effort: on
+  // failure the rows keep their project labels rather than losing the tab.
+  const [titles, setTitles] = useState<ReadonlyMap<string, string>>(() => new Map());
+  useEffect(() => {
+    let cancelled = false;
+    ipc
+      .listResumableSessions()
+      .then((rows) => {
+        if (cancelled) return;
+        const map = new Map<string, string>();
+        for (const r of rows) {
+          const title = r.title?.trim();
+          if (title) map.set(r.session_id, title);
+        }
+        setTitles(map);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const sessions = useMemo(
     () => aggregateSessions(events ?? [], pricing),
     [events, pricing],
@@ -579,6 +616,20 @@ export function SessionsTab() {
           const agentCount = session.subagents.length;
           const headless = isHeadlessProject(session.project);
           const compactions = compactionsByRow.get(session.id) ?? [];
+          const title = titles.get(sessionIdOfRowId(session.id));
+          const projectLabel = headless ? 'headless' : session.project;
+          // The title is what makes a row recognisable — the Sessions tab
+          // leads with it too. Project stays in the meta line for rows that
+          // have a title, since day grouping says nothing about the project.
+          const label = title ?? projectLabel;
+          const meta = [
+            title ? projectLabel : null,
+            formatClock(session.latest_ts),
+            `${session.turn_count} ${session.turn_count === 1 ? 'turn' : 'turns'}`,
+            agentCount > 0 ? `${agentCount} ${agentCount === 1 ? 'agent' : 'agents'}` : null,
+          ]
+            .filter(Boolean)
+            .join(' · ');
           return (
             <div key={session.id} className="border-b border-[var(--color-border-subtle)]">
               <button
@@ -604,12 +655,12 @@ export function SessionsTab() {
                     <span
                       className={[
                         'text-[length:var(--text-body)] truncate',
-                        headless
+                        headless && !title
                           ? 'italic text-[color:var(--color-text-muted)]'
                           : 'text-[color:var(--color-text)]',
                       ].join(' ')}
                     >
-                      {headless ? 'headless' : session.project}
+                      {label}
                     </span>
                     <ModelBadge model={session.dominant_model} />
                     {/* Collapsed-row marker: without it the boundary is only
@@ -623,8 +674,8 @@ export function SessionsTab() {
                       </span>
                     )}
                   </div>
-                  <span className="text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]">
-                    {formatClock(session.latest_ts)} · {session.turn_count} {session.turn_count === 1 ? 'turn' : 'turns'}{agentCount > 0 ? ` · ${agentCount} ${agentCount === 1 ? 'agent' : 'agents'}` : ''}
+                  <span className="truncate text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]">
+                    {meta}
                   </span>
                 </div>
 
