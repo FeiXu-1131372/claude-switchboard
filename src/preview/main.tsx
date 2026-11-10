@@ -1,0 +1,114 @@
+/**
+ * Browser preview of the real UI with fixture data. Loaded only by
+ * `preview.html`, so none of this reaches the production bundle.
+ *
+ *   pnpm preview:ui → http://localhost:1430/preview.html
+ *   ?scale=heavy|light|empty   how much history (default heavy)
+ *   ?theme=light|dark          colour theme (default light)
+ *   ?view=expanded|compact     which window (default expanded)
+ */
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
+import { buildFixtures, windowOf, PRICING, type PreviewScale } from './fixtures';
+import '../styles/globals.css';
+import '../styles/tokens.css';
+
+const SCALES: readonly PreviewScale[] = ['heavy', 'light', 'empty'];
+
+async function start() {
+  const params = new URLSearchParams(window.location.search);
+  const scaleParam = params.get('scale') as PreviewScale | null;
+  const scale = scaleParam && SCALES.includes(scaleParam) ? scaleParam : 'heavy';
+  const theme = params.get('theme') === 'dark' ? 'dark' : 'light';
+  const viewMode = params.get('view') === 'compact' ? 'compact' : 'expanded';
+
+  try {
+    localStorage.setItem('theme-preference', theme);
+  } catch {
+    // Storage blocked: the theme below still applies for this load.
+  }
+  document.body.dataset.theme = theme;
+  document.getElementById('frame')!.dataset.view = viewMode;
+
+  const now = new Date();
+  const data = buildFixtures(scale, now);
+  let settings = { ...data.settings, theme };
+  const days = (payload: unknown) => (payload as { days: number }).days;
+
+  mockWindows('main');
+  mockIPC(
+    (cmd, payload) => {
+      if (cmd.startsWith('plugin:')) return null;
+      switch (cmd) {
+        case 'get_current_usage':
+          return data.accounts.find((a) => a.is_active)?.cached_usage ?? null;
+        case 'list_accounts':
+          return data.accounts;
+        case 'get_settings':
+          return settings;
+        case 'update_settings':
+          settings = (payload as { s: typeof settings }).s;
+          return null;
+        case 'get_pricing':
+          return PRICING;
+        case 'get_session_history':
+          return windowOf(data, days(payload), now).events;
+        case 'get_compactions':
+          return windowOf(data, days(payload), now).compactions;
+        case 'get_daily_trends':
+          return windowOf(data, days(payload), now).daily;
+        case 'get_daily_model_breakdown':
+          return windowOf(data, days(payload), now).dailyModels;
+        case 'get_model_breakdown':
+          return windowOf(data, days(payload), now).models;
+        case 'get_project_breakdown':
+          return windowOf(data, days(payload), now).projects;
+        case 'get_cache_stats':
+          return windowOf(data, days(payload), now).cache;
+        case 'list_resumable_sessions':
+          return data.sessions;
+        case 'list_providers':
+          return data.providers;
+        case 'list_provider_presets':
+          return [];
+        case 'list_available_terminals':
+          return ['terminal_app'];
+        case 'get_statusline_bridge_status':
+          return [];
+        case 'get_warmup_state':
+          return { warmup_enabled: false, schedule: { type: 'Off' }, last_warmup_at: null };
+        case 'detect_running_claude_code':
+          return { cli_processes: 0, vscode_with_extension: [] };
+        case 'has_claude_code_creds':
+          return true;
+        case 'vscode_tab_available':
+        case 'get_warmup_consent_granted':
+        case 'os_scheduler_is_registered':
+          return false;
+        case 'get_account_rotation_status':
+        case 'get_default_provider':
+        case 'resize_window':
+        case 'force_refresh':
+        case 'check_for_updates_now':
+          return null;
+        default:
+          console.warn(`[preview] unmocked command: ${cmd}`, payload);
+          return null;
+      }
+    },
+    { shouldMockEvents: true },
+  );
+
+  // Imported after the mocks are in place: the store talks to Tauri on load.
+  const [{ App }, { useAppStore }] = await Promise.all([import('../App'), import('../lib/store')]);
+  useAppStore.setState({ viewMode });
+
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>,
+  );
+}
+
+void start();

@@ -29,6 +29,23 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 All four must pass. `test.yml` runs the full matrix — frontend and Rust — on macOS, Windows, and Linux, even though this is a desktop app with no Linux build target: it's cheap insurance against platform-`cfg`-gated Rust code that only breaks on the OS where it compiles.
 
+## Previewing the UI in a browser
+
+The real UI can be opened in a normal browser with fixture data, without building the app. This is the quickest way to check a visual change at different data volumes and in both themes.
+
+```bash
+pnpm preview:ui
+# then open http://localhost:1430/preview.html
+```
+
+| Parameter | Values | Default |
+|---|---|---|
+| `scale` | `heavy` (300 projects, 136 days, about $13,000 a month), `light`, `empty` | `heavy` |
+| `theme` | `light`, `dark` | `light` |
+| `view` | `expanded` (960×640), `compact` (360×380) | `expanded` |
+
+For example `http://localhost:1430/preview.html?scale=empty&theme=dark`. Every Tauri command is answered from `src/preview/fixtures.ts`; a command the preview does not know logs a `[preview] unmocked command` warning in the console. The preview is not part of the production bundle. It cannot show what only the packaged app does: window dragging, resizing, launching a session.
+
 ## Building a release bundle
 
 The status line bridge (`src-tauri/statusline-bridge`, binary `switchboard-statusline`) ships inside the app as a sidecar. `pnpm tauri dev` doesn't need it; a bundle does, and it is built with its own `bridge` Cargo profile (unwinding panics, so a failure in its observation step can never change your status line). Use the bundle config, which builds the bridge first and adds it as an `externalBin`:
