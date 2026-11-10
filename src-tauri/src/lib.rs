@@ -1,4 +1,5 @@
 mod app_state;
+mod account_rotation;
 pub mod auth;
 pub mod branding;
 pub mod cli;
@@ -130,6 +131,7 @@ pub fn run() {
             commands::has_claude_code_creds,
             commands::update_settings,
             commands::get_settings,
+            commands::get_account_rotation_status,
             commands::resize_window,
             commands::force_refresh,
             commands::check_for_updates_now,
@@ -188,6 +190,7 @@ pub fn run() {
             commands::has_claude_code_creds,
             commands::update_settings,
             commands::get_settings,
+            commands::get_account_rotation_status,
             commands::resize_window,
             commands::force_refresh,
             commands::check_for_updates_now,
@@ -298,6 +301,7 @@ pub fn run() {
         force_refresh: tokio::sync::Notify::new(),
         accounts,
         account_change_lock: tokio::sync::Mutex::new(()),
+        rotation: parking_lot::Mutex::new(account_rotation::RotationRuntime::default()),
         cached_usage_by_slot: parking_lot::RwLock::new(std::collections::HashMap::new()),
         active_slot: parking_lot::RwLock::new(None),
         active_since: parking_lot::RwLock::new(None),

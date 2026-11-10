@@ -985,6 +985,11 @@ mod tests {
             crash_reports: true,
             preferred_auth_source: None,
             terminal: Some(crate::providers::launcher::Terminal::Iterm2),
+            account_rotation: Some(crate::account_rotation::RotationSettings {
+                enabled: true,
+                preferred_account_id: Some("preferred-account".into()),
+                ..Default::default()
+            }),
         };
         db.save_settings(&s).unwrap();
 
@@ -997,6 +1002,11 @@ mod tests {
         assert_eq!(loaded.launch_at_login, s.launch_at_login);
         assert_eq!(loaded.crash_reports, s.crash_reports);
         assert_eq!(loaded.terminal, s.terminal);
+        let rotation = loaded.account_rotation.unwrap();
+        assert!(rotation.enabled);
+        assert_eq!(rotation.five_hour_threshold, 96);
+        assert_eq!(rotation.seven_day_threshold, 98);
+        assert_eq!(rotation.preferred_account_id.as_deref(), Some("preferred-account"));
 
         // Overwrite and confirm the latest value wins (UPSERT).
         let s2 = Settings { polling_interval_secs: 120, ..Settings::default() };

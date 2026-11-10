@@ -31,6 +31,7 @@ export const ipc = {
   refreshAccount: (slot: number) => commands.refreshAccount(slot).then(unwrap),
 
   getSettings: () => commands.getSettings().then(unwrap),
+  getAccountRotationStatus: () => commands.getAccountRotationStatus().then(unwrap),
   updateSettings: (s: Settings) => commands.updateSettings(s).then(unwrap),
 
   resizeWindow: (mode: 'compact' | 'compact-minimal' | 'expanded') => commands.resizeWindow(mode).then(unwrap),

@@ -182,6 +182,7 @@ pub fn spawn(handle: AppHandle, state: Arc<AppState>) {
         let mut burn_buffers: HashMap<u32, VecDeque<(DateTime<Utc>, f64)>> = HashMap::new();
         loop {
             let _ = poll_all(&handle, &state, &mut burn_buffers).await;
+            crate::account_rotation::evaluate(&handle, &state).await;
             let now = Instant::now();
             let wake_at = next_wake_time(&state, now);
             // Cap the sleep at 60 s so we still re-reconcile active_slot
@@ -204,6 +205,7 @@ pub fn spawn(handle: AppHandle, state: Arc<AppState>) {
                             &handle, &state, &mut burn_buffers, &accounts, active_slot,
                         )
                         .await;
+                        crate::account_rotation::evaluate(&handle, &state).await;
                     }
                 }
             }

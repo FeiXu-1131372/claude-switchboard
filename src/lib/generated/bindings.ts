@@ -113,6 +113,14 @@ async getSettings() : Promise<Result<Settings, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async getAccountRotationStatus() : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_account_rotation_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async resizeWindow(mode: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("resize_window", { mode }) };
@@ -674,6 +682,11 @@ export type RefreshScope =
  * Triggered by the AccountsPanel header refresh button.
  */
 "all"
+export type RotationSettings = { enabled: boolean; five_hour_threshold: number; seven_day_threshold: number; 
+/**
+ * Stable identity, so deleting an account cannot retarget this preference.
+ */
+preferred_account_id: string | null }
 export type RunningClaudeCode = { cli_processes: number; vscode_with_extension: string[] }
 /**
  * Per-account schedule preset.
@@ -756,7 +769,11 @@ stagger_gap_secs: number; thresholds: number[]; theme: string; launch_at_login: 
  * `None` means "use the platform default" (`launcher::default_terminal()`).
  * `#[serde(default)]` keeps settings written before this field readable.
  */
-terminal?: Terminal | null }
+terminal?: Terminal | null; 
+/**
+ * Absent in older settings; automatic switching remains opt-in.
+ */
+account_rotation?: RotationSettings | null }
 /**
  * Where a usage snapshot came from. Every origin but `Http` is a local
  * source that costs no `/usage` call.

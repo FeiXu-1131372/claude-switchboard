@@ -446,9 +446,19 @@ pub async fn update_settings(s: Settings, state: State<'_, Arc<AppState>>) -> Re
     if s.thresholds.iter().any(|&t| t > 100) {
         return Err("threshold values must be between 0 and 100".to_string());
     }
+    if let Some(rotation) = &s.account_rotation {
+        rotation.validate()?;
+    }
     state.db.save_settings(&s).map_err(|e| e.to_string())?;
     *state.settings.write() = s;
+    state.force_refresh.notify_one();
     Ok(())
+}
+
+#[command]
+#[specta::specta]
+pub async fn get_account_rotation_status(state: State<'_, Arc<AppState>>) -> Result<Option<String>, String> {
+    Ok(state.rotation.lock().status.clone())
 }
 
 #[command]

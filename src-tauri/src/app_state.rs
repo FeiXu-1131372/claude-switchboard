@@ -41,6 +41,9 @@ pub struct Settings {
     /// `#[serde(default)]` keeps settings written before this field readable.
     #[serde(default)]
     pub terminal: Option<crate::providers::launcher::Terminal>,
+    /// Absent in older settings; automatic switching remains opt-in.
+    #[serde(default)]
+    pub account_rotation: Option<crate::account_rotation::RotationSettings>,
 }
 
 impl Default for Settings {
@@ -54,6 +57,7 @@ impl Default for Settings {
             crash_reports: false,
             preferred_auth_source: None,
             terminal: None,
+            account_rotation: None,
         }
     }
 }
@@ -165,6 +169,7 @@ pub struct AppState {
     pub accounts: Arc<AccountManager>,
     /// Serialize token replacement with account switches across windows.
     pub account_change_lock: tokio::sync::Mutex<()>,
+    pub rotation: Mutex<crate::account_rotation::RotationRuntime>,
     pub cached_usage_by_slot: RwLock<HashMap<u32, CachedUsage>>,
     pub active_slot: RwLock<Option<u32>>,
     /// When the live Claude Code account last changed — a swap, an external
