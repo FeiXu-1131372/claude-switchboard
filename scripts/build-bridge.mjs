@@ -42,6 +42,10 @@ if (wanted === 'universal-apple-darwin') {
   // copy carried to an Intel Mac without Rosetta still runs.
   const arm = build('aarch64-apple-darwin');
   const intel = build('x86_64-apple-darwin');
+  // tauri-build validates externalBin for each concrete architecture before
+  // Tauri assembles the universal app, so those names must exist as well.
+  copyFileSync(arm, join(outDir, 'switchboard-statusline-aarch64-apple-darwin'));
+  copyFileSync(intel, join(outDir, 'switchboard-statusline-x86_64-apple-darwin'));
   execFileSync('lipo', ['-create', '-output', dest, arm, intel], { stdio: 'inherit' });
 } else {
   copyFileSync(build(wanted), dest);

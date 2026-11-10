@@ -43,6 +43,17 @@ jobs:
       - name: Install JS deps
         run: pnpm install --frozen-lockfile
 
+      - name: Validate macOS universal sidecar
+        if: matrix.os == 'macos-latest'
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          node scripts/build-bridge.mjs universal-apple-darwin
+          test -x src-tauri/binaries/switchboard-statusline-aarch64-apple-darwin
+          test -x src-tauri/binaries/switchboard-statusline-x86_64-apple-darwin
+          lipo -verify_arch arm64 src-tauri/binaries/switchboard-statusline-aarch64-apple-darwin
+          lipo -verify_arch x86_64 src-tauri/binaries/switchboard-statusline-x86_64-apple-darwin
+          lipo -verify_arch arm64 x86_64 src-tauri/binaries/switchboard-statusline-universal-apple-darwin
+
       - name: Frontend typecheck + tests
         run: |
           pnpm lint
