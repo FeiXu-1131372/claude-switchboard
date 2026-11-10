@@ -21,6 +21,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Notify;
 
+// async-trait annotates generated methods whose boxed Future return types
+// are also recognized as must-use by Rust 1.99.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait CredIO: Send + Sync + 'static {
     async fn load_cc(&self) -> Result<Option<Value>>;

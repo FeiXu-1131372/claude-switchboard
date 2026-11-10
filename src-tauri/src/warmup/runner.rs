@@ -15,6 +15,9 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Local, Utc};
 
+// async-trait adds must_use to methods returning futures that newer Rust
+// toolchains already consider must-use.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait Backend: Send + Sync {
     fn accounts(&self) -> Result<Vec<ManagedAccount>>;
