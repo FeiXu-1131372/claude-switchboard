@@ -86,7 +86,7 @@ export function ImportTokenPanel({ onBack, onSuccess, onBusyChange, account }: P
         Saving does not switch your active account or test a model request. Anyone with this token can use its account&apos;s quota.
       </p>
       {account?.is_active && (
-        <p role="status" className="text-[length:var(--text-micro)] text-[color:var(--color-warn)]">
+        <p role="status" className="text-[length:var(--text-micro)] text-[color:var(--color-warn-text)]">
           Switch to another account before replacing the active token.
         </p>
       )}

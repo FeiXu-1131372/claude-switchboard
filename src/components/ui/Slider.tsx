@@ -40,7 +40,7 @@ export const Slider = forwardRef<HTMLInputElement, SliderProps>(
           >
             {label}
           </label>
-          <span className="mono text-[length:var(--text-label)] font-[var(--weight-semibold)] text-[color:var(--color-accent)]">
+          <span className="mono text-[length:var(--text-label)] font-[var(--weight-semibold)] text-[color:var(--color-accent-text)]">
             {formatValue(value)}
           </span>
         </div>

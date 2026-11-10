@@ -35,7 +35,7 @@ const fillMap: Record<ThresholdLevel, string> = {
 
 const colorMap: Record<ThresholdLevel, string> = {
   safe: 'text-[color:var(--color-text)]',
-  warn: 'text-[color:var(--color-warn)]',
+  warn: 'text-[color:var(--color-warn-text)]',
   danger: 'text-[color:var(--color-danger)]',
 };
 

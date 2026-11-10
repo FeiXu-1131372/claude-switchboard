@@ -94,7 +94,7 @@ export function AccountsSidebar() {
         <button
           type="button"
           onClick={openChooser}
-          className="text-[length:var(--text-label)] text-[color:var(--color-accent)] hover:underline"
+          className="text-[length:var(--text-label)] text-[color:var(--color-accent-text)] hover:underline"
         >
           + Add account
         </button>

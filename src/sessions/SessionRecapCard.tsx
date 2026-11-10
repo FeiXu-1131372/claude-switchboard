@@ -94,7 +94,7 @@ export function SessionRecapCard({
               pb-[2px]
               text-[length:var(--text-micro)] font-[var(--weight-semibold)]
               uppercase tracking-[var(--tracking-label)]
-              text-[color:var(--color-accent)]
+              text-[color:var(--color-accent-text)]
             "
           >
             Recap

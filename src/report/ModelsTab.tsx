@@ -155,7 +155,7 @@ export function ModelsTab() {
           </div>
           <div>
             <span className="text-[length:var(--text-label)] text-[color:var(--color-text-muted)]">Est. savings</span>
-            <p className="mono text-[length:var(--text-body)] font-[var(--weight-semibold)] text-[color:var(--color-safe)]">
+            <p className="mono text-[length:var(--text-body)] font-[var(--weight-semibold)] text-[color:var(--color-accent-text)]">
               {formatCost(cache.estimated_savings_usd)}
             </p>
           </div>

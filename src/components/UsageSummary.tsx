@@ -225,7 +225,7 @@ function BurnRateCaption({
     projected >= dangerAt
       ? 'var(--color-danger)'
       : projected >= warnAt
-        ? 'var(--color-warn)'
+        ? 'var(--color-warn-text)'
         : 'var(--color-text-muted)';
 
   return (

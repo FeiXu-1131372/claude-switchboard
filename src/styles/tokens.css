@@ -51,12 +51,17 @@
   /* Text — deep warm charcoal */
   --color-text: oklch(22% 0.018 50);
   --color-text-secondary: oklch(38% 0.020 55);
-  --color-text-muted: oklch(55% 0.022 60);
+  --color-text-muted: oklch(52% 0.022 60);
 
   /* Terracotta accent — darkened for light-surface contrast */
   --color-accent: oklch(56% 0.155 38);
   --color-accent-dim: oklch(56% 0.155 38 / 0.10);
   --color-accent-muted: oklch(56% 0.155 38 / 0.24);
+  /* Accent and amber as TEXT. The fill colours above are tuned for bars and
+   * chips; as 11px text on the lightest surfaces they fall under 4.5:1, so
+   * text gets its own slightly darker step. Checked by contrast.test.ts. */
+  --color-accent-text: oklch(54% 0.155 38);
+  --color-warn-text: oklch(52% 0.150 55);
 
   /* Status — restrained, only warn/danger carry color */
   --color-warn: oklch(62% 0.150 55);
@@ -212,11 +217,13 @@ body[data-theme="dark"] {
 
   --color-text: oklch(96% 0.010 65 / 0.96);
   --color-text-secondary: oklch(86% 0.020 65 / 0.78);
-  --color-text-muted: oklch(78% 0.025 65 / 0.62);
+  --color-text-muted: oklch(78% 0.025 65 / 0.86);
 
   --color-accent: oklch(70% 0.140 38);
   --color-accent-dim: oklch(70% 0.140 38 / 0.14);
   --color-accent-muted: oklch(70% 0.140 38 / 0.28);
+  --color-accent-text: oklch(74% 0.140 38);
+  --color-warn-text: var(--color-warn);
 
   --color-warn: oklch(76% 0.155 60);
   --color-warn-dim: oklch(76% 0.155 60 / 0.14);

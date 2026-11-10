@@ -27,14 +27,14 @@ export function UpdateBanner() {
       className="flex items-center gap-2 px-3 py-2 border-b border-[color:var(--color-border-subtle)] bg-[color:var(--color-accent-dim)]"
       role="status"
     >
-      <CircleArrowUp size={14} className="text-[color:var(--color-accent)]" aria-hidden />
+      <CircleArrowUp size={14} className="text-[color:var(--color-accent-text)]" aria-hidden />
       <span className="flex-1 text-xs text-[color:var(--color-text)] tracking-tight">
         {showInstall ? `Update ready · v${version}` : 'Install failed'}
       </span>
       <button
         type="button"
         onClick={handleClick}
-        className="text-xs text-[color:var(--color-accent)] px-2 py-1 rounded-[var(--radius-sm)] hover:bg-[color:var(--color-accent-muted)] transition-colors"
+        className="text-xs text-[color:var(--color-accent-text)] px-2 py-1 rounded-[var(--radius-sm)] hover:bg-[color:var(--color-accent-muted)] transition-colors"
       >
         {showInstall ? 'Install & restart' : 'Retry'}
       </button>

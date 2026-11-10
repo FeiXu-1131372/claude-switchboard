@@ -30,7 +30,7 @@ export function WarmupNowButton({ enabled, onClick, busy = false, status = "idle
         disabled && !busy
           ? "bg-neutral-800/30 text-neutral-500 cursor-not-allowed"
           : status === "success"
-            ? "bg-[var(--color-safe-dim)] text-[color:var(--color-safe)]"
+            ? "bg-[var(--color-safe-dim)] text-[color:var(--color-accent-text)]"
             : status === "error"
               ? "bg-[var(--color-danger-dim)] text-[color:var(--color-danger)] hover:bg-[var(--color-danger)] hover:text-white"
               : busy

@@ -287,7 +287,7 @@ export function ProviderForm({ providerId, providerKind = null, onClose, onSaved
                     'text-[length:var(--text-micro)]',
                     'transition-[background,color] duration-[var(--duration-fast)]',
                     present
-                      ? 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)]'
+                      ? 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent-text)]'
                       : 'bg-[var(--color-track)] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text-secondary)]',
                   ].join(' ')}
                 >

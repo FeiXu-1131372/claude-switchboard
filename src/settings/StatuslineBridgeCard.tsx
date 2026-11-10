@@ -193,7 +193,7 @@ function TargetRow({ target, showPath, now, onChanged }: TargetRowProps) {
         </p>
       )}
       {notice && !error && (
-        <p role="status" className="text-[length:var(--text-label)] text-[color:var(--color-accent)]">
+        <p role="status" className="text-[length:var(--text-label)] text-[color:var(--color-accent-text)]">
           {notice}
         </p>
       )}
@@ -281,7 +281,7 @@ function StateLines({ target, now, working, onRestore, onRetry, onUseAgain, onDi
 
     case 'blocked':
       return (
-        <span className="text-[length:var(--text-label)] text-[color:var(--color-warn)]">
+        <span className="text-[length:var(--text-label)] text-[color:var(--color-warn-text)]">
           {state.reason}
         </span>
       );
@@ -306,7 +306,7 @@ function StateLines({ target, now, working, onRestore, onRetry, onUseAgain, onDi
     case 'changed_outside':
       return (
         <div className="flex flex-col gap-[var(--space-sm)]">
-          <span className="text-[length:var(--text-label)] text-[color:var(--color-warn)]">
+          <span className="text-[length:var(--text-label)] text-[color:var(--color-warn-text)]">
             Your status line was changed outside Switchboard, so live usage is off.
           </span>
           <div className="flex items-center gap-[var(--space-sm)]">
@@ -453,7 +453,7 @@ function ConsentPanel({ report, busy, acceptedShared, onAcceptedShared, onConfir
             checked={acceptedShared}
             onChange={(e) => onAcceptedShared(e.target.checked)}
           />
-          <span className="text-[length:var(--text-label)] text-[color:var(--color-warn)]">
+          <span className="text-[length:var(--text-label)] text-[color:var(--color-warn-text)]">
             {report.shared_warning}
           </span>
         </label>

@@ -78,12 +78,12 @@ export function ResumeProviderPicker({ session, providers, onCancel, onConfirm }
             <IconWarning
               size={13}
               aria-hidden
-              className="mt-[2px] shrink-0 text-[color:var(--color-warn)]"
+              className="mt-[2px] shrink-0 text-[color:var(--color-warn-text)]"
             />
             <p
               className="
                 text-[length:var(--text-micro)] leading-[var(--leading-body)]
-                text-[color:var(--color-warn)]
+                text-[color:var(--color-warn-text)]
               "
             >
               Continuing on a different model discards the recorded thinking blocks (their

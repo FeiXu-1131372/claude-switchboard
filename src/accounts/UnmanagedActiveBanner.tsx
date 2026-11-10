@@ -30,7 +30,7 @@ export function UnmanagedActiveBanner() {
         type="button"
         onClick={add}
         disabled={busy}
-        className="text-[length:var(--text-micro)] text-[color:var(--color-accent)] hover:underline"
+        className="text-[length:var(--text-micro)] text-[color:var(--color-accent-text)] hover:underline"
       >
         Add to accounts
       </button>

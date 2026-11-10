@@ -222,7 +222,7 @@ function LoadingShell({
         <button
           type="button"
           onClick={onAccounts}
-          className="text-[length:var(--text-label)] text-[color:var(--color-accent)] hover:underline"
+          className="text-[length:var(--text-label)] text-[color:var(--color-accent-text)] hover:underline"
         >
           Choose an account
         </button>
@@ -284,7 +284,7 @@ function ChromeBar({
         <button
           type="button"
           onClick={onAccounts}
-          className="text-[length:var(--text-body)] font-[var(--weight-medium)] text-[color:var(--color-text)] hover:text-[color:var(--color-accent)] truncate max-w-[220px]"
+          className="text-[length:var(--text-body)] font-[var(--weight-medium)] text-[color:var(--color-text)] hover:text-[color:var(--color-accent-text)] truncate max-w-[220px]"
           title={accountEmail ?? ''}
         >
           {accountEmail ?? 'Sign in'}
@@ -361,7 +361,7 @@ function PlanPill({ plan }: { plan: string }) {
         text-[length:var(--text-micro)] font-[var(--weight-semibold)]
         uppercase tracking-[var(--tracking-label)]
         ${isPremiumPlan(plan)
-          ? 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)]'
+          ? 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent-text)]'
           : 'bg-[var(--color-track)] text-[color:var(--color-text-secondary)]'}
       `}
     >
@@ -448,7 +448,7 @@ function VersionFooter() {
         type="button"
         onClick={onClick}
         disabled={isChecking}
-        className="underline-offset-2 hover:underline hover:text-[color:var(--color-accent)] transition-colors disabled:opacity-60"
+        className="underline-offset-2 hover:underline hover:text-[color:var(--color-accent-text)] transition-colors disabled:opacity-60"
       >
         {label}
       </button>

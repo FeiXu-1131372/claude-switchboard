@@ -24,7 +24,7 @@ function PlanTag({ plan }: { plan: string | null }) {
         text-[length:var(--text-micro)] font-[var(--weight-semibold)]
         uppercase tracking-[var(--tracking-label)]
         ${isPremiumPlan(plan)
-          ? 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)]'
+          ? 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent-text)]'
           : 'bg-[var(--color-track)] text-[color:var(--color-text-secondary)]'}
       `}
     >
@@ -121,7 +121,7 @@ export function SwapConfirmCard({
           </div>
 
           <div className="flex flex-col gap-[var(--space-2xs)]">
-            <span className="text-[length:var(--text-micro)] uppercase tracking-[var(--tracking-label)] text-[color:var(--color-accent)]">
+            <span className="text-[length:var(--text-micro)] uppercase tracking-[var(--tracking-label)] text-[color:var(--color-accent-text)]">
               Switch to
             </span>
             <AccountLine entry={target} />

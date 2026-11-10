@@ -405,7 +405,7 @@ function CompactionRows({ items }: { items: Compaction[] }) {
             <IconCompact
               size={12}
               aria-hidden
-              className="shrink-0 text-[color:var(--color-warn)] opacity-80"
+              className="shrink-0 text-[color:var(--color-warn-text)] opacity-80"
             />
             <span className="text-[length:var(--text-micro)] text-[color:var(--color-text-secondary)]">
               Context compacted{c.trigger === 'manual' ? '' : ' automatically'} at{' '}
@@ -668,7 +668,7 @@ export function SessionsTab() {
                     {compactions.length > 0 && (
                       <span
                         title={`Context compacted ${compactions.length}×`}
-                        className="inline-flex shrink-0 items-center text-[color:var(--color-warn)] opacity-80"
+                        className="inline-flex shrink-0 items-center text-[color:var(--color-warn-text)] opacity-80"
                       >
                         <IconCompact size={11} aria-label="Context compacted" />
                       </span>

@@ -35,7 +35,7 @@ export function WarmupConsentModal({ onAccept, onDismiss }: Props) {
           <button
             type="button"
             onClick={onAccept}
-            className="px-[var(--space-sm)] py-[var(--space-2xs)] rounded-[var(--radius-sm)] bg-[var(--color-accent-dim)] hover:bg-[var(--color-accent-muted)] text-[color:var(--color-accent)] text-[length:var(--text-micro)] font-[var(--weight-medium)] transition-colors"
+            className="px-[var(--space-sm)] py-[var(--space-2xs)] rounded-[var(--radius-sm)] bg-[var(--color-accent-dim)] hover:bg-[var(--color-accent-muted)] text-[color:var(--color-accent-text)] text-[length:var(--text-micro)] font-[var(--weight-medium)] transition-colors"
           >
             Enable warm-up
           </button>

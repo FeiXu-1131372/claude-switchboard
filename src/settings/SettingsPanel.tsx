@@ -191,7 +191,7 @@ export function SettingsPanel() {
               formatValue={(v) => `${v}m`}
             />
             {pollingMinutes <= 2 && (
-              <p className="text-[length:var(--text-micro)] text-[color:var(--color-warn)] mt-[var(--space-xs)]">
+              <p className="text-[length:var(--text-micro)] text-[color:var(--color-warn-text)] mt-[var(--space-xs)]">
                 Frequent polling may cause rate limiting
               </p>
             )}
@@ -211,7 +211,7 @@ export function SettingsPanel() {
             </p>
             {accounts.length > 1 &&
               accounts.length * local.stagger_gap_secs > local.polling_interval_secs && (
-                <p className="text-[length:var(--text-micro)] text-[color:var(--color-warn)] mt-[var(--space-xs)]">
+                <p className="text-[length:var(--text-micro)] text-[color:var(--color-warn-text)] mt-[var(--space-xs)]">
                   {accounts.length} accounts × {local.stagger_gap_secs}s won't fit in{' '}
                   {Math.round(local.polling_interval_secs / 60)}m — gap will compress to{' '}
                   {Math.floor(local.polling_interval_secs / accounts.length)}s per slot.
@@ -325,7 +325,7 @@ export function SettingsPanel() {
         <div className="flex items-center justify-end gap-[var(--space-sm)]">
           {savedOk && (
             <span
-              className="text-[length:var(--text-label)] font-[var(--weight-medium)] text-[color:var(--color-accent)]"
+              className="text-[length:var(--text-label)] font-[var(--weight-medium)] text-[color:var(--color-accent-text)]"
               style={{ animation: 'fadeIn 150ms ease-out' }}
             >
               ✓ Settings saved

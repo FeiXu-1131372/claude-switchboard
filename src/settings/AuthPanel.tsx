@@ -141,7 +141,7 @@ export function AuthPanel({ onBack, onSuccess, onBusyChange, presentation = 'ful
           {/* Icon */}
           <div className="flex justify-center">
             <div className="w-[48px] h-[48px] rounded-[var(--radius-lg)] bg-[var(--color-accent-dim)] flex items-center justify-center">
-              <IconAuth size={24} className="text-[color:var(--color-accent)]" />
+              <IconAuth size={24} className="text-[color:var(--color-accent-text)]" />
             </div>
           </div>
 
@@ -167,7 +167,7 @@ export function AuthPanel({ onBack, onSuccess, onBusyChange, presentation = 'ful
                   className="w-full flex items-center gap-[var(--space-sm)] text-left"
                 >
                   <div className="w-[32px] h-[32px] rounded-[var(--radius-sm)] bg-[var(--color-accent-dim)] flex items-center justify-center shrink-0">
-                    <ExternalLink size={14} className="text-[color:var(--color-accent)]" />
+                    <ExternalLink size={14} className="text-[color:var(--color-accent-text)]" />
                   </div>
                   <div className="flex flex-col gap-[2px] flex-1">
                     <span className="text-[length:var(--text-body)] font-[var(--weight-medium)] text-[color:var(--color-text)]">
@@ -187,7 +187,7 @@ export function AuthPanel({ onBack, onSuccess, onBusyChange, presentation = 'ful
                   className="w-full flex items-center gap-[var(--space-sm)] text-left"
                 >
                   <div className="w-[32px] h-[32px] rounded-[var(--radius-sm)] bg-[var(--color-accent-dim)] flex items-center justify-center shrink-0">
-                    <IconTimer size={14} className="text-[color:var(--color-accent)]" />
+                    <IconTimer size={14} className="text-[color:var(--color-accent-text)]" />
                   </div>
                   <div className="flex flex-col gap-[2px] flex-1">
                     <span className="text-[length:var(--text-body)] font-[var(--weight-medium)] text-[color:var(--color-text)]">
@@ -225,7 +225,7 @@ export function AuthPanel({ onBack, onSuccess, onBusyChange, presentation = 'ful
           {step === 'waiting' && (
             <div className="flex flex-col items-center gap-[var(--space-md)]">
               <div className="flex items-center gap-[var(--space-sm)]">
-                <IconRefresh size={14} className="text-[color:var(--color-accent)] animate-spin" />
+                <IconRefresh size={14} className="text-[color:var(--color-accent-text)] animate-spin" />
                 <span className="text-[length:var(--text-label)] text-[color:var(--color-text-muted)]">
                   Waiting for browser…
                 </span>

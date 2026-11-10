@@ -56,7 +56,7 @@ function PlanBadge({ plan }: { plan: string | null }) {
         text-[length:var(--text-micro)] font-[var(--weight-semibold)]
         uppercase tracking-[var(--tracking-label)]
         ${isPremiumPlan(plan)
-          ? 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)]'
+          ? 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent-text)]'
           : 'bg-[var(--color-track)] text-[color:var(--color-text-secondary)]'}
       `}
     >
@@ -348,7 +348,7 @@ export function AccountRow({
               text-[color:var(--color-text-secondary)]
               transition-opacity duration-[var(--duration-fast)]
               opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100
-              hover:text-[color:var(--color-accent)] hover:border-[color:var(--color-accent)]
+              hover:text-[color:var(--color-accent-text)] hover:border-[color:var(--color-accent)]
               disabled:cursor-not-allowed disabled:hover:text-[color:var(--color-text-muted)] disabled:hover:border-[color:var(--color-border)]
               focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] focus-visible:outline-offset-2
             `}
@@ -490,7 +490,7 @@ export function AccountRow({
         <div className="flex items-center gap-[var(--space-xs)]">
           <span
             className={`flex-1 text-[length:var(--text-micro)] ${
-              awaitingStatusline ? 'text-[color:var(--color-text-muted)]' : 'text-[color:var(--color-warn)]'
+              awaitingStatusline ? 'text-[color:var(--color-text-muted)]' : 'text-[color:var(--color-warn-text)]'
             }`}
           >
             {errLabel}
@@ -505,9 +505,9 @@ export function AccountRow({
                 border border-[color:var(--color-warn)]
                 px-[var(--space-xs)] py-[1px]
                 text-[length:var(--text-micro)] uppercase tracking-[var(--tracking-label)]
-                text-[color:var(--color-warn)]
+                text-[color:var(--color-warn-text)]
                 hover:bg-[color:var(--color-warn)] hover:text-white
-                disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:text-[color:var(--color-warn)]
+                disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:text-[color:var(--color-warn-text)]
                 focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] focus-visible:outline-offset-2
               "
             >
@@ -546,7 +546,7 @@ export function AccountRow({
             />
           )}
           {staleHint && (
-            <span className="text-[length:var(--text-micro)] text-[color:var(--color-warn)]">
+            <span className="text-[length:var(--text-micro)] text-[color:var(--color-warn-text)]">
               {staleHint}
             </span>
           )}
@@ -596,7 +596,7 @@ export function AccountRow({
                       className={`text-[length:var(--text-micro)] ${
                         warmupStatus === 'error'
                           ? 'text-[color:var(--color-danger)]'
-                          : 'text-[color:var(--color-safe)]'
+                          : 'text-[color:var(--color-accent-text)]'
                       }`}
                     >
                       {warmupMessage}

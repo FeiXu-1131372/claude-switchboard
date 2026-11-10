@@ -405,7 +405,7 @@ export function SessionsBrowserTab() {
                   'text-[length:var(--text-micro)] font-[var(--weight-medium)] select-none',
                   'transition-[background,color,border-color] duration-[var(--duration-fast)] cursor-pointer',
                   hasRecapOnly
-                    ? 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)] border border-[var(--color-accent)]/30 font-[var(--weight-semibold)]'
+                    ? 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent-text)] border border-[var(--color-accent)]/30 font-[var(--weight-semibold)]'
                     : 'bg-[var(--color-bg-card)] text-[color:var(--color-text-muted)] border border-[var(--color-border)] hover:text-[color:var(--color-text)] hover:border-[var(--color-border-hover)]',
                 ].join(' ')}
               >
@@ -421,7 +421,7 @@ export function SessionsBrowserTab() {
                   'text-[length:var(--text-micro)] font-[var(--weight-medium)] select-none',
                   'transition-[background,color,border-color] duration-[var(--duration-fast)] cursor-pointer',
                   resumableOnly
-                    ? 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)] border border-[var(--color-accent)]/30 font-[var(--weight-semibold)]'
+                    ? 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent-text)] border border-[var(--color-accent)]/30 font-[var(--weight-semibold)]'
                     : 'bg-[var(--color-bg-card)] text-[color:var(--color-text-muted)] border border-[var(--color-border)] hover:text-[color:var(--color-text)] hover:border-[var(--color-border-hover)]',
                 ].join(' ')}
               >
@@ -437,7 +437,7 @@ export function SessionsBrowserTab() {
                   'text-[length:var(--text-micro)] font-[var(--weight-medium)] select-none',
                   'transition-[background,color,border-color] duration-[var(--duration-fast)] cursor-pointer',
                   groupByProject
-                    ? 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)] border border-[var(--color-accent)]/30 font-[var(--weight-semibold)]'
+                    ? 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent-text)] border border-[var(--color-accent)]/30 font-[var(--weight-semibold)]'
                     : 'bg-[var(--color-bg-card)] text-[color:var(--color-text-muted)] border border-[var(--color-border)] hover:text-[color:var(--color-text)] hover:border-[var(--color-border-hover)]',
                 ].join(' ')}
               >

@@ -71,7 +71,7 @@ export function CacheTab() {
             />
           </svg>
           <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <span className="mono text-[length:var(--text-display)] font-[var(--weight-semibold)] text-[color:var(--color-accent)] leading-[var(--leading-display)]">
+            <span className="mono text-[length:var(--text-display)] font-[var(--weight-semibold)] text-[color:var(--color-accent-text)] leading-[var(--leading-display)]">
               {Math.round(hitRatePct)}%
             </span>
             <span className="text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]">cache hit rate</span>
@@ -101,7 +101,7 @@ export function CacheTab() {
         </Card>
         <Card className="p-[var(--space-md)] flex flex-col gap-[4px]">
           <span className="text-[length:var(--text-label)] text-[color:var(--color-text-muted)]">Estimated savings</span>
-          <span className="mono text-[length:var(--text-body)] font-[var(--weight-semibold)] text-[color:var(--color-safe)]">
+          <span className="mono text-[length:var(--text-body)] font-[var(--weight-semibold)] text-[color:var(--color-accent-text)]">
             {formatCost(data.estimated_savings_usd)}
           </span>
         </Card>

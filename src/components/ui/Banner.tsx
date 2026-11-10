@@ -10,8 +10,8 @@ interface BannerProps extends HTMLAttributes<HTMLDivElement> {
 }
 
 const variantClasses: Record<BannerVariant, string> = {
-  info: 'bg-[var(--color-accent-dim)] border-[var(--color-accent)]/20 text-[color:var(--color-accent)]',
-  warning: 'bg-[var(--color-warn-dim)] border-[var(--color-warn)]/20 text-[color:var(--color-warn)]',
+  info: 'bg-[var(--color-accent-dim)] border-[var(--color-accent)]/20 text-[color:var(--color-accent-text)]',
+  warning: 'bg-[var(--color-warn-dim)] border-[var(--color-warn)]/20 text-[color:var(--color-warn-text)]',
   error: 'bg-[var(--color-danger-dim)] border-[var(--color-danger)]/20 text-[color:var(--color-danger)]',
   stale: 'bg-[var(--color-track)] border-[var(--color-border)] text-[color:var(--color-text-secondary)]',
 };

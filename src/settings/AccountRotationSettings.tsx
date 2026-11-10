@@ -75,7 +75,7 @@ export function AccountRotationSettings({ value, accounts, onChange }: Props) {
           Rotation runs while Switchboard is open, with at least 60 seconds between switches.
           Running Claude Code sessions usually adopt the account within about 30 seconds. Click Save to apply.
         </p>
-        {accounts.length < 2 && <p className="text-[length:var(--text-micro)] text-[color:var(--color-warn)]">
+        {accounts.length < 2 && <p className="text-[length:var(--text-micro)] text-[color:var(--color-warn-text)]">
           Add at least two accounts to use automatic rotation.
         </p>}
         {status && <p role="status" className="text-[length:var(--text-micro)] text-[color:var(--color-text-secondary)]">{status}</p>}

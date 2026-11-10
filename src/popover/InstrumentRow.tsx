@@ -149,7 +149,7 @@ export function InstrumentRow({
           <span
             className={`text-[length:var(--text-label)] font-[var(--weight-medium)] truncate ${
               active
-                ? 'text-[color:var(--color-accent)]'
+                ? 'text-[color:var(--color-accent-text)]'
                 : 'text-[color:var(--color-text-secondary)]'
             }`}
           >

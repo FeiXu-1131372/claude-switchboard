@@ -10,13 +10,13 @@ interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
 
 const variantClasses: Record<BadgeVariant, string> = {
   default: 'bg-[var(--color-track)] text-[color:var(--color-text-secondary)]',
-  accent: 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)]',
+  accent: 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent-text)]',
   // `safe` is a deprecated alias of `accent`. Kept for one release alongside
   // --color-safe so existing call sites don't break; remove both together.
-  safe: 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)]',
-  warn: 'bg-[var(--color-warn-dim)] text-[color:var(--color-warn)]',
+  safe: 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent-text)]',
+  warn: 'bg-[var(--color-warn-dim)] text-[color:var(--color-warn-text)]',
   danger: 'bg-[var(--color-danger-dim)] text-[color:var(--color-danger)]',
-  live: 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)]',
+  live: 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent-text)]',
   stale: 'bg-[var(--color-track)] text-[color:var(--color-text-muted)]',
   fable: 'bg-[var(--color-model-fable)] text-[color:var(--color-model-fable-text)]',
   opus: 'bg-[var(--color-model-opus)] text-[color:var(--color-model-opus-text)]',

@@ -27,7 +27,7 @@ export function DefaultProviderBanner({ providerName, onClear }: Props) {
       <button
         type="button"
         onClick={onClear}
-        className="shrink-0 text-[length:var(--text-micro)] text-[color:var(--color-accent)] hover:underline"
+        className="shrink-0 text-[length:var(--text-micro)] text-[color:var(--color-accent-text)] hover:underline"
       >
         Turn off
       </button>
