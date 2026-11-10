@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { Button } from '../components/ui/Button';
 import { ModelBadge } from '../components/ui/ModelBadge';
 import { EmptyState } from '../components/ui/EmptyState';
@@ -10,6 +10,8 @@ import { useAppStore } from '../lib/store';
 import { isUnloggedCallRow } from '../lib/types';
 import type { Compaction, PricingEntry, SessionEvent } from '../lib/types';
 import { costPerCategory, lookupPricing } from '../lib/pricing';
+import { RESUMABLE_SESSIONS_KEY } from '../sessions/useResumableSessions';
+import { useReportStore } from './reportState';
 
 // `modelLabel` now lives in ./modelDisplay alongside modelKey/MODEL_VARIANT so
 // the shared <ModelBadge> can reach it without importing a tab component.
@@ -458,46 +460,31 @@ export function SessionsTab() {
         ([events, compactions]) => ({ events, compactions }),
       ),
     [version],
+    `cost:${WINDOW_DAYS}`,
   );
   const events = data?.events ?? null;
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [pricing, setPricing] = useState<PricingEntry[] | null>(null);
+  // In the report store so the open row survives leaving the tab.
+  const expandedId = useReportStore((s) => s.costOpenRow);
+  const setExpandedId = useReportStore((s) => s.setCostOpenRow);
 
   // Pricing rates are static for the lifetime of the process; fetch once.
-  useEffect(() => {
-    let cancelled = false;
-    ipc.getPricing().then((p) => {
-      if (!cancelled) setPricing(p);
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, []);
+  const pricing: PricingEntry[] | null = useTabData(() => ipc.getPricing(), [], 'pricing').data;
 
-  // Session titles come from the same summaries the Sessions tab renders.
-  // Fetched once per mount on purpose: ExpandedReport remounts the tab when
-  // you switch back to it, which is when titles need refreshing. Keying this
-  // on `version` would re-run the backend's transcript scan on every
+  // Session titles come from the same summaries the Sessions tab renders,
+  // and share its cached copy. Refreshed once per mount on purpose, not on
+  // `version`: that would re-run the backend's transcript scan on every
   // ingestion tick (roughly every turn while a session is active), and the
   // scan cache is invalidated by exactly that activity. Best-effort: on
   // failure the rows keep their project labels rather than losing the tab.
-  const [titles, setTitles] = useState<ReadonlyMap<string, string>>(() => new Map());
-  useEffect(() => {
-    let cancelled = false;
-    ipc
-      .listResumableSessions()
-      .then((rows) => {
-        if (cancelled) return;
-        const map = new Map<string, string>();
-        for (const r of rows) {
-          const title = r.title?.trim();
-          if (title) map.set(r.session_id, title);
-        }
-        setTitles(map);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const summaries = useTabData(() => ipc.listResumableSessions(), [], RESUMABLE_SESSIONS_KEY).data;
+  const titles = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const r of summaries ?? []) {
+      const title = r.title?.trim();
+      if (title) map.set(r.session_id, title);
+    }
+    return map;
+  }, [summaries]);
 
   const sessions = useMemo(
     () => aggregateSessions(events ?? [], pricing),

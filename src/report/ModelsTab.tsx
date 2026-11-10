@@ -15,6 +15,7 @@ export function ModelsTab() {
   const { data, error, loading, reload } = useTabData(
     () => Promise.all([ipc.getModelBreakdown(30), ipc.getCacheStats(30)]).then(([m, c]) => ({ models: m, cache: c })),
     [version],
+    'models-tab:30',
   );
   const models = data?.models ?? null;
   const cache = data?.cache ?? null;

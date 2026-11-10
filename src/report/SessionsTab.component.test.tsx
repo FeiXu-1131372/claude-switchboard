@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SessionSummary, StoredSessionEvent } from '../lib/generated/bindings';
 import { useAppStore } from '../lib/store';
@@ -63,6 +63,40 @@ describe('SessionsTab (Cost) — session titles', () => {
     ipcMock.getSessionHistory.mockResolvedValue([ev()]);
     ipcMock.getCompactions.mockResolvedValue([]);
     ipcMock.getPricing.mockResolvedValue([]);
+  });
+
+  it('keeps the open row after the tab is left and reopened, with no loading state', async () => {
+    ipcMock.listResumableSessions.mockResolvedValue([summary()]);
+    const first = render(<SessionsTab />);
+    fireEvent.click(await screen.findByRole('button', { expanded: false }));
+    expect(screen.getByRole('button', { expanded: true })).toBeInTheDocument();
+    first.unmount();
+
+    render(<SessionsTab />);
+    // First render after coming back: the row is there and still open.
+    expect(screen.getByRole('button', { expanded: true })).toBeInTheDocument();
+  });
+
+  it('new data arriving does not close the open row or show loading', async () => {
+    ipcMock.listResumableSessions.mockResolvedValue([summary()]);
+    render(<SessionsTab />);
+    fireEvent.click(await screen.findByRole('button', { expanded: false }));
+
+    let release!: (events: StoredSessionEvent[]) => void;
+    ipcMock.getSessionHistory.mockReturnValueOnce(
+      new Promise<StoredSessionEvent[]>((resolve) => {
+        release = resolve;
+      }),
+    );
+    await act(async () => {
+      useAppStore.setState((s) => ({ sessionDataVersion: s.sessionDataVersion + 1 }));
+    });
+    // Refetch in flight: the row is still there and still open.
+    expect(screen.getByRole('button', { expanded: true })).toBeInTheDocument();
+
+    await act(async () => release([ev(), ev({ event_id: 'evt-2', source_line: 2, cost_usd: 1 })]));
+    expect(screen.getByRole('button', { expanded: true })).toBeInTheDocument();
+    expect(screen.getByRole('button', { expanded: true })).toHaveTextContent('2 turns');
   });
 
   it('labels a cost row with the session title, not the project', async () => {

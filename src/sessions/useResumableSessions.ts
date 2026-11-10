@@ -1,27 +1,18 @@
-import { useCallback, useEffect, useState } from 'react';
 import type { SessionSummary } from '../lib/generated/bindings';
 import { ipc } from '../lib/ipc';
+import { useTabData } from '../lib/useTabData';
+
+/** Cache key for the transcript scan, shared by every view that lists
+ * sessions so the second one to open does not wait for it again. */
+export const RESUMABLE_SESSIONS_KEY = 'resumable-sessions';
+
+const NONE: SessionSummary[] = [];
 
 export function useResumableSessions() {
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    try {
-      setSessions(await ipc.listResumableSessions());
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void reload();
-  }, [reload]);
-
-  return { sessions, loading, error, reload };
+  const { data, loading, error, reload } = useTabData(
+    () => ipc.listResumableSessions(),
+    [],
+    RESUMABLE_SESSIONS_KEY,
+  );
+  return { sessions: data ?? NONE, loading, error, reload };
 }

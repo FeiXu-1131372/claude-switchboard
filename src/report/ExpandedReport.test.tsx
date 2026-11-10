@@ -42,6 +42,7 @@ vi.mock('../components/modals/SettingsModal', () => ({
 }));
 
 import { ExpandedReport } from './ExpandedReport';
+import { useReportStore } from './reportState';
 
 beforeEach(() => {
   // jsdom has no ResizeObserver; the tab underline measures with one.
@@ -100,6 +101,58 @@ describe('ExpandedReport shell', () => {
     render(<ExpandedReport />);
     fireEvent.click(screen.getByRole('button', { name: 'Collapse details' }));
     expect(appState.toggleViewMode).toHaveBeenCalledTimes(1);
+  });
+
+  it('comes back to the tab you left', () => {
+    useReportStore.setState({ activeTab: 'trends' });
+    render(<ExpandedReport />);
+    expect(screen.getByRole('tab', { name: 'Trends' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('TrendsTab stub')).toBeInTheDocument();
+  });
+
+  it('remembers the tab you choose', () => {
+    const first = render(<ExpandedReport />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Cost' }));
+    first.unmount();
+    render(<ExpandedReport />);
+    expect(screen.getByRole('tab', { name: 'Cost' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('falls back to the first tab for an unknown saved id', () => {
+    useReportStore.setState({ activeTab: 'nope' });
+    render(<ExpandedReport />);
+    expect(screen.getByRole('tab', { name: 'Sessions' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('SessionsBrowserTab stub')).toBeInTheDocument();
+  });
+
+  it('still opens and switches tabs when storage is blocked', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    try {
+      render(<ExpandedReport />);
+      fireEvent.click(screen.getByRole('tab', { name: 'Trends' }));
+      expect(screen.getByText('TrendsTab stub')).toBeInTheDocument();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('returns each tab to where it was scrolled', async () => {
+    render(<ExpandedReport />);
+    const panel = screen.getByTestId('report-scroll');
+    fireEvent.click(screen.getByRole('tab', { name: 'Cost' }));
+    panel.scrollTop = 240;
+    fireEvent.scroll(panel);
+    await waitFor(() => expect(useReportStore.getState().scrollTop.cost).toBe(240));
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Trends' }));
+    expect(panel.scrollTop).toBe(0);
+    fireEvent.click(screen.getByRole('tab', { name: 'Cost' }));
+    expect(panel.scrollTop).toBe(240);
   });
 
   it('a pointer press on the header starts a window drag, but not on a tab or a button', () => {

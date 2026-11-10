@@ -168,7 +168,8 @@ export function TrendsTab() {
       Promise.all([ipc.getDailyTrends(days), ipc.getDailyModelBreakdown(days)]).then(
         ([trends, breakdown]) => ({ trends, breakdown }),
       ),
-    [version, days],
+    [version],
+    `trends:${days}`,
   );
 
   useEffect(() => {

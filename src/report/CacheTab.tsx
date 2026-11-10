@@ -12,6 +12,7 @@ export function CacheTab() {
   const { data, error, loading, reload } = useTabData(
     () => ipc.getCacheStats(30),
     [version],
+    'cache-tab:30',
   );
 
   if (error) {

@@ -12,6 +12,7 @@ export function ProjectsTab() {
   const { data, error, loading, reload } = useTabData(
     () => ipc.getProjectBreakdown(30),
     [version],
+    'projects-tab:30',
   );
 
   if (error) {

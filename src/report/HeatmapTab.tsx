@@ -66,6 +66,7 @@ export function HeatmapTab() {
   const { data: events, error, loading, reload } = useTabData(
     () => ipc.getSessionHistory(180),
     [version],
+    'heatmap-tab:180',
   );
 
   const data = useMemo(() => (events ? sessionsToHeatmap(events) : []), [events]);

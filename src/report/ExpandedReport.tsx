@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState, type UIEvent } from 'react';
 import { motion } from 'framer-motion';
 import { IconButton } from '../components/ui/IconButton';
 import { SessionsTab, WINDOW_DAYS } from './SessionsTab';
@@ -16,6 +16,7 @@ import { AccountsSidebar } from '../accounts/AccountsSidebar';
 import { SettingsModal } from '../components/modals/SettingsModal';
 import { ProvidersTab } from '../providers/ProvidersTab';
 import { SessionsBrowserTab } from '../sessions/SessionsBrowserTab';
+import { useReportStore } from './reportState';
 
 const TAB_CONFIG = [
   { id: 'browse', label: 'Sessions' },
@@ -57,22 +58,89 @@ const TAB_COMPONENTS: Record<string, React.FC> = {
   providers: ProvidersTab,
 };
 
+const TAB_IDS: readonly string[] = TAB_CONFIG.map((t) => t.id);
+
 export function ExpandedReport() {
-  const [activeTab, setActiveTab] = useState<string>('browse');
+  // The tab is remembered across restarts. A saved id this build does not
+  // have (an older or newer build wrote it) opens the first tab instead of a
+  // blank panel.
+  const savedTab = useReportStore((s) => s.activeTab);
+  const setActiveTab = useReportStore((s) => s.setActiveTab);
+  const activeTab = TAB_IDS.includes(savedTab) ? savedTab : TAB_IDS[0];
   const [refreshing, setRefreshing] = useState(false);
   const [tabKey, setTabKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const prevTabRef = useRef<string>('browse');
+  const prevTabRef = useRef<string>(activeTab);
   const stale = useAppStore((s) => s.stale);
   const toggleViewMode = useAppStore((s) => s.toggleViewMode);
 
   const TabComponent = TAB_COMPONENTS[activeTab] ?? SessionsTab;
 
-  const tabIds = TAB_CONFIG.map((t) => t.id) as string[];
+  const tabIds = TAB_IDS;
   const prevIdx = tabIds.indexOf(prevTabRef.current);
   const currIdx = tabIds.indexOf(activeTab);
   const slideDir = currIdx >= prevIdx ? 1 : -1;
   prevTabRef.current = activeTab;
+
+  /* ── Scroll position, per tab ──
+   * Each tab comes back to where it was left. The position is put back
+   * before paint; if the content is not tall enough yet (data still on its
+   * way), it is retried as the content grows, until it is reached, the user
+   * scrolls for themselves, or two seconds pass. */
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const restoring = useRef<number | null>(null);
+  const pendingSave = useRef<{ tab: string; y: number; frame: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const content = contentRef.current;
+    if (!el || !content) return;
+    const target = useReportStore.getState().scrollTop[activeTab] ?? 0;
+    el.scrollTop = target;
+    if (el.scrollTop >= target) {
+      restoring.current = null;
+      return;
+    }
+    restoring.current = target;
+    const observer = new ResizeObserver(() => {
+      if (restoring.current === null) return;
+      el.scrollTop = restoring.current;
+      if (el.scrollTop >= restoring.current) restoring.current = null;
+    });
+    observer.observe(content);
+    const giveUp = window.setTimeout(() => {
+      restoring.current = null;
+    }, 2000);
+    return () => {
+      observer.disconnect();
+      window.clearTimeout(giveUp);
+    };
+  }, [activeTab, tabKey]);
+
+  function handleScroll(e: UIEvent<HTMLDivElement>) {
+    // While a position is being put back, the scroll events are ours.
+    if (restoring.current !== null) return;
+    // Tab and position are read now, not in the frame callback: by then a
+    // tab switch may have replaced both, and the old tab would be saved at
+    // the new tab's position.
+    const next = { tab: activeTab, y: e.currentTarget.scrollTop };
+    if (pendingSave.current) {
+      pendingSave.current.tab = next.tab;
+      pendingSave.current.y = next.y;
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      const save = pendingSave.current;
+      pendingSave.current = null;
+      if (save) useReportStore.getState().setScrollTop(save.tab, save.y);
+    });
+    pendingSave.current = { ...next, frame };
+  }
+
+  function stopRestoring() {
+    restoring.current = null;
+  }
 
   async function handleRefresh() {
     if (refreshing) return;
@@ -149,8 +217,17 @@ export function ExpandedReport() {
           />
 
           {/* Tab content */}
-          <div className="flex-1 overflow-y-auto px-[var(--space-2xl)] pb-[var(--space-2xl)] pt-[var(--space-lg)]">
+          <div
+            ref={scrollRef}
+            data-testid="report-scroll"
+            onScroll={handleScroll}
+            onWheel={stopRestoring}
+            onPointerDown={stopRestoring}
+            onKeyDown={stopRestoring}
+            className="flex-1 overflow-y-auto px-[var(--space-2xl)] pb-[var(--space-2xl)] pt-[var(--space-lg)]"
+          >
             <motion.div
+              ref={contentRef}
               key={`${activeTab}-${tabKey}`}
               variants={tabSlide}
               initial="enter"

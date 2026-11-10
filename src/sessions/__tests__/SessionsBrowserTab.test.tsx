@@ -42,6 +42,27 @@ function s(over: Partial<SessionSummary>): SessionSummary {
 describe('SessionsBrowserTab', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it('keeps the search text, filters and open row after the tab is left and reopened', async () => {
+    ipcMock.listResumableSessions.mockResolvedValue([
+      s({ session_id: 'a', project_name: 'alpha', title: 'Webhook retries', asked: 'first ask' }),
+      s({ session_id: 'b', project_name: 'beta', cwd: '/w/beta', title: 'Beta work' }),
+    ]);
+    const first = render(<SessionsBrowserTab />);
+    await waitFor(() => expect(screen.getByText('Beta work')).toBeTruthy());
+    fireEvent.change(screen.getByLabelText('Search sessions'), { target: { value: 'webhook' } });
+    fireEvent.change(screen.getByLabelText('Sort sessions by'), { target: { value: 'cost' } });
+    fireEvent.click(screen.getByText('Webhook retries'));
+    await waitFor(() => expect(screen.getByText('first ask')).toBeTruthy());
+    first.unmount();
+
+    render(<SessionsBrowserTab />);
+    expect(screen.getByLabelText('Search sessions')).toHaveValue('webhook');
+    // The list is there on the first render: no loading state in between.
+    expect(screen.getByText('first ask')).toBeTruthy();
+    expect(screen.queryByText('Beta work')).toBeNull();
+    expect(screen.getByLabelText('Sort sessions by')).toHaveValue('cost');
+  });
+
   it('groups sessions under their project', async () => {
     ipcMock.listResumableSessions.mockResolvedValue([
       s({ session_id: 'a', project_name: 'alpha', title: 'Alpha work' }),

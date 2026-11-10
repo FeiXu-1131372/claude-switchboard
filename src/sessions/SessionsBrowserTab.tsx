@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import type { SessionSummary } from '../lib/generated/bindings';
 import { Banner } from '../components/ui/Banner';
 import { Button } from '../components/ui/Button';
@@ -10,17 +10,9 @@ import { modelLabel } from '../report/modelDisplay';
 import { useResumableSessions } from './useResumableSessions';
 import { SessionRow } from './SessionRow';
 import { useResume } from './useResume';
+import { DEFAULT_SESSIONS_VIEW, useReportStore, type SortOption, type TimeFilter } from '../report/reportState';
 
-export type SortOption =
-  | 'recent'
-  | 'oldest'
-  | 'turns'
-  | 'tokens'
-  | 'cost'
-  | 'peak_context'
-  | 'title';
-
-export type TimeFilter = 'all' | 'today' | '7d' | '30d';
+export type { SortOption, TimeFilter } from '../report/reportState';
 
 function matches(s: SessionSummary, q: string): boolean {
   const hay = [
@@ -111,15 +103,22 @@ function RowGroup({ children }: { children: React.ReactNode }) {
 
 export function SessionsBrowserTab() {
   const { sessions, loading, error } = useResumableSessions();
-  const [query, setQuery] = useState('');
-  const [sortOption, setSortOption] = useState<SortOption>('recent');
-  const [projectFilter, setProjectFilter] = useState('all');
-  const [modelFilter, setModelFilter] = useState('all');
-  const [timeFilter, setTimeFilter] = useState<TimeFilter>('all');
-  const [hasRecapOnly, setHasRecapOnly] = useState(false);
-  const [resumableOnly, setResumableOnly] = useState(false);
-  const [groupByProject, setGroupByProject] = useState(true);
-  const [expanded, setExpanded] = useState<string | null>(null);
+  // Search, sort, filters and the open row live in the report store, not
+  // in this component: the tab unmounts whenever you leave it, and losing
+  // a half-typed search to a glance at another tab is the bug this fixes.
+  const view = useReportStore((s) => s.sessions);
+  const patch = useReportStore((s) => s.patchSessions);
+  const {
+    query,
+    sortOption,
+    projectFilter,
+    modelFilter,
+    timeFilter,
+    hasRecapOnly,
+    resumableOnly,
+    groupByProject,
+    expanded,
+  } = view;
   const { resume, dialog, notice, vsCodeAvailable } = useResume();
 
   const q = query.trim().toLowerCase();
@@ -202,16 +201,13 @@ export function SessionsBrowserTab() {
   const isFiltered = Boolean(query || isNonSearchFiltered);
 
   function clearFilters() {
-    setQuery('');
-    setProjectFilter('all');
-    setModelFilter('all');
-    setTimeFilter('all');
-    setHasRecapOnly(false);
-    setResumableOnly(false);
+    const { query, projectFilter, modelFilter, timeFilter, hasRecapOnly, resumableOnly } =
+      DEFAULT_SESSIONS_VIEW;
+    patch({ query, projectFilter, modelFilter, timeFilter, hasRecapOnly, resumableOnly });
   }
 
   function toggle(id: string) {
-    setExpanded((cur) => (cur === id ? null : id));
+    patch({ expanded: expanded === id ? null : id });
   }
 
   const rows = (list: SessionSummary[], inGroup = false) =>
@@ -245,7 +241,7 @@ export function SessionsBrowserTab() {
               aria-label="Search sessions"
               placeholder="Search titles, recaps, files, branches…"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => patch({ query: e.target.value })}
               className="
                 w-full rounded-[var(--radius-sm)]
                 border border-[var(--color-border)] bg-[var(--color-bg-card)]
@@ -259,7 +255,7 @@ export function SessionsBrowserTab() {
             {query && (
               <button
                 type="button"
-                onClick={() => setQuery('')}
+                onClick={() => patch({ query: '' })}
                 aria-label="Clear"
                 className="
                   absolute right-[var(--space-xs)] top-1/2 -translate-y-1/2
@@ -292,7 +288,7 @@ export function SessionsBrowserTab() {
                 <select
                   aria-label="Sort sessions by"
                   value={sortOption}
-                  onChange={(e) => setSortOption(e.target.value as SortOption)}
+                  onChange={(e) => patch({ sortOption: e.target.value as SortOption })}
                   className={controlSelectClass}
                 >
                   <option value="recent">Most recent</option>
@@ -321,7 +317,7 @@ export function SessionsBrowserTab() {
                   <select
                     aria-label="Filter by project"
                     value={projectFilter}
-                    onChange={(e) => setProjectFilter(e.target.value)}
+                    onChange={(e) => patch({ projectFilter: e.target.value })}
                     className={`${controlSelectClass} truncate`}
                   >
                     <option value="all">All ({projectOptions.length})</option>
@@ -350,7 +346,7 @@ export function SessionsBrowserTab() {
                   <select
                     aria-label="Filter by model"
                     value={modelFilter}
-                    onChange={(e) => setModelFilter(e.target.value)}
+                    onChange={(e) => patch({ modelFilter: e.target.value })}
                     className={`${controlSelectClass} truncate`}
                   >
                     <option value="all">All models</option>
@@ -378,7 +374,7 @@ export function SessionsBrowserTab() {
                 <select
                   aria-label="Filter by time period"
                   value={timeFilter}
-                  onChange={(e) => setTimeFilter(e.target.value as TimeFilter)}
+                  onChange={(e) => patch({ timeFilter: e.target.value as TimeFilter })}
                   className={controlSelectClass}
                 >
                   <option value="all">All time</option>
@@ -398,7 +394,7 @@ export function SessionsBrowserTab() {
             <div className="flex items-center gap-[var(--space-xs)]">
               <button
                 type="button"
-                onClick={() => setHasRecapOnly((v) => !v)}
+                onClick={() => patch({ hasRecapOnly: !hasRecapOnly })}
                 aria-pressed={hasRecapOnly}
                 className={[
                   'inline-flex items-center px-[7px] py-[2px] rounded-[var(--radius-pill)]',
@@ -414,7 +410,7 @@ export function SessionsBrowserTab() {
 
               <button
                 type="button"
-                onClick={() => setResumableOnly((v) => !v)}
+                onClick={() => patch({ resumableOnly: !resumableOnly })}
                 aria-pressed={resumableOnly}
                 className={[
                   'inline-flex items-center px-[7px] py-[2px] rounded-[var(--radius-pill)]',
@@ -430,7 +426,7 @@ export function SessionsBrowserTab() {
 
               <button
                 type="button"
-                onClick={() => setGroupByProject((v) => !v)}
+                onClick={() => patch({ groupByProject: !groupByProject })}
                 aria-pressed={groupByProject}
                 className={[
                   'inline-flex items-center px-[7px] py-[2px] rounded-[var(--radius-pill)]',
