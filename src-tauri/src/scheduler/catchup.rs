@@ -62,6 +62,19 @@ pub fn most_recent_expected_fire(
     candidates.into_iter().max()
 }
 
+/// Next scheduled local wall-clock occurrence, for the activity UI.
+pub fn next_expected_fire(schedule: &Schedule, now: DateTime<Local>) -> Option<DateTime<Local>> {
+    let times = match schedule {
+        Schedule::Off => return None,
+        Schedule::Every5h { anchor } => (0..5).map(|k| HhMm::new((anchor.hour + 5 * k) % 24, anchor.minute)).collect(),
+        Schedule::Custom { times } => times.clone(),
+    };
+    let today = now.date_naive();
+    let tomorrow = today.succ_opt()?;
+    [today, tomorrow].into_iter().flat_map(|date| times.iter().filter_map(move |&time| local_at(date, time)))
+        .filter(|&at| at > now).min()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,6 +90,14 @@ mod tests {
     fn off_returns_none() {
         let now = local(2026, 5, 7, 14, 0);
         assert_eq!(most_recent_expected_fire(&Schedule::Off, now), None);
+    }
+
+    #[test]
+    fn next_fire_handles_day_boundary_and_off() {
+        let now = local(2026, 11, 10, 23, 30);
+        let schedule = Schedule::Every5h { anchor: HhMm::new(4, 0) };
+        assert_eq!(next_expected_fire(&schedule, now), Some(local(2026, 11, 11, 0, 0)));
+        assert_eq!(next_expected_fire(&Schedule::Off, now), None);
     }
 
     #[test]

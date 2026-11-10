@@ -307,6 +307,7 @@ export function SettingsPanel() {
         </h2>
         <Card className="p-[var(--space-md)]">
           <WarmupSettings
+            accounts={accounts}
             consentGranted={consentGranted}
             osSchedulerRegistered={osRegistered}
             onRevoke={handleRevoke}

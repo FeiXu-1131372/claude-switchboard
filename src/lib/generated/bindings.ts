@@ -822,7 +822,7 @@ export type Utilization = { utilization: number; resets_at?: string | null }
 /**
  * Per-account warm-up state returned by `get_warmup_state`.
  */
-export type WarmupAccountState = { warmup_enabled: boolean; schedule: Schedule; last_warmup_at: number | null }
+export type WarmupAccountState = { warmup_enabled: boolean; schedule: Schedule; last_warmup_at: number | null; last_success_at?: number | null; last_result?: string | null; last_error?: string | null; next_scheduled_at?: number | null }
 export type WarmupOutcome = 
 /**
  * 200 OK — the call started a fresh 5h window.

@@ -1144,6 +1144,14 @@ pub struct WarmupAccountState {
     pub warmup_enabled: bool,
     pub schedule: crate::scheduler::Schedule,
     pub last_warmup_at: Option<i64>,
+    #[serde(default)]
+    pub last_success_at: Option<i64>,
+    #[serde(default)]
+    pub last_result: Option<String>,
+    #[serde(default)]
+    pub last_error: Option<String>,
+    #[serde(default)]
+    pub next_scheduled_at: Option<i64>,
 }
 
 /// Fetch the warm-up state for a specific account. Used by the UI row to
@@ -1168,10 +1176,17 @@ pub async fn get_warmup_state(
         .map_err(|e| e.to_string())?;
     let schedule: crate::scheduler::Schedule =
         serde_json::from_str(&schedule_json).map_err(|e| e.to_string())?;
+    let activity = crate::scheduler::claim::run_state(&conn, &account_id).map_err(err_to_string)?;
+    let next_scheduled_at = (enabled != 0).then(|| crate::scheduler::catchup::next_expected_fire(&schedule, chrono::Local::now()))
+        .flatten().map(|at| at.timestamp());
     Ok(WarmupAccountState {
         warmup_enabled: enabled != 0,
         schedule,
-        last_warmup_at,
+        last_warmup_at: activity.last_attempt_at.or(last_warmup_at),
+        last_success_at: activity.last_success_at,
+        last_result: activity.last_result,
+        last_error: activity.last_error,
+        next_scheduled_at,
     })
 }
 
