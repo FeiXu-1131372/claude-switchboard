@@ -62,6 +62,24 @@ The confirm dialog tells you exactly what's about to change — Keychain entry, 
 
 A 60-second `KeychainGuardian` covers the narrow race where a Claude Code process started its OAuth refresh just before the swap, so the swap can't be silently overwritten.
 
+### Automatic account rotation
+
+In **Settings → Account rotation**, enable automatic rotation and click **Save**.
+By default, Switchboard switches when the active account reaches **96% of its
+5-hour limit or 98% of its weekly limit**. Both thresholds are adjustable.
+
+Automatic selection chooses the account with the most headroom across both
+limits. You can select a preferred next account; if it is active or unavailable,
+automatic selection supplies the fallback. Accounts with missing, stale, invalid,
+or failed usage readings, or either limit already at its threshold, are skipped.
+If no account qualifies, Switchboard waits for refreshed usage. Settings show
+the latest rotation result, and successful switches send a desktop notification.
+
+Rotation runs in the Rust backend while Switchboard is open, including while
+the popover is hidden. It uses the existing usage polling and live statusline
+data, respects API backoff, and waits at least 60 seconds between switches.
+Running Claude Code sessions usually adopt the new account within about 30 seconds.
+
 ---
 
 ## Start your 5-hour window when *you* want it
@@ -85,6 +103,30 @@ Three preset shapes:
 - **Custom** — explicit list of `HH:MM` times.
 
 Schedules fire via the OS (launchd on macOS, Task Scheduler on Windows) so they work even when the app is closed. Prefer not to register an OS agent? The in-app scheduler still fires while the app is open.
+
+Enable **Settings → Warm-up → Enable in background** to register background
+checks. On Windows, the task runs once per minute as your signed-in user,
+including on battery power, without opening a console. It runs while the
+computer is awake and catches up the latest missed schedule from the past
+24 hours after sleep or restart. It does not wake a sleeping computer.
+
+The app and background task share persisted claims, so a scheduled occurrence
+is handled once even when both are running. They check global consent and the
+account's warm-up toggle, skip existing five-hour windows using saved usage,
+and retain retry delays across restarts. Network/server failures retry after
+five minutes; HTTP authentication and rate-limit failures wait thirty minutes.
+Settings show each account's next scheduled check, last successful warm-up,
+and most recent result or error.
+
+For local installations, `claude-switchboard --register-scheduler` registers
+the current executable. `claude-switchboard --tick` runs one background check;
+`--tick --data-dir <directory>` selects an explicit data directory for isolated
+checks. Starting the app refreshes an existing registration to its current
+executable location.
+
+Background execution has been verified on Windows. macOS uses the same runner
+through its LaunchAgent, but a closed-app smoke test, including Keychain access,
+is still needed there.
 
 ---
 
