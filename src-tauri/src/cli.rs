@@ -1,7 +1,6 @@
 //! CLI entry points for headless modes.
 //! - `claude-switchboard --tick`: run scheduler dispatcher for all eligible
-//!   accounts and exit. Future Plan B tasks fill in the per-account walk;
-//!   this stub validates the path.
+//!   accounts and exit, without starting Tauri.
 //! - `claude-switchboard --migrate`: re-launch the GUI which re-runs
 //!   migration idempotently.
 
@@ -12,6 +11,7 @@ use std::path::Path;
 pub enum CliMode {
     Tick,
     Migrate,
+    RegisterScheduler,
     Gui, // default — start the Tauri runtime as usual
 }
 
@@ -24,43 +24,70 @@ where
         match a.as_ref() {
             "--tick" => return CliMode::Tick,
             "--migrate" => return CliMode::Migrate,
+            "--register-scheduler" => return CliMode::RegisterScheduler,
             _ => {}
         }
     }
     CliMode::Gui
 }
 
-/// Run `--tick`. Headless: open DB, attempt the per-account warm-up walk.
-///
-/// ## Trade-off: headless AppState reconstruction
-///
-/// The full `scheduler_glue::walk_due_accounts` path requires an `Arc<AppState>`,
-/// which holds an `AccountManager`, `AuthOrchestrator`, `Arc<reqwest::Client>`,
-/// and a per-slot snapshot cache (`cached_usage_by_slot`).
-///
-/// The snapshot cache starts empty for a headless tick — there is no running
-/// poll loop to populate it. This means `five_hour.resets_at` will always be
-/// `None` for a headless invocation, which is acceptable: the warm-up module
-/// treats `None` as "window inactive", so it will issue the warm-up call
-/// (correct behaviour for a launchd-driven pre-window fire).
-///
-/// Reconstructing the remaining AppState fields (AccountManager, Auth, HTTP
-/// client) is straightforward but requires wiring them into this entry point
-/// independently of `lib.rs::run()`, which builds them inside the Tauri
-/// Builder setup closure. That refactor is deferred to a future task.
-///
-/// **For now** the in-app 30-second dispatcher (spawned in `lib.rs`) handles
-/// all warm-up firing while the GUI is open. The launchd `--tick` path is a
-/// documented no-op until the headless AppState reconstruction task lands.
+/// Run one shared dispatcher pass without constructing a GUI or holding its
+/// exclusive database lock. Failures are saved per account and return a nonzero
+/// exit code to Task Scheduler; healthy accounts continue to be processed.
 pub async fn run_tick(data_dir: &Path) -> Result<()> {
-    use crate::store::Db;
-
-    let _db = Db::open_for_tick(data_dir)?;
-    tracing::info!(
-        "[--tick] headless AppState reconstruction not yet wired; \
-         in-app dispatcher (lib.rs) handles warm-up while GUI is open"
+    use crate::{
+        auth::{accounts::AccountManager, AuthOrchestrator},
+        store::Db,
+        warmup::runner,
+    };
+    let db = Db::open_for_tick(data_dir)?;
+    let http = std::sync::Arc::new(
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()?,
+    );
+    let accounts = AccountManager::new(data_dir.to_path_buf());
+    let auth = AuthOrchestrator::new(data_dir.to_path_buf(), http.clone());
+    let result = runner::scheduled(
+        &db,
+        &runner::AccountBackend {
+            db: &db,
+            accounts: &accounts,
+            auth: &auth,
+            http: &http,
+        },
+        chrono::Local::now(),
+    )
+    .await?;
+    tracing::info!(target: "switchboard.warmup", "headless tick: {} attempted, {} failed", result.attempted, result.failed);
+    anyhow::ensure!(
+        result.failed == 0,
+        "{} scheduled warm-up(s) failed",
+        result.failed
     );
     Ok(())
+}
+
+/// Explicit data directory for portable installs and isolated checks. Only
+/// headless mode consumes this option; GUI account storage is unchanged.
+pub fn tick_data_dir(args: &[String]) -> Result<Option<std::path::PathBuf>> {
+    match args.iter().position(|a| a == "--data-dir") {
+        Some(i) => {
+            let path = args
+                .get(i + 1)
+                .filter(|p| !p.starts_with("--"))
+                .ok_or_else(|| anyhow::anyhow!("--data-dir requires a path"))?;
+            Ok(Some(std::path::PathBuf::from(path)))
+        }
+        None => Ok(None),
+    }
+}
+
+pub fn register_scheduler() -> Result<()> {
+    crate::os_scheduler::for_current_platform()
+        .ok_or_else(|| anyhow::anyhow!("Scheduling is unavailable on this platform"))?
+        .register(&std::env::current_exe()?)
 }
 
 #[cfg(test)]
@@ -68,11 +95,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_tick_flag() {
+    fn explicit_tick_directory_and_registration_mode() {
         assert_eq!(
-            parse_args(["claude-switchboard", "--tick"]),
-            CliMode::Tick,
+            parse_args(["--register-scheduler"]),
+            CliMode::RegisterScheduler
         );
+        assert!(tick_data_dir(&["--tick".into(), "--data-dir".into()]).is_err());
+        assert_eq!(
+            tick_data_dir(&["--tick".into(), "--data-dir".into(), "a folder".into()]).unwrap(),
+            Some("a folder".into())
+        );
+        assert_eq!(tick_data_dir(&["--tick".into()]).unwrap(), None);
+    }
+
+    #[test]
+    fn parses_tick_flag() {
+        assert_eq!(parse_args(["claude-switchboard", "--tick"]), CliMode::Tick,);
     }
 
     #[test]
