@@ -454,9 +454,15 @@ function aggregate(cells: UsageCell[]) {
   };
 }
 
-/** What the backend would return for a rolling window of `days` ending now. */
+/** Local midnight at the start of a report covering `days` days, today being
+ * the last of them. Mirrors `report_window_start` in the backend. */
+export function reportStart(days: number, now: Date): number {
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() - (Math.max(days, 1) - 1)).getTime();
+}
+
+/** What the backend would return for a report of `days` whole days ending today. */
 export function windowOf(data: PreviewData, days: number, now: Date): PreviewWindow {
-  const from = now.getTime() - days * DAY_MS;
+  const from = reportStart(days, now);
   const cells = data.ledger.filter((c) => c.ts >= from);
   const recent = cells.filter((c) => c.ts >= now.getTime() - 7 * DAY_MS);
   return { ...aggregate(cells), events: eventsOf(cells, now), compactions: compactionsOf(recent) };

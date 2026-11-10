@@ -3,7 +3,7 @@ use crate::auth::accounts::{AddSource, ManagedAccount};
 use crate::jsonl_parser::hidden_calls::session_file_of;
 use crate::process_detection::{self, RunningClaudeCode};
 use crate::store::StoredSessionEvent;
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Instant;
@@ -89,6 +89,36 @@ pub async fn get_session_history(
     state.db.events_between(from, to).map_err(err_to_string)
 }
 
+/// Where a report covering `days` days begins: local midnight at the start of
+/// the first of them, with today as the last. Seven days is today and the six
+/// before it.
+///
+/// Reports are bucketed by local calendar day, so a window measured back from
+/// this instant would open partway through a day: the oldest bar would be a
+/// fragment, and two reports of the same length would only agree if they
+/// happened to be asked at the same moment.
+fn report_window_start<Tz: chrono::TimeZone>(days: u32, now: &DateTime<Tz>) -> DateTime<Utc> {
+    let first_day = now.date_naive() - Duration::days(i64::from(days.max(1)) - 1);
+    let midnight = first_day.and_time(chrono::NaiveTime::MIN);
+    let zone = now.timezone();
+    zone.from_local_datetime(&midnight)
+        .earliest()
+        // A zone that moves its clocks forward at midnight has no 00:00 that
+        // day; the day starts an hour later.
+        .or_else(|| zone.from_local_datetime(&(midnight + Duration::hours(1))).earliest())
+        .map(|start| start.with_timezone(&Utc))
+        .unwrap_or_else(|| now.with_timezone(&Utc) - Duration::days(i64::from(days.max(1))))
+}
+
+/// The usage every report is summed from: whole local days, ending now.
+fn report_events(
+    days: u32,
+    state: &State<'_, Arc<AppState>>,
+) -> Result<Vec<StoredSessionEvent>, String> {
+    let from = report_window_start(days, &chrono::Local::now());
+    state.db.events_between(from, Utc::now()).map_err(err_to_string)
+}
+
 /// Compaction boundaries in the same window as `get_session_history`, so the
 /// Cost tab can mark which sessions had their context reset partway through.
 #[command]
@@ -108,7 +138,7 @@ pub async fn get_daily_trends(
     days: u32,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<DailyBucket>, String> {
-    let events = get_session_history(days, state).await?;
+    let events = report_events(days, &state)?;
     use std::collections::BTreeMap;
     let mut by_day: BTreeMap<String, DailyBucket> = BTreeMap::new();
     for e in events {
@@ -147,7 +177,7 @@ pub async fn get_model_breakdown(
     days: u32,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<ModelStats>, String> {
-    let events = get_session_history(days, state).await?;
+    let events = report_events(days, &state)?;
     use std::collections::HashMap;
     let mut by_model: HashMap<String, ModelStats> = HashMap::new();
     for e in events {
@@ -186,7 +216,7 @@ pub async fn get_daily_model_breakdown(
     days: u32,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<DailyModelBucket>, String> {
-    let events = get_session_history(days, state).await?;
+    let events = report_events(days, &state)?;
     use std::collections::{BTreeMap, HashMap};
     let mut by_day: BTreeMap<String, HashMap<String, ModelStats>> = BTreeMap::new();
     for e in events {
@@ -231,7 +261,7 @@ pub async fn get_project_breakdown(
     days: u32,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<ProjectStats>, String> {
-    let events = get_session_history(days, state).await?;
+    let events = report_events(days, &state)?;
     Ok(project_breakdown(&events))
 }
 
@@ -272,7 +302,7 @@ pub async fn get_cache_stats(
     state: State<'_, Arc<AppState>>,
 ) -> Result<CacheStats, String> {
     let pricing = state.pricing.clone();
-    let events = get_session_history(days, state).await?;
+    let events = report_events(days, &state)?;
     let mut read = 0u64;
     let mut created = 0u64;
     for e in &events {
@@ -1331,6 +1361,38 @@ mod tests {
             source_line: 1,
             event_id: format!("{source_file}:{cost_usd}"),
         }
+    }
+
+    #[test]
+    fn a_report_window_is_whole_local_days_ending_today() {
+        use chrono::{FixedOffset, TimeZone};
+        let nz = FixedOffset::east_opt(13 * 3600).unwrap();
+        let now = nz.with_ymd_and_hms(2026, 11, 11, 15, 30, 0).unwrap();
+        // Seven days is today and the six before it, from local midnight.
+        assert_eq!(
+            report_window_start(7, &now),
+            nz.with_ymd_and_hms(2026, 11, 5, 0, 0, 0).unwrap()
+        );
+        assert_eq!(
+            report_window_start(1, &now),
+            nz.with_ymd_and_hms(2026, 11, 11, 0, 0, 0).unwrap()
+        );
+        assert_eq!(
+            report_window_start(365, &now),
+            nz.with_ymd_and_hms(2025, 11, 12, 0, 0, 0).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_report_window_of_no_days_is_still_today() {
+        use chrono::{FixedOffset, TimeZone};
+        let west = FixedOffset::west_opt(8 * 3600).unwrap();
+        let now = west.with_ymd_and_hms(2026, 3, 1, 0, 5, 0).unwrap();
+        assert_eq!(report_window_start(0, &now), report_window_start(1, &now));
+        assert_eq!(
+            report_window_start(1, &now),
+            west.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).unwrap()
+        );
     }
 
     #[test]

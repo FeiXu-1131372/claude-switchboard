@@ -51,6 +51,18 @@ describe('windowOf', () => {
     }
   });
 
+  it('a window of N days is N whole days, with today as the last', () => {
+    const d = buildFixtures('heavy', NOW);
+    const today = [NOW.getFullYear(), NOW.getMonth() + 1, NOW.getDate()]
+      .map((n) => String(n).padStart(2, '0'))
+      .join('-');
+    for (const days of [1, 7, 30, 90]) {
+      const w = windowOf(d, days, NOW);
+      expect(w.daily).toHaveLength(days);
+      expect(w.daily[w.daily.length - 1].date).toBe(today);
+    }
+  });
+
   it('thirty days is about thirteen thousand dollars at heavy scale', () => {
     const w = windowOf(buildFixtures('heavy', NOW), 30, NOW);
     const total = w.daily.reduce((a, b) => a + b.cost_usd, 0);
