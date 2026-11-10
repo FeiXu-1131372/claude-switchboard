@@ -4,6 +4,7 @@
 pub mod api_call;
 pub mod config;
 pub mod errors;
+pub mod runner;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
