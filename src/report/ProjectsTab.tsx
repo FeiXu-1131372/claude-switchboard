@@ -1,7 +1,7 @@
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { EmptyState } from '../components/ui/EmptyState';
-import { formatCost } from '../lib/format';
+import { formatCost, formatCount } from '../lib/format';
 import { IconChart } from '../lib/icons';
 import { ipc } from '../lib/ipc';
 import { useTabData } from '../lib/useTabData';
@@ -54,7 +54,7 @@ export function ProjectsTab() {
                     {project.project}
                   </span>
                   <span className="text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]">
-                    {project.session_count} sessions
+                    {formatCount(project.session_count)} sessions
                   </span>
                 </div>
                 <span className="mono text-[length:var(--text-label)] font-[var(--weight-semibold)] text-[color:var(--color-text)] tabular-nums">

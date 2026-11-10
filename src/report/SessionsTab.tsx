@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Button } from '../components/ui/Button';
 import { ModelBadge } from '../components/ui/ModelBadge';
 import { EmptyState } from '../components/ui/EmptyState';
-import { formatTokens, formatCost } from '../lib/format';
+import { formatTokens, formatCost, formatCount } from '../lib/format';
 import { ChevronDown, ChevronRight, IconCompact, IconSessions, IconSubagent } from '../lib/icons';
 import { ipc } from '../lib/ipc';
 import { useTabData } from '../lib/useTabData';
@@ -577,7 +577,7 @@ export function SessionsTab() {
     <div className="flex flex-col gap-[var(--space-sm)]">
       <div className="flex items-center justify-between px-[var(--space-2xs)]">
         <span className="text-[length:var(--text-label)] text-[color:var(--color-text-muted)]">
-          {conversationCount} {conversationCount === 1 ? 'session' : 'sessions'}
+          {formatCount(conversationCount)} {conversationCount === 1 ? 'session' : 'sessions'}
         </span>
         <span className="mono text-[length:var(--text-label)] text-[color:var(--color-text-secondary)]">
           {formatCost(totalCost)}
@@ -625,7 +625,7 @@ export function SessionsTab() {
           const meta = [
             title ? projectLabel : null,
             formatClock(session.latest_ts),
-            `${session.turn_count} ${session.turn_count === 1 ? 'turn' : 'turns'}`,
+            `${formatCount(session.turn_count)} ${session.turn_count === 1 ? 'turn' : 'turns'}`,
             agentCount > 0 ? `${agentCount} ${agentCount === 1 ? 'agent' : 'agents'}` : null,
           ]
             .filter(Boolean)

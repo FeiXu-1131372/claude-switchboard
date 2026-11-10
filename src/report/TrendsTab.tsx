@@ -434,7 +434,7 @@ export function TrendsTab() {
         </span>
         <span className="text-[length:var(--text-label)] text-[color:var(--color-text-muted)]">·</span>
         <span className="mono text-[length:var(--text-label)] text-[color:var(--color-text-secondary)]">
-          ${totalCost.toFixed(2)} total
+          {formatCost(totalCost)} total
         </span>
       </div>
     </div>

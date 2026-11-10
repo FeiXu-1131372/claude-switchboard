@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatTokens, formatCost } from './format';
+import { formatTokens, formatCost, formatCount } from './format';
 
 describe('formatTokens', () => {
   it('returns "0" for zero', () => {
@@ -25,6 +25,15 @@ describe('formatTokens', () => {
   it('returns 2.5M for 2 500 000', () => {
     expect(formatTokens(2_500_000)).toBe('2.5M');
   });
+
+  it('switches to billions at 1e9', () => {
+    expect(formatTokens(35_863_760_037)).toBe('35.9B');
+    expect(formatTokens(1_000_000_000)).toBe('1.0B');
+  });
+
+  it('stays in millions just below 1e9', () => {
+    expect(formatTokens(999_999_999)).toBe('1000.0M');
+  });
 });
 
 describe('formatCost', () => {
@@ -46,5 +55,29 @@ describe('formatCost', () => {
 
   it('returns "$100.00" for 100', () => {
     expect(formatCost(100)).toBe('$100.00');
+  });
+
+  it('groups thousands and keeps cents below $10,000', () => {
+    expect(formatCost(6908.46)).toBe('$6,908.46');
+    expect(formatCost(9999.99)).toBe('$9,999.99');
+  });
+
+  it('rounds to whole dollars from $10,000', () => {
+    expect(formatCost(13273.21)).toBe('$13,273');
+    expect(formatCost(129109.54)).toBe('$129,110');
+  });
+
+  it('does not show $10,000.00 for a value that rounds up to it', () => {
+    expect(formatCost(9999.996)).toBe('$10,000');
+  });
+});
+
+describe('formatCount', () => {
+  it('groups thousands', () => {
+    expect(formatCount(25922)).toBe('25,922');
+  });
+
+  it('leaves small numbers alone', () => {
+    expect(formatCount(59)).toBe('59');
   });
 });

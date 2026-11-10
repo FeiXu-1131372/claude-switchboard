@@ -1,7 +1,7 @@
 import { Card } from '../components/ui/Card';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Button } from '../components/ui/Button';
-import { formatTokens } from '../lib/format';
+import { formatCost, formatTokens } from '../lib/format';
 import { IconCache } from '../lib/icons';
 import { ipc } from '../lib/ipc';
 import { useTabData } from '../lib/useTabData';
@@ -102,7 +102,7 @@ export function CacheTab() {
         <Card className="p-[var(--space-md)] flex flex-col gap-[4px]">
           <span className="text-[length:var(--text-label)] text-[color:var(--color-text-muted)]">Estimated savings</span>
           <span className="mono text-[length:var(--text-body)] font-[var(--weight-semibold)] text-[color:var(--color-safe)]">
-            ${data.estimated_savings_usd.toFixed(2)}
+            {formatCost(data.estimated_savings_usd)}
           </span>
         </Card>
       </div>
