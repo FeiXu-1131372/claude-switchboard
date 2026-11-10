@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing tag to build (dry run — inspect output, do not publish)'
+        description: 'Existing tag to build and release'
         required: true
 
 # Required so the workflow's GITHUB_TOKEN can create the release record and
@@ -31,6 +31,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -63,7 +65,34 @@ jobs:
           tagName: ${{ inputs.tag || github.ref_name }}
           releaseName: ${{ inputs.tag || github.ref_name }}
           releaseBody: 'Unsigned build — see README for first-launch instructions on each OS.'
+          releaseDraft: true
           # The bundle config adds the statusline bridge as a sidecar (it is
           # kept out of the default config so `cargo test` needs no sidecar).
           args: --config src-tauri/tauri.bundle.conf.json --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
           includeUpdaterJson: true
+
+  publish:
+    needs: release
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Check updater manifest and publish complete release
+        run: |
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern latest.json --dir "$RUNNER_TEMP/release-manifest"
+          python3 - "$RUNNER_TEMP/release-manifest/latest.json" "$RELEASE_TAG" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          version = sys.argv[2].removeprefix("v")
+          if manifest.get("version") != version:
+              raise SystemExit("Updater version does not match the release tag")
+          for platform in ("darwin-aarch64", "darwin-x86_64", "windows-x86_64"):
+              entry = manifest.get("platforms", {}).get(platform, {})
+              if not entry.get("url") or not entry.get("signature"):
+                  raise SystemExit(f"Missing updater URL or signature for {platform}")
+          PY
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
