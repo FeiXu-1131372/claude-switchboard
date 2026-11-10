@@ -1,5 +1,6 @@
 use crate::app_state::{AppState, CachedUsage, Settings};
 use crate::auth::accounts::{AddSource, ManagedAccount};
+use crate::jsonl_parser::hidden_calls::session_file_of;
 use crate::process_detection::{self, RunningClaudeCode};
 use crate::store::StoredSessionEvent;
 use chrono::{Duration, Utc};
@@ -231,20 +232,37 @@ pub async fn get_project_breakdown(
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<ProjectStats>, String> {
     let events = get_session_history(days, state).await?;
-    use std::collections::HashMap;
-    let mut by_project: HashMap<String, ProjectStats> = HashMap::new();
+    Ok(project_breakdown(&events))
+}
+
+/// One row per project: what it cost and how many sessions it ran.
+///
+/// A session is one conversation, so its subagents' transcripts count toward
+/// the session that started them and a session that made forty API calls is
+/// still one session. Rows come back most expensive first, ties by name, so
+/// the order is the same on every call.
+fn project_breakdown(events: &[StoredSessionEvent]) -> Vec<ProjectStats> {
+    use std::collections::{HashMap, HashSet};
+    let mut by_project: HashMap<&str, (HashSet<String>, f64)> = HashMap::new();
     for e in events {
-        let entry = by_project
-            .entry(e.project.clone())
-            .or_insert_with(|| ProjectStats {
-                project: e.project.clone(),
-                session_count: 0,
-                total_cost_usd: 0.0,
-            });
-        entry.session_count += 1;
-        entry.total_cost_usd += e.cost_usd;
+        let (sessions, cost) = by_project.entry(e.project.as_str()).or_default();
+        sessions.insert(session_file_of(&e.source_file));
+        *cost += e.cost_usd;
     }
-    Ok(by_project.into_values().collect())
+    let mut rows: Vec<ProjectStats> = by_project
+        .into_iter()
+        .map(|(project, (sessions, total_cost_usd))| ProjectStats {
+            project: project.to_string(),
+            session_count: sessions.len() as u64,
+            total_cost_usd,
+        })
+        .collect();
+    rows.sort_by(|a, b| {
+        b.total_cost_usd
+            .total_cmp(&a.total_cost_usd)
+            .then_with(|| a.project.cmp(&b.project))
+    });
+    rows
 }
 
 #[command]
@@ -1297,6 +1315,55 @@ fn reconcile_sqlite_mirror(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ev(project: &str, source_file: &str, cost_usd: f64) -> StoredSessionEvent {
+        StoredSessionEvent {
+            ts: Utc::now(),
+            project: project.into(),
+            model: "claude-fable-5-1".into(),
+            input_tokens: 10,
+            output_tokens: 10,
+            cache_read_tokens: 0,
+            cache_creation_5m_tokens: 0,
+            cache_creation_1h_tokens: 0,
+            cost_usd,
+            source_file: source_file.into(),
+            source_line: 1,
+            event_id: format!("{source_file}:{cost_usd}"),
+        }
+    }
+
+    #[test]
+    fn a_session_is_counted_once_however_many_calls_it_made() {
+        let events = vec![
+            ev("atlas", "/p/atlas/s1.jsonl", 1.0),
+            ev("atlas", "/p/atlas/s1.jsonl", 2.0),
+            ev("atlas", "/p/atlas/s1/subagents/agent-ab.jsonl", 0.5),
+            ev("atlas", "/p/atlas/s2.jsonl", 1.0),
+        ];
+        let out = project_breakdown(&events);
+        assert_eq!(out[0].session_count, 2);
+        assert!((out[0].total_cost_usd - 4.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn projects_come_back_most_expensive_first_then_by_name() {
+        let out = project_breakdown(&[
+            ev("b", "/b.jsonl", 1.0),
+            ev("a", "/a.jsonl", 1.0),
+            ev("c", "/c.jsonl", 9.0),
+        ]);
+        assert_eq!(
+            out.iter().map(|p| p.project.as_str()).collect::<Vec<_>>(),
+            ["c", "a", "b"]
+        );
+    }
+
+    #[test]
+    fn a_project_with_only_subagent_calls_in_the_window_still_counts_its_session() {
+        let out = project_breakdown(&[ev("atlas", "p/atlas/s1/subagents/agent-ab.jsonl", 0.5)]);
+        assert_eq!(out[0].session_count, 1);
+    }
 
     fn cached(five_hour: Option<f64>, last_error: Option<&str>) -> CachedUsage {
         use crate::app_state::SnapshotOrigin;
