@@ -255,6 +255,38 @@ impl AccountManager {
         }
         Ok(())
     }
+
+    /// Adopt the profile slice Claude Code currently holds for the account in
+    /// `slot`, when it belongs to that account and differs from the stored
+    /// copy. Returns whether anything was written.
+    ///
+    /// Claude Code re-fetches this slice while an account is in use, and it
+    /// is the only place a plan change shows up (see
+    /// `identity::plan_from_blobs`). Without this the stored copy is only
+    /// replaced when the user swaps away, so the account in use keeps the
+    /// plan it had when it was added. The credentials are left alone: the
+    /// active slot always reads its token from Claude Code's live store.
+    pub fn sync_live_profile(
+        &self,
+        slot: u32,
+        live_oauth_account: &serde_json::Value,
+    ) -> Result<bool> {
+        let Some(live_uuid) = live_oauth_account.get("accountUuid").and_then(|v| v.as_str())
+        else {
+            return Ok(false);
+        };
+        let lock = store::acquire_lock(&self.data_dir)?;
+        let mut data = store::load(&self.data_dir)?;
+        let Some(acc) = data.accounts.get_mut(&slot) else {
+            return Ok(false);
+        };
+        if acc.account_uuid != live_uuid || acc.oauth_account_blob == *live_oauth_account {
+            return Ok(false);
+        }
+        acc.oauth_account_blob = live_oauth_account.clone();
+        store::save(&self.data_dir, &data, &lock)?;
+        Ok(true)
+    }
 }
 
 impl AccountManager {
@@ -584,6 +616,55 @@ mod tests {
 
         let after = mgr.get(1).unwrap().unwrap();
         assert_eq!(after.claude_code_oauth_blob["accessToken"], "at-u1");
+    }
+
+    #[test]
+    fn sync_live_profile_adopts_a_changed_profile_and_updates_the_plan() {
+        let dir = tempdir().unwrap();
+        let mgr = AccountManager::new(dir.path().to_path_buf());
+
+        // Signed in on Pro.
+        let mut cc = cc_blob("u1", 1);
+        cc["subscriptionType"] = serde_json::json!("pro");
+        cc["rateLimitTier"] = serde_json::json!("default_claude_ai");
+        let mut stored_profile = oa_slice("u1", "a@x");
+        stored_profile["organizationType"] = serde_json::json!("claude_pro");
+        stored_profile["organizationRateLimitTier"] = serde_json::json!("default_claude_ai");
+        let id = identity::from_blobs(&stored_profile, Some(&cc)).unwrap();
+        mgr.upsert(id, cc, stored_profile.clone(), AddSource::OAuth)
+            .unwrap();
+        assert_eq!(mgr.get(1).unwrap().unwrap().plan().as_deref(), Some("pro"));
+
+        // Unchanged profile: nothing to write.
+        assert!(!mgr.sync_live_profile(1, &stored_profile).unwrap());
+
+        // Upgraded: Claude Code refreshed the profile it keeps on disk.
+        let mut live_profile = stored_profile.clone();
+        live_profile["organizationType"] = serde_json::json!("claude_max");
+        live_profile["organizationRateLimitTier"] = serde_json::json!("default_claude_max_20x");
+        assert!(mgr.sync_live_profile(1, &live_profile).unwrap());
+
+        let after = mgr.get(1).unwrap().unwrap();
+        assert_eq!(after.oauth_account_blob, live_profile);
+        assert_eq!(after.plan().as_deref(), Some("ultra"));
+        // The credentials are not this function's business.
+        assert_eq!(after.claude_code_oauth_blob["accessToken"], "at-u1");
+    }
+
+    #[test]
+    fn sync_live_profile_ignores_another_accounts_profile() {
+        let dir = tempdir().unwrap();
+        let mgr = AccountManager::new(dir.path().to_path_buf());
+        let id = identity::from_blobs(&oa_slice("u1", "a@x"), Some(&cc_blob("u1", 1))).unwrap();
+        mgr.upsert(id, cc_blob("u1", 1), oa_slice("u1", "a@x"), AddSource::OAuth)
+            .unwrap();
+
+        assert!(!mgr.sync_live_profile(1, &oa_slice("someone-else", "b@y")).unwrap());
+        assert!(!mgr.sync_live_profile(1, &serde_json::Value::Null).unwrap());
+        assert!(!mgr.sync_live_profile(99, &oa_slice("u1", "a@x")).unwrap());
+
+        let after = mgr.get(1).unwrap().unwrap();
+        assert_eq!(after.oauth_account_blob, oa_slice("u1", "a@x"));
     }
 
     #[test]

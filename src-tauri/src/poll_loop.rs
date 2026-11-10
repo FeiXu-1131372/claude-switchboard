@@ -277,7 +277,7 @@ async fn fetch_and_apply_one(
                     state.cached_usage_by_slot.write().insert(slot, cached.clone());
                     if Some(slot) == active_slot {
                         *state.cached_usage.write() = Some(cached.clone());
-                        tray::set_level(handle, None, None, None, None, false);
+                        tray::set_level(handle, tray::TrayUsage::default(), false);
                     }
                     let _ = handle
                         .emit("usage_updated", json!({ "slot": slot, "cached": cached }));
@@ -397,7 +397,13 @@ async fn apply_fetch_outcome(
     origin: SnapshotOrigin,
 ) {
     match outcome {
-        FetchOutcome::Ok(snapshot) => {
+        FetchOutcome::Ok(mut snapshot) => {
+            // Every snapshot enters the cache through here, so this is the
+            // one place that decides whether the account has a Fable row.
+            // The tray, the notifier and both windows then agree.
+            snapshot.hide_fable_without_access(crate::auth::accounts::plan_includes_fable(
+                acc.plan().as_deref(),
+            ));
             // A local snapshot adopted mid-ban leaves the ban in force (it
             // only bounds this app's own calls). Keep the 429 label while the
             // data is older than a poll interval, so the row reads "showing
@@ -487,14 +493,7 @@ async fn apply_fetch_outcome(
 
             if Some(slot) == active_slot {
                 *state.cached_usage.write() = Some(cached.clone());
-                tray::set_level(
-                    handle,
-                    snapshot.five_hour.as_ref().map(|u| u.utilization),
-                    snapshot.seven_day.as_ref().map(|u| u.utilization),
-                    snapshot.five_hour.as_ref().and_then(|u| u.resets_at),
-                    snapshot.seven_day.as_ref().and_then(|u| u.resets_at),
-                    false,
-                );
+                tray::set_level(handle, (&snapshot).into(), false);
                 let thresholds = state.settings.read().thresholds.clone();
                 if let Ok(fired) = notifier::evaluate(
                     &state.db,
@@ -603,7 +602,7 @@ async fn poll_all(
 ) -> Result<(), anyhow::Error> {
     // 1. Reconcile active slot from live CC creds.
     let live = state.auth.read_live_claude_code().await.ok().flatten();
-    let accounts = state.accounts.list().unwrap_or_default();
+    let mut accounts = state.accounts.list().unwrap_or_default();
     let active_slot = live.as_ref().and_then(|l| {
         accounts
             .iter()
@@ -611,6 +610,16 @@ async fn poll_all(
             .map(|a| a.slot)
     });
     let prev_active_slot = std::mem::replace(&mut *state.active_slot.write(), active_slot);
+
+    // Claude Code re-fetches the active account's profile as it runs, and
+    // that profile is where a plan change shows up. Keep the stored copy in
+    // step, or the row keeps the plan the account had when it was added.
+    let profile_changed = match (&live, active_slot) {
+        (Some(live), Some(slot)) => {
+            sync_active_profile(state, &mut accounts, slot, &live.oauth_account_blob)
+        }
+        _ => false,
+    };
 
     // Catches the paths that never go through `swap_to_account`: an external
     // `cswap`, or a Claude Code / cowork instance started on another machine.
@@ -626,7 +635,8 @@ async fn poll_all(
     // login (or the startup race where `init()` reads `list_accounts`
     // before this loop's first tick) leaves the AccountsPanel showing no
     // active highlight even though the backend knows which slot is live.
-    if prev_active_slot != active_slot {
+    // The same goes for the plan badge when the active profile changed.
+    if prev_active_slot != active_slot || profile_changed {
         let entries: Vec<crate::commands::AccountListEntry> = accounts
             .iter()
             .map(|a| crate::commands::entry_for(state, a, active_slot))
@@ -721,6 +731,44 @@ async fn poll_all(
     }
 
     Ok(())
+}
+
+/// Store the live profile slice on the active slot when it changed, and
+/// patch `accounts` so this tick already sees it. Returns whether it changed.
+/// Best-effort: a failed write is retried on the next tick.
+fn sync_active_profile(
+    state: &AppState,
+    accounts: &mut [ManagedAccount],
+    slot: u32,
+    live_profile: &serde_json::Value,
+) -> bool {
+    let Some(acc) = accounts.iter_mut().find(|a| a.slot == slot) else {
+        return false;
+    };
+    // Compared in memory first: the common case is "nothing changed", and
+    // that must not take the accounts file lock on every tick.
+    if acc.oauth_account_blob == *live_profile {
+        return false;
+    }
+    match state.accounts.sync_live_profile(slot, live_profile) {
+        Ok(true) => {
+            let before = acc.plan();
+            acc.oauth_account_blob = live_profile.clone();
+            let after = acc.plan();
+            if before != after {
+                tracing::info!(
+                    target: "switchboard.auth",
+                    "slot {slot}: plan changed from {before:?} to {after:?}"
+                );
+            }
+            true
+        }
+        Ok(false) => false,
+        Err(e) => {
+            tracing::warn!("slot {slot}: storing the live profile failed: {e:#}");
+            false
+        }
+    }
 }
 
 /// How long until a slot's next poll. A local snapshot already spent part of
@@ -888,6 +936,7 @@ fn placeholder_cached(
             seven_day: None,
             seven_day_sonnet: None,
             seven_day_opus: None,
+            seven_day_fable: None,
             extra_usage: None,
             fetched_at: Utc::now(),
             unknown: Default::default(),
@@ -1051,6 +1100,7 @@ pub(crate) fn has_usage_data(snapshot: &UsageSnapshot) -> bool {
     snapshot.five_hour.is_some()
         || snapshot.seven_day.is_some()
         || snapshot.seven_day_sonnet.is_some()
+        || snapshot.seven_day_fable.is_some()
         || snapshot.seven_day_opus.is_some()
         || snapshot.extra_usage.is_some()
 }
@@ -1078,7 +1128,12 @@ pub fn hydrated_caches(
             }
         };
         match serde_json::from_str::<UsageSnapshot>(&payload) {
-            Ok(snapshot) => {
+            Ok(mut snapshot) => {
+                // Same rule as a fresh snapshot (see `apply_fetch_outcome`):
+                // the plan may have become known since this one was saved.
+                snapshot.hide_fable_without_access(
+                    crate::auth::accounts::plan_includes_fable(acc.plan().as_deref()),
+                );
                 out.insert(
                     acc.slot,
                     CachedUsage {
@@ -1315,6 +1370,7 @@ mod tests {
                     seven_day: None,
                     seven_day_sonnet: None,
                     seven_day_opus: None,
+                    seven_day_fable: None,
                     extra_usage: None,
                     fetched_at,
                     unknown: Default::default(),
@@ -1359,6 +1415,7 @@ mod tests {
                 seven_day: None,
                 seven_day_sonnet: None,
                 seven_day_opus: None,
+                seven_day_fable: None,
                 extra_usage: None,
                 fetched_at,
                 unknown: Default::default(),
@@ -1397,6 +1454,7 @@ mod tests {
                 seven_day: None,
                 seven_day_sonnet: None,
                 seven_day_opus: None,
+                seven_day_fable: None,
                 extra_usage: None,
                 fetched_at,
                 unknown: Default::default(),
@@ -1440,6 +1498,7 @@ mod tests {
             seven_day: None,
             seven_day_sonnet: None,
             seven_day_opus: None,
+            seven_day_fable: None,
             extra_usage: None,
             fetched_at: Utc::now(),
             unknown: Default::default(),
@@ -1514,6 +1573,38 @@ mod tests {
             );
             assert_eq!(entry.last_error, None);
             assert_eq!(entry.account_email, "slot2@example.com");
+        }
+
+        /// A snapshot saved before the plan was known still carries the
+        /// Fable row the API sends to everyone.
+        const PAYLOAD_WITH_UNUSED_FABLE: &str = r#"{
+            "five_hour": { "utilization": 0.0, "resets_at": null },
+            "seven_day": { "utilization": 85.0, "resets_at": null },
+            "seven_day_fable": { "utilization": 0.0, "resets_at": null }
+        }"#;
+
+        fn acc_on_plan(slot: u32, uuid: &str, organization_type: &str) -> ManagedAccount {
+            let mut account = acc(slot, uuid);
+            account.oauth_account_blob = serde_json::json!({
+                "accountUuid": uuid,
+                "organizationType": organization_type,
+            });
+            account
+        }
+
+        #[test]
+        fn hides_the_unused_fable_row_of_a_plan_without_fable() {
+            let (_dir, db) = db_with_account("uuid-2");
+            db.insert_snapshot("uuid-2", Utc::now(), PAYLOAD_WITH_UNUSED_FABLE)
+                .unwrap();
+
+            let pro = hydrated_caches(&db, &[acc_on_plan(2, "uuid-2", "claude_pro")]);
+            let snapshot = &pro.get(&2).expect("slot 2 hydrated").snapshot;
+            assert!(snapshot.seven_day_fable.is_none());
+            assert!(snapshot.seven_day.is_some());
+
+            let max = hydrated_caches(&db, &[acc_on_plan(2, "uuid-2", "claude_max")]);
+            assert!(max.get(&2).unwrap().snapshot.seven_day_fable.is_some());
         }
 
         #[test]

@@ -10,6 +10,7 @@ function usage(): CachedUsage {
       seven_day: { utilization: 32, resets_at: new Date(Date.now() + 93600_000).toISOString() },
       seven_day_sonnet: { utilization: 20, resets_at: null },
       seven_day_opus: { utilization: 40, resets_at: null },
+      seven_day_fable: null,
       extra_usage: null,
       fetched_at: new Date().toISOString(),
     },
@@ -82,6 +83,37 @@ describe('UsageSummary collapsible details', () => {
     expect(screen.getByText('Sonnet')).toBeTruthy();
   });
 
+  it('shows the Fable weekly limit when the API reports one', () => {
+    const u = usage();
+    u.snapshot.seven_day_fable = { utilization: 44, resets_at: null };
+    render(
+      <UsageSummary
+        usage={u}
+        thresholds={[75, 90]}
+        collapsible
+        detailsOpen
+        onToggleDetails={() => {}}
+      />,
+    );
+    expect(screen.getByText('Fable')).toBeTruthy();
+    expect(screen.getByText('44%')).toBeTruthy();
+  });
+
+  it('keeps the Fable row behind the details disclosure when collapsed', () => {
+    const u = usage();
+    u.snapshot.seven_day_fable = { utilization: 44, resets_at: null };
+    render(
+      <UsageSummary
+        usage={u}
+        thresholds={[75, 90]}
+        collapsible
+        detailsOpen={false}
+        onToggleDetails={() => {}}
+      />,
+    );
+    expect(screen.queryByText('Fable')).toBeNull();
+  });
+
   it('clicking the disclosure row toggles', () => {
     const onToggle = vi.fn();
     render(
@@ -120,6 +152,21 @@ describe('UsageSummary collapsible details', () => {
     );
     expect(screen.queryByText('Opus')).toBeNull();
     expect(screen.queryByText('Sonnet')).toBeNull();
+  });
+
+  it('shows only the weekly window for Ultra accounts with no 5-hour limit', () => {
+    const u = usage();
+    u.snapshot.five_hour = null;
+    render(<UsageSummary usage={u} thresholds={[75, 90]} plan="ultra" />);
+    expect(screen.queryByText('5h')).toBeNull();
+    expect(screen.getByText('7d')).toBeTruthy();
+    expect(screen.getByText('32')).toBeTruthy();
+  });
+
+  it('keeps the 5-hour window for an unverified Ultra account that still reports one', () => {
+    render(<UsageSummary usage={usage()} thresholds={[75, 90]} plan="ultra" />);
+    expect(screen.getByText('5h')).toBeTruthy();
+    expect(screen.getByText('19')).toBeTruthy();
   });
 
   it('merges the reset countdown into the bucket label row (no separate caption row)', () => {

@@ -11,6 +11,7 @@ import { UnmanagedActiveBanner } from '../accounts/UnmanagedActiveBanner';
 import { useAppStore } from '../lib/store';
 import { useUpdateStore } from '../state/updateStore';
 import { useActiveModel } from '../lib/useActiveModel';
+import { isPremiumPlan } from '../lib/plan';
 import { ipc } from '../lib/ipc';
 import { IconRefresh, IconSettings, ChevronRight, X, IconExpand } from '../lib/icons';
 import { handleDragStart, closeWindow } from '../lib/window-chrome';
@@ -160,6 +161,7 @@ export function CompactPopover() {
         collapsible
         detailsOpen={detailsOpen}
         onToggleDetails={() => setDetailsOpen((v) => !v)}
+        plan={accountPlan}
       />
 
       <div
@@ -351,7 +353,6 @@ function Header({ title, onBack }: { title: string; onBack: () => void }) {
 }
 
 function PlanPill({ plan }: { plan: string }) {
-  const isMax = plan.toLowerCase().includes('max');
   return (
     <span
       className={`
@@ -359,7 +360,7 @@ function PlanPill({ plan }: { plan: string }) {
         px-[var(--space-xs)] py-[1px] shrink-0
         text-[length:var(--text-micro)] font-[var(--weight-semibold)]
         uppercase tracking-[var(--tracking-label)]
-        ${isMax
+        ${isPremiumPlan(plan)
           ? 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)]'
           : 'bg-[var(--color-track)] text-[color:var(--color-text-secondary)]'}
       `}

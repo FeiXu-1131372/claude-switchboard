@@ -8,6 +8,7 @@ import { WarmupNowButton, type WarmupNowStatus } from './WarmupNowButton';
 import { ScheduleSelector } from './ScheduleSelector';
 import { WarmupConsentModal } from '../components/modals/WarmupConsentModal';
 import { MoreHorizontal, Trash2, ChevronRight } from '../lib/icons';
+import { isPremiumPlan, isUltraPlan } from '../lib/plan';
 import type { WarmupOutcome } from '../lib/generated/bindings';
 
 interface Props {
@@ -47,7 +48,6 @@ function describeWarmupOutcome(outcome: WarmupOutcome): { status: WarmupNowStatu
 
 function PlanBadge({ plan }: { plan: string | null }) {
   if (!plan) return null;
-  const isMax = plan.toLowerCase() === 'max';
   return (
     <span
       className={`
@@ -55,7 +55,7 @@ function PlanBadge({ plan }: { plan: string | null }) {
         px-[var(--space-xs)] py-[1px]
         text-[length:var(--text-micro)] font-[var(--weight-semibold)]
         uppercase tracking-[var(--tracking-label)]
-        ${isMax
+        ${isPremiumPlan(plan)
           ? 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)]'
           : 'bg-[var(--color-track)] text-[color:var(--color-text-secondary)]'}
       `}
@@ -129,7 +129,11 @@ export function AccountRow({
   const cached = entry.cached_usage;
   const fiveHour = cached?.snapshot.five_hour ?? null;
   const sevenDay = cached?.snapshot.seven_day ?? null;
-  const hasUsableData = fiveHour != null || sevenDay != null;
+  const sevenDayFable = cached?.snapshot.seven_day_fable ?? null;
+  // Ultra has no 5-hour window (verified accounts report `five_hour: null`).
+  // An unverified Ultra account still reports one, so keep it visible then.
+  const showFiveHour = !isUltraPlan(entry.subscription_type) || fiveHour != null;
+  const hasUsableData = fiveHour != null || sevenDay != null || sevenDayFable != null;
 
   // Warmup state — fetched once per mount from the DB via get_warmup_state.
   const [warmupEnabled, setWarmupEnabled] = useState(false);
@@ -513,13 +517,19 @@ export function AccountRow({
         </div>
       ) : (
         <div className="flex flex-col gap-[var(--space-2xs)]">
-          <div className="grid grid-cols-2 gap-[var(--space-xl)]">
-            <CompactMeter
-              label="5h"
-              data={fiveHour}
-              warnAt={thresholds[0]}
-              dangerAt={thresholds[1]}
-            />
+          <div
+            className={`grid ${
+              showFiveHour ? 'grid-cols-2' : 'grid-cols-1'
+            } gap-[var(--space-xl)]`}
+          >
+            {showFiveHour && (
+              <CompactMeter
+                label="5h"
+                data={fiveHour}
+                warnAt={thresholds[0]}
+                dangerAt={thresholds[1]}
+              />
+            )}
             <CompactMeter
               label="7d"
               data={sevenDay}
@@ -527,6 +537,14 @@ export function AccountRow({
               dangerAt={thresholds[1]}
             />
           </div>
+          {sevenDayFable && (
+            <CompactMeter
+              label="Fable"
+              data={sevenDayFable}
+              warnAt={thresholds[0]}
+              dangerAt={thresholds[1]}
+            />
+          )}
           {staleHint && (
             <span className="text-[length:var(--text-micro)] text-[color:var(--color-warn)]">
               {staleHint}
@@ -616,7 +634,7 @@ export function AccountRow({
                       </p>
                       <p>
                         Sends a 1-token <span className="mono text-[color:var(--color-text)]">“hi”</span> to{' '}
-                        <span className="mono text-[color:var(--color-text)]">claude-haiku-4-5</span> — Anthropic's
+                        <span className="mono text-[color:var(--color-text)]">claude-haiku-5-5</span> — Anthropic's
                         cheapest model. That single call opens a fresh 5-hour
                         usage window for this account, at a fraction of a cent.
                       </p>

@@ -719,22 +719,15 @@ pub(crate) fn entry_for(
         local_only_marker(state.statusline_setup.feeds_usage(), is_active)
     });
 
-    // Prefer the live subscriptionType from the blob (which capture_live_into_slot
-    // keeps current on every swap) over the snapshot stored at import time —
-    // the latter goes stale when the user upgrades their plan (e.g. pro → max).
-    let live_sub = acc
-        .claude_code_oauth_blob
-        .get("subscriptionType")
-        .and_then(|v| v.as_str())
-        .map(str::to_string);
-
     AccountListEntry {
         slot: acc.slot,
         email: acc.display_name(),
         account_uuid: acc.account_uuid.clone(),
         org_name: acc.organization_name.clone(),
         org_uuid: acc.organization_uuid.clone(),
-        subscription_type: live_sub.or_else(|| acc.subscription_type.clone()),
+        // The plan as it is now, not the label saved when the account was
+        // added: that one goes stale on the first upgrade (pro → max).
+        subscription_type: acc.plan(),
         source: acc.source,
         is_active: Some(acc.slot) == active,
         cached_usage: cached,
@@ -1315,6 +1308,7 @@ mod tests {
                 seven_day: None,
                 seven_day_sonnet: None,
                 seven_day_opus: None,
+                seven_day_fable: None,
                 extra_usage: None,
                 fetched_at: Utc::now(),
                 unknown: Default::default(),

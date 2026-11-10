@@ -10,6 +10,7 @@
 import { motion } from 'framer-motion';
 import { InstrumentColumn, InstrumentRow } from '../popover/InstrumentRow';
 import { ChevronRight } from '../lib/icons';
+import { isUltraPlan } from '../lib/plan';
 import type { BurnRateProjection, CachedUsage, Utilization } from '../lib/types';
 
 interface UsageSummaryProps {
@@ -17,13 +18,16 @@ interface UsageSummaryProps {
   thresholds: [number, number];
   /** Tighter layout for embedding at the top of the expanded report. */
   condensed?: boolean;
-  /** Highlights the matching Opus/Sonnet sub-row as currently in use. */
-  activeModel?: 'opus' | 'sonnet' | 'haiku' | null;
+  /** Highlights the matching model sub-row as currently in use. */
+  activeModel?: 'fable' | 'opus' | 'sonnet' | 'haiku' | null;
   /** When true, the model-split / pay-as-you-go detail rows collapse behind a
    * disclosure row (compact popover default). Omit for always-expanded. */
   collapsible?: boolean;
   detailsOpen?: boolean;
   onToggleDetails?: () => void;
+  /** Display plan name (Pro / Max / Ultra). Ultra hides the 5h column when
+   * the account reports no 5-hour window. */
+  plan?: string | null;
 }
 
 export function UsageSummary({
@@ -34,6 +38,7 @@ export function UsageSummary({
   collapsible,
   detailsOpen,
   onToggleDetails,
+  plan,
 }: UsageSummaryProps) {
   if (usage.last_error === 'awaiting_statusline') {
     return (
@@ -52,7 +57,12 @@ export function UsageSummary({
   const snap = usage.snapshot;
   const extra = snap.extra_usage;
   const [warn, danger] = thresholds;
-  // Per-model 7-day utilization is a Max-plan-only field — the usage API
+  // Ultra removed the 5-hour window for verified accounts, and the usage API
+  // reports `five_hour: null` for them. Show the weekly window alone. An
+  // unverified Ultra account still reports a 5h bucket, so keep it visible
+  // until verification lifts the limit.
+  const showFiveHour = !isUltraPlan(plan) || snap.five_hour != null;
+  // Per-model 7-day utilization is a Max/Ultra-plan-only field — the usage API
   // returns null for both opus and sonnet on Pro / Team-Pro plans (they have
   // a single combined 7-day quota, no per-model split). Render the rows only
   // when at least one bucket actually carries data, so they never sit empty
@@ -61,6 +71,7 @@ export function UsageSummary({
     snap.seven_day_opus != null || snap.seven_day_sonnet != null;
   const showModelSplit =
     hasModelSplit && snap.seven_day != null && (!collapsible || detailsOpen);
+  const showFable = snap.seven_day_fable != null && (!collapsible || detailsOpen);
   const showExtra = extra?.is_enabled && (!collapsible || detailsOpen);
 
   return (
@@ -72,29 +83,31 @@ export function UsageSummary({
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
-        className={
+        className={`grid ${
+          showFiveHour ? 'grid-cols-2' : 'grid-cols-1'
+        } gap-x-[var(--space-lg)] px-[var(--popover-pad)] ${
           condensed
-            ? 'grid grid-cols-2 gap-x-[var(--space-lg)] px-[var(--popover-pad)] py-[var(--space-sm)]'
-            : `grid grid-cols-2 gap-x-[var(--space-lg)] px-[var(--popover-pad)] ${
-                collapsible && !detailsOpen
-                  ? 'pt-[var(--space-xs)] pb-[var(--space-sm)]'
-                  : 'pt-[var(--space-md)] pb-[var(--space-lg)]'
-              }`
-        }
+            ? 'py-[var(--space-sm)]'
+            : collapsible && !detailsOpen
+              ? 'pt-[var(--space-xs)] pb-[var(--space-sm)]'
+              : 'pt-[var(--space-md)] pb-[var(--space-lg)]'
+        }`}
       >
-        <div className="flex flex-col gap-[var(--space-xs)]">
-          <InstrumentColumn
-            label="5h"
-            data={snap.five_hour}
-            warnAt={warn}
-            dangerAt={danger}
-          />
-          <BurnRateCaption
-            burnRate={usage.burn_rate}
-            warnAt={warn}
-            dangerAt={danger}
-          />
-        </div>
+        {showFiveHour && (
+          <div className="flex flex-col gap-[var(--space-xs)]">
+            <InstrumentColumn
+              label="5h"
+              data={snap.five_hour}
+              warnAt={warn}
+              dangerAt={danger}
+            />
+            <BurnRateCaption
+              burnRate={usage.burn_rate}
+              warnAt={warn}
+              dangerAt={danger}
+            />
+          </div>
+        )}
         <InstrumentColumn
           label="7d"
           data={snap.seven_day}
@@ -143,6 +156,24 @@ export function UsageSummary({
               warnAt={warn}
               dangerAt={danger}
               active={activeModel === 'sonnet'}
+            />
+          </div>
+        </>
+      )}
+
+      {/* Fable has its own weekly cap on Max/Ultra, independent of the
+       * Opus/Sonnet split. Full-width because it is a single model. */}
+      {showFable && (
+        <>
+          <Hairline />
+          <div className="px-[var(--popover-pad)] py-[var(--space-sm)]">
+            <InstrumentRow
+              label="Fable"
+              data={snap.seven_day_fable}
+              warnAt={warn}
+              dangerAt={danger}
+              active={activeModel === 'fable'}
+              showReset
             />
           </div>
         </>

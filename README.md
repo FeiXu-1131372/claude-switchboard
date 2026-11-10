@@ -6,7 +6,7 @@
 
 **Know where you stand. Switch who's signed in. Run against any endpoint. Pick up where you left off. All from your menu bar.**
 
-Switchboard is a native menu-bar control plane for your Claude rate limits, accounts, model providers, and session history. One glance tells you what's left in the 5-hour and 7-day windows. One click swaps which account Claude Code is using, launches a session against a third-party endpoint, or resumes a past session. One toggle starts a fresh 5-hour bucket on your schedule, not whenever you happened to fire your first prompt.
+Switchboard is a native menu-bar control plane for your Claude rate limits, accounts, model providers, and session history. One glance tells you what's left in the 5-hour and 7-day windows — or just the weekly window on Ultra. One click swaps which account Claude Code is using, launches a session against a third-party endpoint, or resumes a past session. One toggle starts a fresh 5-hour bucket on your schedule, not whenever you happened to fire your first prompt.
 
 <p align="center">
   <img src="docs/screenshots/macos-popover.png" alt="Compact popover — 5H and 7D hero numbers with reset countdowns, burn-rate projection, and a Details disclosure" width="380" />
@@ -30,7 +30,7 @@ The compact popover gives you everything you need to decide "can I keep coding?"
 
 - **5H / 7D bars** with absolute reset times (`in 19m`, `in 46h 9m`) — never math-on-the-fly
 - **Burn-rate projection** — `→ ~26% by reset` extrapolates from your current pace
-- **Details disclosure** — expand for the Opus/Sonnet split and pay-as-you-go credits, when your plan reports them (Pro and Team-Pro share a single combined 7-day quota, so those rows don't apply there)
+- **Details disclosure** — expand for the Opus/Sonnet/Fable weekly split and pay-as-you-go credits, when your plan reports them (Pro and Team-Pro share a single combined 7-day quota, so the model rows don't apply there)
 
 <p align="center">
   <img src="docs/screenshots/macos-popover-details.png" alt="Popover with Details expanded — the pay-as-you-go row, shown only when the plan reports it" width="380" />
@@ -87,10 +87,10 @@ Running Claude Code sessions usually adopt the new account within about 30 secon
 **A 1-token Haiku ping at 8am gives you a window that resets at 1pm — aligned to your workday instead of trailing into the evening.**
 
 <p align="center">
-  <img src="docs/screenshots/macos-warmup-explainer.png" alt="Warm-up explainer tooltip: sends a 1-token 'hi' to claude-haiku-4-5 to open a fresh 5-hour usage window at a fraction of a cent" width="460" />
+  <img src="docs/screenshots/macos-warmup-explainer.png" alt="Warm-up explainer tooltip: sends a 1-token 'hi' to Haiku to open a fresh 5-hour usage window at a fraction of a cent" width="460" />
 </p>
 
-Warm-up is **strictly opt-in** per account, with a one-time consent dialog the first time you enable it on any account. Cost is rounding-error against your subscription (≈$0.000007 per fire, ≈$0.013/year on a 5-fires-a-day cadence). If the account already has an active 5-hour window from your normal coding, warm-up is a no-op — it skips the HTTP call entirely.
+Warm-up is **strictly opt-in** per account, with a one-time consent dialog the first time you enable it on any account. Cost is rounding-error against your subscription (≈$0.0000007 per fire, ≈$0.0013/year on a 5-fires-a-day cadence). If the account already has an active 5-hour window from your normal coding, warm-up is a no-op — it skips the HTTP call entirely.
 
 <p align="center">
   <img src="docs/screenshots/macos-warmup-controls.png" alt="Warm-up controls — Off / Every 5h / Custom schedule, plus a Warm up now button, with a confirmation toast after a successful account switch" width="460" />
@@ -349,7 +349,7 @@ Switchboard can deliberately start an account's 5-hour rolling window so its res
 
 The first time you enable warm-up on any account, a one-time consent dialog explains exactly what gets sent. Per-account toggle and global revoke are available in Settings at any time.
 
-A warm-up sends a 1-token Haiku request to `api.anthropic.com/v1/messages` using the account's existing OAuth credentials — the same surface Claude Code uses. Cost is rounding-error against your subscription (≈$0.000007 per fire, ≈$0.013/year on a 5-fires-a-day cadence). If the account already has an active 5-hour window from your normal coding, warm-up is a no-op.
+A warm-up sends a 1-token Haiku request to `api.anthropic.com/v1/messages` using the account's existing OAuth credentials — the same surface Claude Code uses. Cost is rounding-error against your subscription (≈$0.0000007 per fire, ≈$0.0013/year on a 5-fires-a-day cadence). If the account already has an active 5-hour window from your normal coding, warm-up is a no-op.
 
 ## Migrating from Claude Limits (v0.3.x)
 

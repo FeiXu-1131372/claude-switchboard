@@ -1,5 +1,6 @@
 import type { AccountListEntry, RunningClaudeCode } from '../lib/generated/bindings';
 import { ChevronRight, X } from '../lib/icons';
+import { isPremiumPlan } from '../lib/plan';
 
 interface Props {
   current: AccountListEntry | null;
@@ -15,7 +16,6 @@ interface Props {
 
 function PlanTag({ plan }: { plan: string | null }) {
   if (!plan) return null;
-  const isMax = plan.toLowerCase() === 'max';
   return (
     <span
       className={`
@@ -23,7 +23,7 @@ function PlanTag({ plan }: { plan: string | null }) {
         px-[var(--space-xs)] py-[1px]
         text-[length:var(--text-micro)] font-[var(--weight-semibold)]
         uppercase tracking-[var(--tracking-label)]
-        ${isMax
+        ${isPremiumPlan(plan)
           ? 'bg-[var(--color-accent-dim)] text-[color:var(--color-accent)]'
           : 'bg-[var(--color-track)] text-[color:var(--color-text-secondary)]'}
       `}

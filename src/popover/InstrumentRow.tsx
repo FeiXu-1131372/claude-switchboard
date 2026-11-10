@@ -113,6 +113,7 @@ export function InstrumentRow({
   warnAt,
   dangerAt,
   active,
+  showReset,
 }: {
   label: string;
   caption?: string;
@@ -122,6 +123,9 @@ export function InstrumentRow({
   dangerAt: number;
   /** Marks this row as the currently-in-use model — accent dot + accent label. */
   active?: boolean;
+  /** Shows the row's own reset countdown. Needed for windows that do not
+   * inherit the parent 7d reset, such as the Fable weekly cap. */
+  showReset?: boolean;
 }) {
   const v = value ?? data?.utilization ?? null;
   const level = levelOf(v, warnAt, dangerAt);
@@ -155,6 +159,9 @@ export function InstrumentRow({
             <span className="text-[length:var(--text-micro)] text-[color:var(--color-text-muted)] truncate">
               {caption}
             </span>
+          )}
+          {showReset && data?.resets_at && (
+            <ResetCountdown resetsAt={data.resets_at} />
           )}
         </div>
         <span

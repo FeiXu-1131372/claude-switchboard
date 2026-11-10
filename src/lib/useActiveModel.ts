@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react';
 import { ipc } from './ipc';
 import { useAppStore } from './store';
 
-export type ActiveModel = 'opus' | 'sonnet' | 'haiku' | null;
+export type ActiveModel = 'fable' | 'opus' | 'sonnet' | 'haiku' | null;
 
 function familyOf(model: string): ActiveModel {
   const m = model.toLowerCase();
+  if (m.includes('fable') || m.includes('mythos')) return 'fable';
   if (m.includes('opus')) return 'opus';
   if (m.includes('sonnet')) return 'sonnet';
   if (m.includes('haiku')) return 'haiku';

@@ -221,6 +221,7 @@ pub fn merge_into_snapshot(
         seven_day: limits.seven_day.as_ref().map(util),
         seven_day_sonnet: carried.and_then(|(c, _)| c.seven_day_sonnet.clone()),
         seven_day_opus: carried.and_then(|(c, _)| c.seven_day_opus.clone()),
+        seven_day_fable: carried.and_then(|(c, _)| c.seven_day_fable.clone()),
         extra_usage: carried.and_then(|(c, _)| c.extra_usage.clone()),
         fetched_at: data_at,
         unknown: Default::default(),
@@ -253,6 +254,9 @@ pub fn headline_changed(before: Option<&UsageSnapshot>, after: &UsageSnapshot) -
         (
             s.five_hour.as_ref().map(|u| u.utilization.to_bits()),
             s.seven_day.as_ref().map(|u| u.utilization.to_bits()),
+            s.seven_day_fable
+                .as_ref()
+                .map(|u| u.utilization.to_bits()),
         )
     };
     before.is_none_or(|b| pct(b) != pct(after))
@@ -570,6 +574,7 @@ mod tests {
             }),
             seven_day_sonnet: Some(Utilization { utilization: 7.0, resets_at: None }),
             seven_day_opus: Some(Utilization { utilization: 8.0, resets_at: None }),
+            seven_day_fable: Some(Utilization { utilization: 9.0, resets_at: None }),
             extra_usage: None,
             fetched_at: now() - ChronoDuration::seconds(fetched_ago_s),
             unknown: Default::default(),
@@ -768,7 +773,11 @@ mod tests {
         assert_eq!(five.resets_at.unwrap().timestamp(), 1_800_003_600);
         assert_eq!(snap.seven_day.unwrap().utilization, 16.0);
         assert_eq!(snap.fetched_at, now());
-        assert!(snap.seven_day_sonnet.is_none() && snap.extra_usage.is_none());
+        assert!(
+            snap.seven_day_sonnet.is_none()
+                && snap.seven_day_fable.is_none()
+                && snap.extra_usage.is_none()
+        );
         assert!(carried.is_none());
     }
 
@@ -780,6 +789,7 @@ mod tests {
         let (snap, carried) = merge_into_snapshot(&limits, now(), Some((&full, fetched)));
         assert_eq!(snap.seven_day_sonnet.unwrap().utilization, 7.0);
         assert_eq!(snap.seven_day_opus.unwrap().utilization, 8.0);
+        assert_eq!(snap.seven_day_fable.unwrap().utilization, 9.0);
         assert_eq!(carried, Some(fetched));
     }
 
@@ -814,12 +824,16 @@ mod tests {
     }
 
     #[test]
-    fn headline_changed_compares_five_hour_and_seven_day() {
+    fn headline_changed_compares_five_hour_seven_day_and_fable() {
         let a = http_snapshot(3600, 0);
         let mut b = a.clone();
         assert!(!headline_changed(Some(&a), &b));
         b.five_hour.as_mut().unwrap().utilization = 11.0;
         assert!(headline_changed(Some(&a), &b));
+
+        let mut c = a.clone();
+        c.seven_day_fable.as_mut().unwrap().utilization = 10.0;
+        assert!(headline_changed(Some(&a), &c));
         assert!(headline_changed(None, &b));
     }
 

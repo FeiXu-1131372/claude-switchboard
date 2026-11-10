@@ -46,6 +46,17 @@ impl ManagedAccount {
         })
     }
 
+    /// The plan this account is on, as current as the stored blobs are.
+    /// `subscription_type` is the label saved when the account was added and
+    /// is only the fallback: it goes stale as soon as the plan changes.
+    pub fn plan(&self) -> Option<String> {
+        super::identity::plan_from_blobs(
+            Some(&self.claude_code_oauth_blob),
+            Some(&self.oauth_account_blob),
+        )
+        .or_else(|| self.subscription_type.clone())
+    }
+
     pub fn supports_usage(&self) -> bool {
         self.claude_code_oauth_blob["scopes"]
             .as_array()
@@ -207,6 +218,24 @@ mod tests {
             added_at: Utc::now(),
             last_seen_active: None,
         }
+    }
+
+    #[test]
+    fn plan_prefers_the_blobs_and_falls_back_to_the_saved_label() {
+        // Signed in on Pro, upgraded later: the label saved at import and
+        // the credentials still say Pro, the profile says Max 20x.
+        let mut upgraded = sample_account(1, "u1");
+        upgraded.subscription_type = Some("pro".to_string());
+        upgraded.claude_code_oauth_blob["subscriptionType"] = serde_json::json!("pro");
+        upgraded.oauth_account_blob["organizationType"] = serde_json::json!("claude_max");
+        upgraded.oauth_account_blob["organizationRateLimitTier"] =
+            serde_json::json!("default_claude_max_20x");
+        assert_eq!(upgraded.plan().as_deref(), Some("ultra"));
+
+        // Nothing in either blob: the saved label is all there is.
+        let mut bare = sample_account(2, "u2");
+        bare.claude_code_oauth_blob = serde_json::json!({ "accessToken": "a" });
+        assert_eq!(bare.plan().as_deref(), Some("max"));
     }
 
     #[test]

@@ -225,14 +225,7 @@ pub async fn evaluate(handle: &AppHandle, state: &AppState) {
             let _ = handle.emit("accounts_changed", &entries);
             if let Some(cached) = state.cached_usage_by_slot.read().get(&target).cloned() {
                 *state.cached_usage.write() = Some(cached.clone());
-                crate::tray::set_level(
-                    handle,
-                    cached.snapshot.five_hour.as_ref().map(|u| u.utilization),
-                    cached.snapshot.seven_day.as_ref().map(|u| u.utilization),
-                    cached.snapshot.five_hour.as_ref().and_then(|u| u.resets_at),
-                    cached.snapshot.seven_day.as_ref().and_then(|u| u.resets_at),
-                    false,
-                );
+                crate::tray::set_level(handle, (&cached.snapshot).into(), false);
                 let _ = handle.emit(
                     "usage_updated",
                     serde_json::json!({ "slot": target, "cached": cached }),
@@ -276,6 +269,7 @@ mod tests {
                 seven_day: bucket(week),
                 seven_day_sonnet: None,
                 seven_day_opus: None,
+                seven_day_fable: None,
                 extra_usage: None,
                 fetched_at: now,
                 unknown: Default::default(),

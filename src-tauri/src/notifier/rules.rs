@@ -7,6 +7,7 @@ use chrono::{DateTime, Duration, Utc};
 pub enum Bucket {
     FiveHour,
     SevenDay,
+    SevenDayFable,
     SevenDayOpus,
     SevenDaySonnet,
     ExtraUsage,
@@ -17,6 +18,7 @@ impl Bucket {
         match self {
             Bucket::FiveHour => "five_hour",
             Bucket::SevenDay => "seven_day",
+            Bucket::SevenDayFable => "seven_day_fable",
             Bucket::SevenDayOpus => "seven_day_opus",
             Bucket::SevenDaySonnet => "seven_day_sonnet",
             Bucket::ExtraUsage => "extra_usage",
@@ -26,6 +28,7 @@ impl Bucket {
         match self {
             Bucket::FiveHour => "5-hour",
             Bucket::SevenDay => "7-day",
+            Bucket::SevenDayFable => "7-day Fable",
             Bucket::SevenDayOpus => "7-day Opus",
             Bucket::SevenDaySonnet => "7-day Sonnet",
             Bucket::ExtraUsage => "pay-as-you-go",
@@ -35,7 +38,10 @@ impl Bucket {
     fn window_duration(&self) -> Duration {
         match self {
             Bucket::FiveHour => Duration::hours(5),
-            Bucket::SevenDay | Bucket::SevenDayOpus | Bucket::SevenDaySonnet => Duration::days(7),
+            Bucket::SevenDay
+            | Bucket::SevenDayFable
+            | Bucket::SevenDayOpus
+            | Bucket::SevenDaySonnet => Duration::days(7),
             Bucket::ExtraUsage => Duration::days(30),
         }
     }
@@ -63,6 +69,7 @@ fn utilization_of(bucket: Bucket, s: &UsageSnapshot) -> (Option<f64>, Option<Dat
     match bucket {
         Bucket::FiveHour => of(&s.five_hour),
         Bucket::SevenDay => of(&s.seven_day),
+        Bucket::SevenDayFable => of(&s.seven_day_fable),
         Bucket::SevenDayOpus => of(&s.seven_day_opus),
         Bucket::SevenDaySonnet => of(&s.seven_day_sonnet),
         Bucket::ExtraUsage => ofe(&s.extra_usage),
@@ -87,9 +94,10 @@ pub fn evaluate(
     thresholds: &[u8],
     now: DateTime<Utc>,
 ) -> Result<Vec<Fired>> {
-    const BUCKETS: [Bucket; 5] = [
+    const BUCKETS: [Bucket; 6] = [
         Bucket::FiveHour,
         Bucket::SevenDay,
+        Bucket::SevenDayFable,
         Bucket::SevenDayOpus,
         Bucket::SevenDaySonnet,
         Bucket::ExtraUsage,
@@ -167,6 +175,7 @@ mod tests {
             seven_day: None,
             seven_day_sonnet: None,
             seven_day_opus: None,
+            seven_day_fable: None,
             extra_usage: None,
             fetched_at: Utc::now(),
             unknown: Default::default(),
@@ -206,6 +215,7 @@ mod tests {
             seven_day: None,
             seven_day_sonnet: None,
             seven_day_opus: None,
+            seven_day_fable: None,
             extra_usage: None,
             fetched_at: later_reset,
             unknown: Default::default(),
@@ -241,6 +251,7 @@ mod tests {
             seven_day: None,
             seven_day_sonnet: None,
             seven_day_opus: None,
+            seven_day_fable: None,
             extra_usage: Some(ExtraUsage {
                 is_enabled: true,
                 monthly_limit_cents: 5000,
@@ -259,6 +270,32 @@ mod tests {
         assert!(b.is_empty(), "inside 24h cooldown");
         let c = evaluate(&db, "a", &snap, &[75], now + Duration::hours(25)).unwrap();
         assert_eq!(c.len(), 1, "past 24h cooldown");
+    }
+
+    #[test]
+    fn fable_window_has_its_own_notification_bucket() {
+        let (_d, db) = fresh();
+        let reset = Utc::now() + Duration::days(2);
+        let snap = UsageSnapshot {
+            five_hour: None,
+            seven_day: Some(Utilization {
+                utilization: 50.0,
+                resets_at: Some(reset),
+            }),
+            seven_day_sonnet: None,
+            seven_day_opus: None,
+            seven_day_fable: Some(Utilization {
+                utilization: 78.0,
+                resets_at: Some(reset),
+            }),
+            extra_usage: None,
+            fetched_at: Utc::now(),
+            unknown: Default::default(),
+        };
+        let fired = evaluate(&db, "a", &snap, &[75], Utc::now()).unwrap();
+        assert_eq!(fired.len(), 1);
+        assert_eq!(fired[0].bucket, Bucket::SevenDayFable);
+        assert!(fired[0].title.contains("Fable"));
     }
 
     #[test]

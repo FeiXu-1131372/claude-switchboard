@@ -15,7 +15,11 @@ vi.mock('../../lib/ipc', () => ({ ipc: ipcMock }));
 
 import { AccountRow } from '../AccountRow';
 
-function cachedUsage(util5h: number | null, util7d: number | null): CachedUsage {
+function cachedUsage(
+  util5h: number | null,
+  util7d: number | null,
+  utilFable: number | null = null,
+): CachedUsage {
   return {
     snapshot: {
       five_hour:
@@ -28,6 +32,10 @@ function cachedUsage(util5h: number | null, util7d: number | null): CachedUsage 
           : { utilization: util7d, resets_at: new Date(Date.now() + 86400_000).toISOString() },
       seven_day_sonnet: null,
       seven_day_opus: null,
+      seven_day_fable:
+        utilFable === null
+          ? null
+          : { utilization: utilFable, resets_at: new Date(Date.now() + 86400_000).toISOString() },
       extra_usage: null,
       fetched_at: new Date(Date.now() - 3 * 60_000).toISOString(),
     },
@@ -79,6 +87,29 @@ describe('AccountRow error rendering', () => {
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Replace token…' }));
     expect(replace).toHaveBeenCalledOnce();
+  });
+
+  it('hides the 5-hour meter for Ultra accounts with no 5-hour limit', () => {
+    render(
+      <AccountRow
+        entry={entry({ subscription_type: 'ultra', cached_usage: cachedUsage(null, 63) })}
+        thresholds={[75, 90]}
+      />,
+    );
+    expect(screen.queryByText('5h')).toBeNull();
+    expect(screen.getByText('7d')).toBeTruthy();
+    expect(screen.getByText('63%')).toBeTruthy();
+  });
+
+  it('shows the Fable meter when the snapshot carries one', () => {
+    render(
+      <AccountRow
+        entry={entry({ subscription_type: 'ultra', cached_usage: cachedUsage(null, 63, 44) })}
+        thresholds={[75, 90]}
+      />,
+    );
+    expect(screen.getByText('Fable')).toBeTruthy();
+    expect(screen.getByText('44%')).toBeTruthy();
   });
 
   it('shows last-good meters with a stale hint on transient errors', () => {
