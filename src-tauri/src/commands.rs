@@ -846,6 +846,11 @@ pub async fn swap_to_account(
     state: State<'_, Arc<AppState>>,
 ) -> Result<SwapReport, String> {
     let _account_change = state.account_change_lock.lock().await;
+    perform_account_swap(slot, &state).await
+}
+
+/// Caller holds account_change_lock, shared by manual and automatic switches.
+pub(crate) async fn perform_account_swap(slot: u32, state: &AppState) -> Result<SwapReport, String> {
     tracing::info!(target: "switchboard.swap", "swap_to_account(slot={slot}) starting");
     // Refresh the target slot's token if it's expired or about to expire
     // before handing its blob to swap_to. swap_to writes whatever is
