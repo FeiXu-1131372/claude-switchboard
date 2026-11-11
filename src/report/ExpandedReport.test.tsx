@@ -27,10 +27,8 @@ vi.mock('@tauri-apps/api/event', () => ({ emit: vi.fn(), listen: vi.fn() }));
 // Each tab is replaced by a stub that renders its own name: these tests are
 // about the shell around the tabs, not what a tab shows.
 vi.mock('./SessionsTab', () => ({ SessionsTab: () => <div>SessionsTab stub</div>, WINDOW_DAYS: 7 }));
-vi.mock('./ModelsTab', () => ({ ModelsTab: () => <div>ModelsTab stub</div> }));
 vi.mock('./TrendsTab', () => ({ TrendsTab: () => <div>TrendsTab stub</div> }));
-vi.mock('./ProjectsTab', () => ({ ProjectsTab: () => <div>ProjectsTab stub</div> }));
-vi.mock('./CacheTab', () => ({ CacheTab: () => <div>CacheTab stub</div> }));
+vi.mock('./BreakdownTab', () => ({ BreakdownTab: () => <div>BreakdownTab stub</div> }));
 vi.mock('../providers/ProvidersTab', () => ({ ProvidersTab: () => <div>ProvidersTab stub</div> }));
 vi.mock('../sessions/SessionsBrowserTab', () => ({
   SessionsBrowserTab: () => <div>SessionsBrowserTab stub</div>,
@@ -72,9 +70,22 @@ describe('ExpandedReport shell', () => {
     render(<ExpandedReport />);
     expect(screen.getByRole('tab', { name: 'Sessions' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByText('SessionsBrowserTab stub')).toBeInTheDocument();
-    expect(screen.getAllByRole('tab')).toHaveLength(7);
-    // The heatmap is now the activity calendar inside Trends.
-    expect(screen.queryByRole('tab', { name: 'Heatmap' })).toBeNull();
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual([
+      'Sessions',
+      'Cost',
+      'Trends',
+      'Breakdown',
+      'Providers',
+    ]);
+  });
+
+  it('Breakdown stands where Models, Projects and Cache were', () => {
+    render(<ExpandedReport />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Breakdown' }));
+    expect(screen.getByText('BreakdownTab stub')).toBeInTheDocument();
+    for (const gone of ['Models', 'Projects', 'Cache', 'Heatmap']) {
+      expect(screen.queryByRole('tab', { name: gone })).toBeNull();
+    }
   });
 
   it('shows the chosen tab', () => {

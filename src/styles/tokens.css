@@ -296,6 +296,10 @@ body {
   --bar-sm: 3px;
   --bar-md: 4px;
   --bar-lg: 6px;
+  --bar-xl: 8px;
+
+  /* One line of a table. */
+  --row-height: 28px;
 }
 
 body[data-theme="dark"] {

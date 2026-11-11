@@ -2,10 +2,8 @@ import { useLayoutEffect, useRef, useState, type KeyboardEvent, type UIEvent } f
 import { motion } from 'framer-motion';
 import { IconButton } from '../components/ui/IconButton';
 import { SessionsTab, WINDOW_DAYS } from './SessionsTab';
-import { ModelsTab } from './ModelsTab';
 import { TrendsTab } from './TrendsTab';
-import { ProjectsTab } from './ProjectsTab';
-import { CacheTab } from './CacheTab';
+import { BreakdownTab } from './BreakdownTab';
 import { useAppStore } from '../lib/store';
 import { ipc } from '../lib/ipc';
 import { tabSlide } from '../lib/motion';
@@ -20,10 +18,8 @@ import { useReportStore } from './reportState';
 const TAB_CONFIG = [
   { id: 'browse', label: 'Sessions' },
   { id: 'cost', label: 'Cost' },
-  { id: 'models', label: 'Models' },
   { id: 'trends', label: 'Trends' },
-  { id: 'projects', label: 'Projects' },
-  { id: 'cache', label: 'Cache' },
+  { id: 'breakdown', label: 'Breakdown' },
   { id: 'providers', label: 'Providers' },
 ] as const;
 
@@ -34,22 +30,19 @@ const TAB_CONFIG = [
 const TAB_WINDOW_DAYS: Record<string, number | undefined> = {
   browse: undefined,
   cost: WINDOW_DAYS,
-  models: 30,
-  // Trends owns its own range selector (7d → 1y), so a fixed header window
-  // would be wrong as soon as the user changes it.
+  // Trends and Breakdown follow the shared range control (7d → 1y) and say
+  // so in their own toolbar, so a fixed header window would be wrong as soon
+  // as the user changes it.
   trends: undefined,
-  projects: 30,
-  cache: 30,
+  breakdown: undefined,
   providers: undefined,
 };
 
 const TAB_COMPONENTS: Record<string, React.FC> = {
   browse: SessionsBrowserTab,
   cost: SessionsTab,
-  models: ModelsTab,
   trends: TrendsTab,
-  projects: ProjectsTab,
-  cache: CacheTab,
+  breakdown: BreakdownTab,
   providers: ProvidersTab,
 };
 

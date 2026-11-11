@@ -192,8 +192,8 @@ describe('TrendsTab — day breakdown panel', () => {
     expect(badges.map((b) => b.textContent)).toEqual(['sonnet 4-6', 'opus 4-7', 'haiku 4-5']);
 
     const sonnetFill = within(panel).getByTestId('model-fill-claude-sonnet-4-6');
-    // The fill follows the Spent metric: $2.94 / $4.82 = 60.99585% — NOT the
-    // 30-day aggregate ModelsTab uses.
+    // The fill follows the Spent metric for that one day: $2.94 / $4.82 =
+    // 60.99585%, not the model's share of the whole range.
     expect(parseFloat(sonnetFill.style.width)).toBeCloseTo(61.0, 1);
   });
 
