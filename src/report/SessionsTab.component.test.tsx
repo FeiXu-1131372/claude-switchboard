@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SessionCostRow, SessionSummary } from '../lib/generated/bindings';
 import { useAppStore } from '../lib/store';
+import { useReportStore } from './reportState';
 
 const ipcMock = vi.hoisted(() => ({
   getSessionHistory: vi.fn(),
@@ -170,7 +171,7 @@ describe('SessionsTab (Cost) — session titles', () => {
       row({ id: 'proj-alpha/abc123.jsonl#2026-11-09', day: '2026-11-09', latest_ts: '2026-11-09T10:00:00Z', total_cost_usd: 3 }),
     ]);
     render(<SessionsTab />);
-    expect(await screen.findByText('1 session')).toBeInTheDocument();
+    expect(await screen.findByText('Last 30 days · 1 session')).toBeInTheDocument();
     expect(screen.getByText('$5.00')).toBeInTheDocument();
   });
 
@@ -195,5 +196,99 @@ describe('SessionsTab (Cost) — session titles', () => {
     fireEvent.click(await screen.findByRole('button', { expanded: false }));
     expect(screen.getByText('agent 0a1b2c3d')).toBeInTheDocument();
     expect(screen.getByText('$0.93')).toBeInTheDocument();
+  });
+});
+
+/** `n` rows, newest first, 300 to a day, each its own conversation at $1. */
+function manyRows(n: number): SessionCostRow[] {
+  return Array.from({ length: n }, (_, i) => {
+    const day = `2026-11-${String(10 - Math.floor(i / 300)).padStart(2, '0')}`;
+    return row({ id: `proj-alpha/s${i}.jsonl#${day}`, day, latest_ts: `${day}T10:00:00Z`, total_cost_usd: 1 });
+  });
+}
+
+describe('SessionsTab (Cost) — range and paging', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    ipcMock.getSessionCosts.mockResolvedValue([row()]);
+    ipcMock.getCompactions.mockResolvedValue([]);
+    ipcMock.listResumableSessions.mockResolvedValue([]);
+  });
+
+  it('loads the shared range', async () => {
+    useReportStore.setState({ range: '30d' });
+    render(<SessionsTab />);
+    await waitFor(() => expect(ipcMock.getSessionCosts).toHaveBeenCalledWith(30));
+    expect(ipcMock.getCompactions).toHaveBeenCalledWith(30);
+  });
+
+  it('reloads when the range is changed from its toolbar', async () => {
+    render(<SessionsTab />);
+    await screen.findByText('Last 30 days · 1 session');
+    fireEvent.click(screen.getByRole('button', { name: '7d' }));
+    await waitFor(() => expect(ipcMock.getSessionCosts).toHaveBeenCalledWith(7));
+    expect(await screen.findByText('Last 7 days · 1 session')).toBeInTheDocument();
+  });
+
+  it('shows 250 rows, then 250 more on request', async () => {
+    ipcMock.getSessionCosts.mockResolvedValue(manyRows(600));
+    render(<SessionsTab />);
+    expect(await screen.findAllByRole('button', { expanded: false })).toHaveLength(250);
+    expect(screen.getByText('250 of 600 rows')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Show 250 more' }));
+    expect(screen.getAllByRole('button', { expanded: false })).toHaveLength(500);
+    // What is left is fewer than a page, and the button says how many.
+    fireEvent.click(screen.getByRole('button', { name: 'Show 100 more' }));
+    expect(screen.getAllByRole('button', { expanded: false })).toHaveLength(600);
+    expect(screen.queryByRole('button', { name: /^Show \d+ more$/ })).toBeNull();
+    expect(screen.queryByText(/of 600 rows/)).toBeNull();
+  });
+
+  it('offers no paging for a list that fits', async () => {
+    ipcMock.getSessionCosts.mockResolvedValue(manyRows(250));
+    render(<SessionsTab />);
+    expect(await screen.findAllByRole('button', { expanded: false })).toHaveLength(250);
+    expect(screen.queryByRole('button', { name: /^Show \d+ more$/ })).toBeNull();
+  });
+
+  it('the toolbar total covers every row, not only the visible ones', async () => {
+    ipcMock.getSessionCosts.mockResolvedValue(manyRows(600));
+    render(<SessionsTab />);
+    expect(await screen.findByText('$600.00')).toBeInTheDocument();
+    expect(screen.getByText('Last 30 days · 600 sessions')).toBeInTheDocument();
+  });
+
+  it('a day’s total covers its rows that are not shown yet', async () => {
+    ipcMock.getSessionCosts.mockResolvedValue(manyRows(600));
+    render(<SessionsTab />);
+    await screen.findAllByRole('button', { expanded: false });
+    // 250 rows of the first day's 300 are on screen; the day still cost $300.
+    expect(screen.getAllByTestId('day-total').map((d) => d.textContent)).toEqual(['$300.00']);
+  });
+
+  it('goes back to the first page when the range changes', async () => {
+    ipcMock.getSessionCosts.mockResolvedValue(manyRows(600));
+    render(<SessionsTab />);
+    await screen.findAllByRole('button', { expanded: false });
+    fireEvent.click(screen.getByRole('button', { name: 'Show 250 more' }));
+    expect(screen.getAllByRole('button', { expanded: false })).toHaveLength(500);
+    fireEvent.click(screen.getByRole('button', { name: '90d' }));
+    await screen.findByText('Last 90 days · 600 sessions');
+    expect(screen.getAllByRole('button', { expanded: false })).toHaveLength(250);
+  });
+
+  it('keeps the range control when the range holds nothing', async () => {
+    ipcMock.getSessionCosts.mockResolvedValue([]);
+    render(<SessionsTab />);
+    expect(await screen.findByText('Nothing in this range')).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Range' })).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/NaN/);
+  });
+
+  it('keeps the range control when the load fails', async () => {
+    ipcMock.getSessionCosts.mockRejectedValue(new Error('db locked'));
+    render(<SessionsTab />);
+    expect(await screen.findByText("Couldn't load sessions")).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Range' })).toBeInTheDocument();
   });
 });

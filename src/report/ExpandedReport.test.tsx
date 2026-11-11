@@ -26,7 +26,7 @@ vi.mock('@tauri-apps/api/event', () => ({ emit: vi.fn(), listen: vi.fn() }));
 
 // Each tab is replaced by a stub that renders its own name: these tests are
 // about the shell around the tabs, not what a tab shows.
-vi.mock('./SessionsTab', () => ({ SessionsTab: () => <div>SessionsTab stub</div>, WINDOW_DAYS: 7 }));
+vi.mock('./SessionsTab', () => ({ SessionsTab: () => <div>SessionsTab stub</div> }));
 vi.mock('./TrendsTab', () => ({ TrendsTab: () => <div>TrendsTab stub</div> }));
 vi.mock('./BreakdownTab', () => ({ BreakdownTab: () => <div>BreakdownTab stub</div> }));
 vi.mock('../providers/ProvidersTab', () => ({ ProvidersTab: () => <div>ProvidersTab stub</div> }));
@@ -85,6 +85,14 @@ describe('ExpandedReport shell', () => {
     expect(screen.getByText('BreakdownTab stub')).toBeInTheDocument();
     for (const gone of ['Models', 'Projects', 'Cache', 'Heatmap']) {
       expect(screen.queryByRole('tab', { name: gone })).toBeNull();
+    }
+  });
+
+  it('the header names no window of its own: each tab states its range', () => {
+    render(<ExpandedReport />);
+    for (const tab of screen.getAllByRole('tab')) {
+      fireEvent.click(tab);
+      expect(screen.getByText(/· Live/).textContent).not.toMatch(/days/);
     }
   });
 

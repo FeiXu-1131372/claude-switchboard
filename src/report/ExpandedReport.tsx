@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState, type KeyboardEvent, type UIEvent } from 'react';
 import { motion } from 'framer-motion';
 import { IconButton } from '../components/ui/IconButton';
-import { SessionsTab, WINDOW_DAYS } from './SessionsTab';
+import { SessionsTab } from './SessionsTab';
 import { TrendsTab } from './TrendsTab';
 import { BreakdownTab } from './BreakdownTab';
 import { useAppStore } from '../lib/store';
@@ -22,21 +22,6 @@ const TAB_CONFIG = [
   { id: 'breakdown', label: 'Breakdown' },
   { id: 'providers', label: 'Providers' },
 ] as const;
-
-/** How far back each tab actually queries. The header used to hardcode
- *  "last 30 days" for every tab, which was wrong for Cost (7) — a Cost total
- *  that omitted three weeks of spend was labelled as if it included them. Keep these in step with the `ipc.get*(n)` call in each
- *  tab; `undefined` means the tab has no time window of its own. */
-const TAB_WINDOW_DAYS: Record<string, number | undefined> = {
-  browse: undefined,
-  cost: WINDOW_DAYS,
-  // Trends and Breakdown follow the shared range control (7d → 1y) and say
-  // so in their own toolbar, so a fixed header window would be wrong as soon
-  // as the user changes it.
-  trends: undefined,
-  breakdown: undefined,
-  providers: undefined,
-};
 
 const TAB_COMPONENTS: Record<string, React.FC> = {
   browse: SessionsBrowserTab,
@@ -168,7 +153,6 @@ export function ExpandedReport() {
               </span>
               <span className="text-[length:var(--text-label)] tracking-[var(--tracking-label)] uppercase text-[color:var(--color-text-muted)]">
                 · {stale ? 'Stale' : 'Live'}
-                {TAB_WINDOW_DAYS[activeTab] ? ` · last ${TAB_WINDOW_DAYS[activeTab]} days` : ''}
               </span>
             </div>
             <div className="flex items-center gap-[2px]">

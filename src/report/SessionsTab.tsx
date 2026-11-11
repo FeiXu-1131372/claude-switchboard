@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Button } from '../components/ui/Button';
 import { ModelBadge } from '../components/ui/ModelBadge';
 import { EmptyState } from '../components/ui/EmptyState';
@@ -10,7 +10,8 @@ import { useTabData } from '../lib/useTabData';
 import { useAppStore } from '../lib/store';
 import type { Compaction, SessionCostRow, SubagentCost } from '../lib/types';
 import { RESUMABLE_SESSIONS_KEY } from '../sessions/useResumableSessions';
-import { useReportStore } from './reportState';
+import { ReportToolbar } from './ReportToolbar';
+import { RANGE_DAYS, RANGE_LABEL, useReportStore } from './reportState';
 
 // `modelLabel` now lives in ./modelDisplay alongside modelKey/MODEL_VARIANT so
 // the shared <ModelBadge> can reach it without importing a tab component.
@@ -59,13 +60,9 @@ function formatDayLabel(dayKey: string): string {
   });
 }
 
-/** Splitting rows by day multiplies their count, so the cap is higher than
- *  the old per-conversation 100 — it still bounds the DOM on a heavy month. */
-const MAX_ROWS = 250;
-
-/** Days of history this tab aggregates. Mirrored by `TAB_WINDOW_DAYS` in
- *  ExpandedReport so the header label cannot drift from what is queried. */
-export const WINDOW_DAYS = 7;
+/** Rows put on screen at a time. A year of heavy use is thousands of rows;
+ *  the totals always cover all of them, the DOM only what has been asked for. */
+const PAGE_ROWS = 250;
 
 /** Subagent transcripts live at `<project>/<sessionId>/subagents/agent-*.jsonl`
  * and belong to the sibling `<sessionId>.jsonl`. Same rule as the backend's
@@ -220,14 +217,20 @@ function SubagentRow({ sub }: { sub: SubagentCost }) {
 
 export function SessionsTab() {
   const version = useAppStore((s) => s.sessionDataVersion);
+  const range = useReportStore((s) => s.range);
+  const windowDays = RANGE_DAYS[range];
   const { data, error, loading, reload } = useTabData(
     () =>
-      Promise.all([ipc.getSessionCosts(WINDOW_DAYS), ipc.getCompactions(WINDOW_DAYS)]).then(
+      Promise.all([ipc.getSessionCosts(windowDays), ipc.getCompactions(windowDays)]).then(
         ([rows, compactions]) => ({ rows, compactions }),
       ),
     [version],
-    `cost:${WINDOW_DAYS}`,
+    `cost:${windowDays}`,
   );
+  // How many pages are open, kept with the range it was counted for: another
+  // range is another list, and starts again from its first page.
+  const [paging, setPaging] = useState({ range, pages: 1 });
+  const visibleRows = (paging.range === range ? paging.pages : 1) * PAGE_ROWS;
   // One row per conversation per day, summed by the backend, newest first.
   const sessions = data?.rows ?? NO_ROWS;
   // In the report store so the open row survives leaving the tab.
@@ -279,57 +282,73 @@ export function SessionsTab() {
     [sessions],
   );
 
-  /** Rows bucketed under their day, newest first. `sessions` is already
-   * sorted by `latest_ts` descending and every row covers a single day, so a
-   * linear pass produces day groups in order without a second sort. */
+  /** What each day cost, over every row of that day. Kept apart from the
+   * rows on screen: a day cut short by paging still shows its whole total,
+   * which is the figure the Trends bar for that date shows. */
+  const dayCost = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const s of sessions) map.set(s.day, (map.get(s.day) ?? 0) + s.total_cost_usd);
+    return map;
+  }, [sessions]);
+
+  /** The rows on screen, bucketed under their day, newest first. `sessions`
+   * is already sorted by `latest_ts` descending and every row covers a single
+   * day, so a linear pass produces day groups in order without a second sort. */
   const days = useMemo(() => {
-    const out: Array<{ day: string; rows: SessionCostRow[]; cost: number }> = [];
-    for (const s of sessions.slice(0, MAX_ROWS)) {
+    const out: Array<{ day: string; rows: SessionCostRow[] }> = [];
+    for (const s of sessions.slice(0, visibleRows)) {
       let group = out[out.length - 1];
       if (!group || group.day !== s.day) {
-        group = { day: s.day, rows: [], cost: 0 };
+        group = { day: s.day, rows: [] };
         out.push(group);
       }
       group.rows.push(s);
-      group.cost += s.total_cost_usd;
     }
     return out;
-  }, [sessions]);
+  }, [sessions, visibleRows]);
 
-  if (error) {
+  // The range control stays in every state: an empty or failed range is
+  // exactly when it is wanted.
+  if (!data) {
     return (
-      <EmptyState
-        icon={<IconSessions size={32} />}
-        title="Couldn't load sessions"
-        description={error}
-        action={<Button variant="ghost" size="sm" onClick={reload}>Retry</Button>}
-      />
+      <div className="flex flex-col gap-[var(--space-md)]">
+        <ReportToolbar figure="—" caption={RANGE_LABEL[range]} />
+        {error && !loading ? (
+          <EmptyState
+            icon={<IconSessions size={32} />}
+            title="Couldn't load sessions"
+            description={error}
+            action={<Button variant="ghost" size="sm" onClick={reload}>Retry</Button>}
+          />
+        ) : (
+          <SkeletonRows />
+        )}
+      </div>
     );
   }
-  if (loading || !data) {
-    return <SkeletonRows />;
-  }
+
+  const caption = `${RANGE_LABEL[range]} · ${formatCount(conversationCount)} ${
+    conversationCount === 1 ? 'session' : 'sessions'
+  }`;
 
   if (sessions.length === 0) {
     return (
-      <EmptyState
-        icon={<IconSessions size={32} />}
-        title="No sessions yet"
-        description="Sessions will appear here as you use Claude Code."
-      />
+      <div className="flex flex-col gap-[var(--space-md)]">
+        <ReportToolbar figure={formatCost(0)} caption={caption} />
+        <EmptyState
+          icon={<IconSessions size={32} />}
+          title="Nothing in this range"
+          description="Sessions appear here, with what each one cost, as you use Claude Code."
+        />
+      </div>
     );
   }
 
+  const remaining = sessions.length - Math.min(visibleRows, sessions.length);
+
   return (
     <div className="flex flex-col gap-[var(--space-sm)]">
-      <div className="flex items-center justify-between px-[var(--space-2xs)]">
-        <span className="text-[length:var(--text-label)] text-[color:var(--color-text-muted)]">
-          {formatCount(conversationCount)} {conversationCount === 1 ? 'session' : 'sessions'}
-        </span>
-        <span className="mono text-[length:var(--text-label)] text-[color:var(--color-text-secondary)]">
-          {formatCost(totalCost)}
-        </span>
-      </div>
+      <ReportToolbar figure={formatCost(totalCost)} caption={caption} />
 
       <div className="flex flex-col">
         {days.map((group) => (
@@ -353,8 +372,11 @@ export function SessionsTab() {
               >
                 {formatDayLabel(group.day)}
               </span>
-              <span className="mono text-[length:var(--text-micro)] tabular-nums text-[color:var(--color-text-muted)]">
-                {formatCost(group.cost)}
+              <span
+                data-testid="day-total"
+                className="mono text-[length:var(--text-micro)] tabular-nums text-[color:var(--color-text-muted)]"
+              >
+                {formatCost(dayCost.get(group.day) ?? 0)}
               </span>
             </div>
             {group.rows.map((session) => {
@@ -456,9 +478,18 @@ export function SessionsTab() {
             })}
           </div>
         ))}
-        {sessions.length > MAX_ROWS && (
-          <div className="py-[var(--space-md)] text-center text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]">
-            Showing the latest {MAX_ROWS} rows.
+        {remaining > 0 && (
+          <div className="flex items-center justify-between gap-[var(--space-md)] px-[var(--space-sm)] py-[var(--space-md)]">
+            <span className="mono text-[length:var(--text-micro)] tabular-nums text-[color:var(--color-text-muted)]">
+              {formatCount(sessions.length - remaining)} of {formatCount(sessions.length)} rows
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setPaging({ range, pages: Math.ceil(visibleRows / PAGE_ROWS) + 1 })}
+            >
+              Show {formatCount(Math.min(PAGE_ROWS, remaining))} more
+            </Button>
           </div>
         )}
       </div>
