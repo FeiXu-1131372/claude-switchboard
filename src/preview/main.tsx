@@ -3,7 +3,7 @@
  * `preview.html`, so none of this reaches the production bundle.
  *
  *   pnpm preview:ui → http://localhost:1430/preview.html
- *   ?scale=heavy|light|empty   how much history (default heavy)
+ *   ?scale=heavy|demo|light|empty   how much history (default heavy; demo is the README's)
  *   ?theme=light|dark          light or dark mode (default light)
  *   ?palette=<id>              colour theme (default terracotta)
  *   ?view=expanded|compact     which window (default expanded)
@@ -16,7 +16,7 @@ import { buildFixtures, windowOf, PRICING, type PreviewScale } from './fixtures'
 import '../styles/globals.css';
 import '../styles/tokens.css';
 
-const SCALES: readonly PreviewScale[] = ['heavy', 'light', 'empty'];
+const SCALES: readonly PreviewScale[] = ['heavy', 'demo', 'light', 'empty'];
 
 async function start() {
   const params = new URLSearchParams(window.location.search);

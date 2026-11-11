@@ -27,7 +27,7 @@ import type {
   Utilization,
 } from '../lib/generated/bindings';
 
-export type PreviewScale = 'heavy' | 'light' | 'empty';
+export type PreviewScale = 'heavy' | 'demo' | 'light' | 'empty';
 
 /** One conversation's use of one model on one day. */
 export interface UsageCell {
@@ -92,6 +92,8 @@ interface ScaleSpec {
 
 const SPEC: Record<PreviewScale, ScaleSpec> = {
   heavy: { projects: 300, days: 136, models: 13, spend30: 13_000 },
+  // One person's history: what the README screenshots are taken at.
+  demo: { projects: 6, days: 136, models: 8, spend30: 620 },
   light: { projects: 6, days: 18, models: 4, spend30: 96 },
   empty: { projects: 0, days: 0, models: 0, spend30: 0 },
 };

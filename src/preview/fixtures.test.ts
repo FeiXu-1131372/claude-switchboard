@@ -36,6 +36,19 @@ describe('buildFixtures', () => {
     expect(d.projects.length).toBeLessThanOrEqual(8);
     expect(d.daily.length).toBeLessThanOrEqual(21);
   });
+
+  // The README screenshots are taken at this scale: one person's history,
+  // long enough to fill the activity calendar, small enough to read.
+  it('demo is a handful of named projects over several months', () => {
+    const d = buildFixtures('demo', NOW);
+    expect(d.projects.length).toBeGreaterThan(3);
+    expect(d.projects.length).toBeLessThanOrEqual(6);
+    expect(d.projects.every((p) => p.project !== '-')).toBe(true);
+    expect(d.ledger.some((c) => c.ts < NOW.getTime() - 120 * 86_400_000)).toBe(true);
+    const spent = windowOf(d, 30, NOW).daily.reduce((s, day) => s + day.cost_usd, 0);
+    expect(spent).toBeGreaterThan(300);
+    expect(spent).toBeLessThan(900);
+  });
 });
 
 describe('windowOf', () => {
