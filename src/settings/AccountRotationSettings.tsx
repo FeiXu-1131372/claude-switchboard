@@ -49,7 +49,7 @@ export function AccountRotationSettings({ value, accounts, onChange }: Props) {
       <Card className="p-[var(--space-md)] flex flex-col gap-[var(--space-md)]">
         <Toggle
           label="Automatically rotate accounts"
-          description="Switch Claude Code when either usage limit reaches its threshold"
+          description="Switch Claude Code when a usage limit reaches its threshold"
           checked={settings.enabled}
           onChange={(e) => onChange({ ...settings, enabled: e.target.checked })}
         />
@@ -71,7 +71,7 @@ export function AccountRotationSettings({ value, accounts, onChange }: Props) {
           ]} />
         <p className="text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]">
           Your preferred account is used when available; otherwise the account with the most headroom is chosen.
-          Accounts need fresh usage below both thresholds. If none qualify, Switchboard waits and checks again.
+          The weekly threshold also applies to the Fable weekly limit. Accounts need fresh usage below their thresholds. If none qualify, Switchboard waits and checks again.
           Rotation runs while Switchboard is open, with at least 60 seconds between switches.
           Running Claude Code sessions usually adopt the account within about 30 seconds. Click Save to apply.
         </p>

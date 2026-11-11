@@ -67,12 +67,15 @@ A 60-second `KeychainGuardian` covers the narrow race where a Claude Code proces
 
 In **Settings → Account rotation**, enable automatic rotation and click **Save**.
 By default, Switchboard switches when the active account reaches **96% of its
-5-hour limit or 98% of its weekly limit**. Both thresholds are adjustable.
+5-hour limit or 98% of its weekly limit**. Both thresholds are adjustable. The
+weekly threshold also applies to the separate Fable weekly limit, on accounts
+that have one.
 
-Automatic selection chooses the account with the most headroom across both
-limits. You can select a preferred next account; if it is active or unavailable,
+Automatic selection chooses the account with the most headroom across its
+limits. An account with no 5-hour window (Ultra, or one whose window has not
+started) counts as unused on that limit. You can select a preferred next account; if it is active or unavailable,
 automatic selection supplies the fallback. Accounts with missing, stale, invalid,
-or failed usage readings, or either limit already at its threshold, are skipped.
+or failed usage readings, or any limit already at its threshold, are skipped.
 If no account qualifies, Switchboard waits for refreshed usage. Settings show
 the latest rotation result, and successful switches send a desktop notification.
 

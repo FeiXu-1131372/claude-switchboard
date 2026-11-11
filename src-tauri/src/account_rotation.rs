@@ -79,11 +79,30 @@ fn trigger(cache: &CachedUsage, settings: &RotationSettings, now: DateTime<Utc>)
             return Some(format!("Weekly usage reached {value:.0}%"));
         }
     }
+    // Fable has a weekly cap of its own. It is a weekly limit, so it answers
+    // to the weekly threshold.
+    if let Some(value) = utilization(cache.snapshot.seven_day_fable.as_ref(), now) {
+        if value >= f64::from(settings.seven_day_threshold) {
+            return Some(format!("Fable weekly usage reached {value:.0}%"));
+        }
+    }
     None
 }
 
+/// A limit the account does not report counts as unused: Ultra has no 5-hour
+/// window, an account whose window has not started reports none, and plans
+/// without the Fable cap report no Fable bucket. A bucket that is reported
+/// but cannot be trusted (see `utilization`) still rules the account out.
+fn optional_limit(bucket: Option<&Utilization>, now: DateTime<Utc>) -> Option<f64> {
+    match bucket {
+        None => Some(0.0),
+        some => utilization(some, now),
+    }
+}
+
 /// Prefer a user's chosen account when eligible; otherwise maximize the
-/// smaller remaining margin across the two thresholds. Slot breaks ties.
+/// smallest remaining margin across the limits the account has (5-hour,
+/// weekly, Fable weekly). Slot breaks ties.
 fn choose_next(
     settings: &RotationSettings,
     active: u32,
@@ -97,10 +116,13 @@ fn choose_next(
             if slot == active || !fresh(cache, now, max_age) {
                 return None;
             }
-            let five = utilization(cache.snapshot.five_hour.as_ref(), now)?;
+            let five = optional_limit(cache.snapshot.five_hour.as_ref(), now)?;
+            // Every plan has the weekly limit; a reading without it is unknown.
             let week = utilization(cache.snapshot.seven_day.as_ref(), now)?;
+            let fable = optional_limit(cache.snapshot.seven_day_fable.as_ref(), now)?;
             let score = (five / f64::from(settings.five_hour_threshold))
-                .max(week / f64::from(settings.seven_day_threshold));
+                .max(week / f64::from(settings.seven_day_threshold))
+                .max(fable / f64::from(settings.seven_day_threshold));
             if score >= 1.0 {
                 return None;
             }
@@ -196,7 +218,7 @@ pub async fn evaluate(handle: &AppHandle, state: &AppState) {
         set_status(
             handle,
             state,
-            "Waiting for an available account with fresh usage below both thresholds.".into(),
+            "Waiting for an available account with fresh usage below its thresholds.".into(),
         );
         return;
     };
@@ -357,6 +379,63 @@ mod tests {
             choose_next(&s, 1, &[(2, &invalid)], Utc::now(), 600),
             Some(2)
         );
+    }
+
+    fn with_fable(mut c: CachedUsage, fable: f64) -> CachedUsage {
+        c.snapshot.seven_day_fable = Some(Utilization {
+            utilization: fable,
+            resets_at: Some(Utc::now() + chrono::Duration::hours(1)),
+        });
+        c
+    }
+
+    #[test]
+    fn the_fable_weekly_cap_triggers_at_the_weekly_threshold() {
+        let s = RotationSettings::default();
+        assert!(trigger(&with_fable(cache(20.0, 20.0), 97.9), &s, Utc::now()).is_none());
+        assert!(trigger(&with_fable(cache(20.0, 20.0), 98.0), &s, Utc::now())
+            .unwrap()
+            .contains("Fable"));
+        // The 5-hour and weekly limits are named first when they are also hit.
+        assert!(trigger(&with_fable(cache(20.0, 99.0), 99.0), &s, Utc::now())
+            .unwrap()
+            .starts_with("Weekly"));
+    }
+
+    #[test]
+    fn an_account_with_no_five_hour_window_can_be_chosen() {
+        // Ultra has no 5-hour limit, and an account whose window has not
+        // started reports none either: nothing is used, so it is available.
+        let mut ultra = cache(0.0, 30.0);
+        ultra.snapshot.five_hour = None;
+        let s = RotationSettings::default();
+        assert_eq!(choose_next(&s, 1, &[(2, &ultra)], Utc::now(), 600), Some(2));
+        // Its weekly limit still rules it out.
+        ultra.snapshot.seven_day.as_mut().unwrap().utilization = 98.0;
+        assert_eq!(choose_next(&s, 1, &[(2, &ultra)], Utc::now(), 600), None);
+    }
+
+    #[test]
+    fn an_account_at_its_fable_cap_is_not_chosen_and_fable_counts_in_the_balance() {
+        let s = RotationSettings::default();
+        let capped = with_fable(cache(0.0, 0.0), 98.0);
+        assert_eq!(choose_next(&s, 1, &[(2, &capped)], Utc::now(), 600), None);
+
+        let nearly = with_fable(cache(10.0, 10.0), 90.0);
+        let roomy = with_fable(cache(30.0, 30.0), 0.0);
+        assert_eq!(
+            choose_next(&s, 1, &[(2, &nearly), (3, &roomy)], Utc::now(), 600),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn a_fable_reading_past_its_reset_makes_the_account_unavailable() {
+        let mut stale = with_fable(cache(0.0, 0.0), 40.0);
+        stale.snapshot.seven_day_fable.as_mut().unwrap().resets_at =
+            Some(Utc::now() - chrono::Duration::seconds(1));
+        let s = RotationSettings::default();
+        assert_eq!(choose_next(&s, 1, &[(2, &stale)], Utc::now(), 600), None);
     }
 
     #[test]
