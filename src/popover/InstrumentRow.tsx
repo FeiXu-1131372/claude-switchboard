@@ -39,11 +39,17 @@ export function InstrumentColumn({
   data,
   warnAt,
   dangerAt,
+  active,
+  showReset = true,
 }: {
   label: string;
   data: Utilization | null;
   warnAt: number;
   dangerAt: number;
+  /** Marks this column as the model in use: accent dot and accent label. */
+  active?: boolean;
+  /** False when the countdown would repeat the column beside it. */
+  showReset?: boolean;
 }) {
   const value = data?.utilization ?? null;
   const level = levelOf(value, warnAt, dangerAt);
@@ -54,11 +60,20 @@ export function InstrumentColumn({
       {/* Eyebrow label + reset time on ONE row. They are the same kind of
        * metadata, so they scan as a unit; this also drops the old bottom
        * caption row entirely, which is what lets the glance view shrink. */}
-      <div className="flex items-baseline justify-between gap-[var(--space-xs)]">
-        <span className="text-[length:var(--text-micro)] font-[var(--weight-medium)] tracking-[var(--tracking-label)] uppercase text-[color:var(--color-text-muted)]">
+      <div className="flex items-baseline gap-[var(--space-xs)]">
+        {active && <InUseDot />}
+        <span
+          className={`text-[length:var(--text-micro)] font-[var(--weight-medium)] tracking-[var(--tracking-label)] uppercase ${
+            active ? 'text-[color:var(--color-accent-text)]' : 'text-[color:var(--color-text-muted)]'
+          }`}
+        >
           {label}
         </span>
-        {data?.resets_at && <ResetCountdown resetsAt={data.resets_at} />}
+        {showReset && data?.resets_at && (
+          <span className="ml-auto flex">
+            <ResetCountdown resetsAt={data.resets_at} />
+          </span>
+        )}
       </div>
 
       {/* Hero number — the % sits at the digit's CAP-height (top edge), not its
@@ -135,17 +150,7 @@ export function InstrumentRow({
     <div className="flex flex-col gap-[6px]">
       <div className="flex items-baseline justify-between gap-[var(--space-sm)] min-w-0">
         <div className="flex items-baseline gap-[var(--space-xs)] min-w-0">
-          {active && (
-            <span
-              aria-label="currently in use"
-              title="Currently in use"
-              className="inline-block h-[6px] w-[6px] rounded-full shrink-0 self-center"
-              style={{
-                background: 'var(--color-accent)',
-                animation: 'pulse-dot 2.4s ease-in-out infinite',
-              }}
-            />
-          )}
+          {active && <InUseDot />}
           <span
             className={`text-[length:var(--text-label)] font-[var(--weight-medium)] truncate ${
               active
@@ -177,6 +182,22 @@ export function InstrumentRow({
       </div>
       <Meter value={clamped} level={level} small />
     </div>
+  );
+}
+
+/* ─── In-use mark ─── */
+
+function InUseDot() {
+  return (
+    <span
+      aria-label="currently in use"
+      title="Currently in use"
+      className="inline-block h-[6px] w-[6px] rounded-full shrink-0 self-center"
+      style={{
+        background: 'var(--color-accent)',
+        animation: 'pulse-dot 2.4s ease-in-out infinite',
+      }}
+    />
   );
 }
 

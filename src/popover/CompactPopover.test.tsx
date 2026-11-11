@@ -1,8 +1,8 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
-  usage: null,
+  usage: null as unknown,
   settings: null,
   stale: false,
   accounts: [{ slot: 1, email: 'Token account 1', is_active: false }],
@@ -24,9 +24,56 @@ vi.mock('../settings/SettingsPanel', () => ({ SettingsPanel: () => null }));
 vi.mock('../lib/window-chrome', () => ({ handleDragStart: vi.fn(), closeWindow: vi.fn() }));
 
 import { CompactPopover } from './CompactPopover';
+import { ipc } from '../lib/ipc';
+
+/** A reading with the Opus and Sonnet split, or (Pro) with none. */
+function reading(split: boolean) {
+  return {
+    snapshot: {
+      five_hour: { utilization: 19, resets_at: null },
+      seven_day: { utilization: 32, resets_at: null },
+      seven_day_sonnet: split ? { utilization: 20, resets_at: null } : null,
+      seven_day_opus: split ? { utilization: 40, resets_at: null } : null,
+      seven_day_fable: { utilization: 44, resets_at: null },
+      extra_usage: null,
+      fetched_at: new Date().toISOString(),
+    },
+    account_id: 'uuid-1',
+    account_email: 'a@example.com',
+    last_error: null,
+    burn_rate: null,
+    auth_source: 'OAuth',
+  };
+}
+
+afterEach(() => {
+  state.usage = null;
+  vi.mocked(ipc.resizeWindow).mockClear();
+});
 
 it('lets a first token-only account be selected before any usage exists', () => {
   render(<CompactPopover />);
   fireEvent.click(screen.getByRole('button', { name: 'Choose an account' }));
   expect(screen.getByText('Manage imported accounts')).toBeInTheDocument();
+});
+
+it('opens the taller window for the details and the short one for the glance', () => {
+  state.usage = reading(true);
+  render(<CompactPopover />);
+  expect(vi.mocked(ipc.resizeWindow).mock.lastCall).toEqual(['compact-minimal']);
+  fireEvent.click(screen.getByRole('button', { name: 'Details' }));
+  expect(vi.mocked(ipc.resizeWindow).mock.lastCall).toEqual(['compact']);
+});
+
+it('returns to the short window when the account now shown has no details to open', () => {
+  state.usage = reading(true);
+  const { rerender } = render(<CompactPopover />);
+  fireEvent.click(screen.getByRole('button', { name: 'Details' }));
+  expect(vi.mocked(ipc.resizeWindow).mock.lastCall).toEqual(['compact']);
+
+  // Switched to a Pro account: no model split, so nothing behind Details.
+  state.usage = reading(false);
+  rerender(<CompactPopover />);
+  expect(screen.queryByRole('button', { name: 'Details' })).toBeNull();
+  expect(vi.mocked(ipc.resizeWindow).mock.lastCall).toEqual(['compact-minimal']);
 });

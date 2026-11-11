@@ -42,6 +42,28 @@ async function start() {
 
   const now = new Date();
   const data = buildFixtures(scale, now);
+  // ?active=<slot> signs a different fixture account in, and ?fable=<pct>
+  // gives that account a Fable cap on its own reset, so the popover can be
+  // looked at for each plan shape without changing the sidebar's fixtures.
+  const activeSlot = Number(params.get('active'));
+  if (data.accounts.some((a) => a.slot === activeSlot)) {
+    data.accounts = data.accounts.map((a) => ({ ...a, is_active: a.slot === activeSlot }));
+  }
+  const fablePct = Number(params.get('fable'));
+  if (params.has('fable') && Number.isFinite(fablePct)) {
+    const resetsAt = new Date(now.getTime() + 80 * 3_600_000).toISOString();
+    data.accounts = data.accounts.map((a) =>
+      a.is_active && a.cached_usage
+        ? {
+            ...a,
+            cached_usage: {
+              ...a.cached_usage,
+              snapshot: { ...a.cached_usage.snapshot, seven_day_fable: { utilization: fablePct, resets_at: resetsAt } },
+            },
+          }
+        : a,
+    );
+  }
   let settings = { ...data.settings, theme };
   const days = (payload: unknown) => (payload as { days: number }).days;
 

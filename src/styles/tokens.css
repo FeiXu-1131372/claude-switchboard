@@ -108,6 +108,8 @@
   /* Type scale */
   --text-hero: 56px;
   --text-hero-unit: 32px;
+  --text-hero-compact: 40px;
+  --text-hero-unit-compact: 24px;
   --text-display: 28px;
   --text-pct: 24px;
   --text-title: 14px;
@@ -192,12 +194,14 @@
   --duration-skeleton: 1400ms;
 }
 
-/* Minimal glance view: shrink the hero type so the popover can be
- * substantially shorter while keeping the numbers glanceable. Scoped to the
- * Shell's popover-minimal class — every other surface keeps full size. */
-.popover-minimal {
-  --text-hero: 40px;
-  --text-hero-unit: 24px;
+/* Smaller hero type, in two places: the minimal glance view, so the popover
+ * can be substantially shorter while keeping the numbers glanceable, and a
+ * hero of three columns (5h, 7d and Fable), where "100%" at full size is
+ * wider than a column. Every other surface keeps full size. */
+.popover-minimal,
+.hero-dense {
+  --text-hero: var(--text-hero-compact);
+  --text-hero-unit: var(--text-hero-unit-compact);
 }
 
 /* Dark theme overrides — same tokens, dark values. Tailwind v4's generated

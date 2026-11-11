@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ResetCountdown } from '../popover/ResetCountdown';
 import { ipc } from '../lib/ipc';
 import { formatRelativeTime } from '../lib/format';
+import { sameReset } from '../lib/reset';
 import type { AccountListEntry, Schedule } from '../lib/generated/bindings';
 import { WarmupToggle } from './WarmupToggle';
 import { WarmupNowButton, type WarmupNowStatus } from './WarmupNowButton';
@@ -63,18 +64,6 @@ function PlanBadge({ plan }: { plan: string | null }) {
       {plan}
     </span>
   );
-}
-
-/** Two reset times closer than this are one window stamped twice. */
-const SAME_RESET_MS = 60_000;
-
-/** Whether two windows reset at the same moment. The API stamps the weekly
- * and Fable windows a few microseconds apart even when they are one window,
- * so "the same" is "within a minute". Missing or unreadable is never the same. */
-export function sameReset(a?: string | null, b?: string | null): boolean {
-  if (!a || !b) return false;
-  const gap = Math.abs(Date.parse(a) - Date.parse(b));
-  return Number.isFinite(gap) && gap <= SAME_RESET_MS;
 }
 
 function CompactMeter({

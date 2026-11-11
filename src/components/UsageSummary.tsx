@@ -1,7 +1,8 @@
 /**
- * UsageSummary — the hero usage readout extracted from CompactPopover so both
- * compact and expanded views can render it. Shows 5h/7d instrument columns,
- * burn rate projection, Opus/Sonnet sub-rows, and pay-as-you-go.
+ * UsageSummary — the hero usage readout of the popover. Shows one instrument
+ * column per limit the account has (5h, 7d, and Fable when it has its own
+ * weekly cap), the burn rate projection, Opus/Sonnet sub-rows, and
+ * pay-as-you-go.
  *
  * When `condensed` is true the layout is tightened for embedding at the top
  * of the expanded report — same data, less vertical real-estate.
@@ -11,6 +12,7 @@ import { motion } from 'framer-motion';
 import { InstrumentColumn, InstrumentRow } from '../popover/InstrumentRow';
 import { ChevronRight } from '../lib/icons';
 import { isUltraPlan } from '../lib/plan';
+import { sameReset } from '../lib/reset';
 import type { BurnRateProjection, CachedUsage, Utilization } from '../lib/types';
 
 interface UsageSummaryProps {
@@ -28,6 +30,16 @@ interface UsageSummaryProps {
   /** Display plan name (Pro / Max / Ultra). Ultra hides the 5h column when
    * the account reports no 5-hour window. */
   plan?: string | null;
+}
+
+/**
+ * Whether anything sits behind the Details disclosure: the Opus/Sonnet split
+ * (Max and Ultra only) or pay-as-you-go. Every other limit is in the hero.
+ */
+export function hasUsageDetails(snap: CachedUsage['snapshot']): boolean {
+  const modelSplit =
+    snap.seven_day != null && (snap.seven_day_opus != null || snap.seven_day_sonnet != null);
+  return modelSplit || Boolean(snap.extra_usage?.is_enabled);
 }
 
 export function UsageSummary({
@@ -69,26 +81,33 @@ export function UsageSummary({
   // on plans that don't provide it.
   const hasModelSplit =
     snap.seven_day_opus != null || snap.seven_day_sonnet != null;
-  const showModelSplit =
-    hasModelSplit && snap.seven_day != null && (!collapsible || detailsOpen);
-  const showFable = snap.seven_day_fable != null && (!collapsible || detailsOpen);
-  const showExtra = extra?.is_enabled && (!collapsible || detailsOpen);
+  // A disclosure with nothing behind it is not offered, and an account with
+  // nothing to disclose is never "open", whatever the last account left.
+  const hasDetails = hasUsageDetails(snap);
+  const open = !collapsible || (Boolean(detailsOpen) && hasDetails);
+  const showModelSplit = hasModelSplit && snap.seven_day != null && open;
+  // Fable has its own weekly cap, independent of the Opus/Sonnet split, so it
+  // is a limit in its own right and sits in the hero beside 5h and 7d: it is
+  // visible at a glance, never behind the disclosure.
+  const fable = snap.seven_day_fable;
+  const columns = (showFiveHour ? 1 : 0) + 1 + (fable != null ? 1 : 0);
+  const showExtra = extra?.is_enabled && open;
 
   return (
     <div className={condensed ? 'flex flex-col gap-[var(--space-xs)]' : 'flex flex-col'}>
-      {/* Hero: two-column instrument readout — tighter padding in the
+      {/* Hero: one instrument column per limit — tighter padding in the
           collapsed glance view so the shorter popover height still fits the
           footer. */}
       <motion.div
+        data-testid="usage-hero"
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
-        className={`grid ${
-          showFiveHour ? 'grid-cols-2' : 'grid-cols-1'
-        } gap-x-[var(--space-lg)] px-[var(--popover-pad)] ${
+        style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+        className={`grid ${columns > 2 ? 'hero-dense' : ''} gap-x-[var(--space-lg)] px-[var(--popover-pad)] ${
           condensed
             ? 'py-[var(--space-sm)]'
-            : collapsible && !detailsOpen
+            : !open
               ? 'pt-[var(--space-xs)] pb-[var(--space-sm)]'
               : 'pt-[var(--space-md)] pb-[var(--space-lg)]'
         }`}
@@ -114,15 +133,25 @@ export function UsageSummary({
           warnAt={warn}
           dangerAt={danger}
         />
+        {fable != null && (
+          <InstrumentColumn
+            label="Fable"
+            data={fable}
+            warnAt={warn}
+            dangerAt={danger}
+            active={activeModel === 'fable'}
+            showReset={!sameReset(snap.seven_day?.resets_at, fable.resets_at)}
+          />
+        )}
       </motion.div>
 
-      {collapsible && (
+      {collapsible && hasDetails && (
         <>
           <Hairline />
           <button
             type="button"
             onClick={onToggleDetails}
-            aria-expanded={detailsOpen}
+            aria-expanded={open}
             className="flex items-center justify-between px-[var(--popover-pad)] py-[var(--space-xs)]"
           >
             <span className="text-[length:var(--text-micro)] font-[var(--weight-medium)] tracking-[var(--tracking-label)] uppercase text-[color:var(--color-text-muted)]">
@@ -130,7 +159,7 @@ export function UsageSummary({
             </span>
             <ChevronRight
               size={12}
-              className={`text-[color:var(--color-text-muted)] transition-transform duration-[var(--duration-fast)] ${detailsOpen ? 'rotate-90' : ''}`}
+              className={`text-[color:var(--color-text-muted)] transition-transform duration-[var(--duration-fast)] ${open ? 'rotate-90' : ''}`}
             />
           </button>
         </>
@@ -156,24 +185,6 @@ export function UsageSummary({
               warnAt={warn}
               dangerAt={danger}
               active={activeModel === 'sonnet'}
-            />
-          </div>
-        </>
-      )}
-
-      {/* Fable has its own weekly cap on Max/Ultra, independent of the
-       * Opus/Sonnet split. Full-width because it is a single model. */}
-      {showFable && (
-        <>
-          <Hairline />
-          <div className="px-[var(--popover-pad)] py-[var(--space-sm)]">
-            <InstrumentRow
-              label="Fable"
-              data={snap.seven_day_fable}
-              warnAt={warn}
-              dangerAt={danger}
-              active={activeModel === 'fable'}
-              showReset
             />
           </div>
         </>

@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { Banner } from '../components/ui/Banner';
 import { IconButton } from '../components/ui/IconButton';
 import { UpdateBanner } from '../components/UpdateBanner';
-import { UsageSummary } from '../components/UsageSummary';
+import { UsageSummary, hasUsageDetails } from '../components/UsageSummary';
 import { SettingsPanel } from '../settings/SettingsPanel';
 import { AccountsPanel } from '../accounts/AccountsPanel';
 import { UnmanagedActiveBanner } from '../accounts/UnmanagedActiveBanner';
@@ -81,7 +81,8 @@ export function CompactPopover() {
   // Keep the window height in sync with content: minimal only for the home
   // glance view with details collapsed; full compact height everywhere else
   // (settings/accounts need the room). Re-asserted on every popover show.
-  const minimal = view === 'home' && !detailsOpen;
+  const showingDetails = detailsOpen && usage != null && hasUsageDetails(usage.snapshot);
+  const minimal = view === 'home' && !showingDetails;
   useEffect(() => {
     ipc.resizeWindow(minimal ? 'compact-minimal' : 'compact').catch(() => {});
   }, [minimal, shownTick]);

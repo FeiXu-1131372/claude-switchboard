@@ -13,7 +13,8 @@ const ipcMock = vi.hoisted(() => ({
 
 vi.mock('../../lib/ipc', () => ({ ipc: ipcMock }));
 
-import { AccountRow, sameReset } from '../AccountRow';
+import { AccountRow } from '../AccountRow';
+import { sameReset } from '../../lib/reset';
 
 function cachedUsage(
   util5h: number | null,
