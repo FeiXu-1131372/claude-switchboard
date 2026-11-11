@@ -13,7 +13,7 @@ const ipcMock = vi.hoisted(() => ({
 
 vi.mock('../../lib/ipc', () => ({ ipc: ipcMock }));
 
-import { AccountRow } from '../AccountRow';
+import { AccountRow, sameReset } from '../AccountRow';
 
 function cachedUsage(
   util5h: number | null,
@@ -203,5 +203,112 @@ describe('AccountRow warm-up section', () => {
     expect(await screen.findByText('Every 5h')).toBeTruthy();
     // Summary lives on the collapsed line — controls stay hidden.
     expect(screen.queryByRole('switch')).toBeNull();
+  });
+});
+
+/** An Ultra snapshot whose weekly and Fable windows reset `fableHoursLater`
+ * hours apart. The API stamps the two a few microseconds apart even when they
+ * are the same window, as here. */
+function ultraUsage(fableHoursLater: number): CachedUsage {
+  const usage = cachedUsage(null, 63, 44);
+  usage.snapshot.seven_day!.resets_at = '2099-11-14T02:59:59.570752Z';
+  usage.snapshot.seven_day_fable!.resets_at = new Date(
+    Date.parse('2099-11-14T02:59:59.570874Z') + fableHoursLater * 3_600_000,
+  ).toISOString();
+  return usage;
+}
+
+/** Each countdown reads "in <time>"; its own text is the word "in". */
+const countdowns = () => screen.queryAllByText('in');
+
+describe('sameReset', () => {
+  it('is true for two stamps of the same moment', () => {
+    expect(sameReset('2026-11-14T02:59:59.570752Z', '2026-11-14T02:59:59.570874Z')).toBe(true);
+    expect(sameReset('2026-11-14T02:59:00Z', '2026-11-14T03:00:00Z')).toBe(true);
+  });
+
+  it('is false for different moments', () => {
+    expect(sameReset('2026-11-14T02:59:59Z', '2026-11-14T05:00:00Z')).toBe(false);
+    expect(sameReset('2026-11-14T02:59:00Z', '2026-11-14T03:00:01Z')).toBe(false);
+  });
+
+  it('is false when either is missing or unreadable', () => {
+    expect(sameReset(null, '2026-11-14T05:00:00Z')).toBe(false);
+    expect(sameReset('2026-11-14T05:00:00Z', undefined)).toBe(false);
+    expect(sameReset(null, null)).toBe(false);
+    expect(sameReset('soon', 'soon')).toBe(false);
+  });
+});
+
+describe('AccountRow reset times', () => {
+  it('shows one reset time when the weekly and Fable windows reset together', () => {
+    render(
+      <AccountRow
+        entry={entry({ subscription_type: 'ultra', cached_usage: ultraUsage(0) })}
+        thresholds={[75, 90]}
+      />,
+    );
+    expect(screen.getByText('Fable')).toBeInTheDocument();
+    expect(countdowns()).toHaveLength(1);
+  });
+
+  it('shows both reset times when they differ', () => {
+    render(
+      <AccountRow
+        entry={entry({ subscription_type: 'ultra', cached_usage: ultraUsage(2) })}
+        thresholds={[75, 90]}
+      />,
+    );
+    expect(countdowns()).toHaveLength(2);
+  });
+
+  it('keeps the Fable reset time when the weekly window has none', () => {
+    const usage = ultraUsage(0);
+    usage.snapshot.seven_day!.resets_at = null;
+    render(
+      <AccountRow entry={entry({ subscription_type: 'ultra', cached_usage: usage })} thresholds={[75, 90]} />,
+    );
+    expect(countdowns()).toHaveLength(1);
+  });
+});
+
+describe('AccountRow switch', () => {
+  it('Switch is visible without hovering', () => {
+    render(<AccountRow entry={entry({ is_active: false })} onSwap={vi.fn()} thresholds={[75, 90]} />);
+    const btn = screen.getByRole('button', { name: 'Switch to a@x.com' });
+    expect(btn.className).not.toMatch(/opacity-0/);
+    expect(btn).toHaveTextContent('Switch');
+  });
+
+  it('asks to switch when pressed', () => {
+    const onSwap = vi.fn();
+    render(<AccountRow entry={entry({ is_active: false })} onSwap={onSwap} thresholds={[75, 90]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to a@x.com' }));
+    expect(onSwap).toHaveBeenCalledTimes(1);
+  });
+
+  it('says so while it is switching, and cannot be pressed again', () => {
+    const onSwap = vi.fn();
+    render(
+      <AccountRow entry={entry({ is_active: false })} onSwap={onSwap} swapBusy swapping thresholds={[75, 90]} />,
+    );
+    const btn = screen.getByRole('button', { name: 'Switching to a@x.com' });
+    expect(btn).toHaveTextContent('Switching…');
+    expect(btn).toBeDisabled();
+    fireEvent.click(btn);
+    expect(onSwap).not.toHaveBeenCalled();
+  });
+
+  it('waits while another account is switching', () => {
+    render(<AccountRow entry={entry({ is_active: false })} onSwap={vi.fn()} swapBusy thresholds={[75, 90]} />);
+    const btn = screen.getByRole('button', { name: 'Switch to a@x.com' });
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveTextContent('Switch');
+  });
+
+  it('the active account has nothing to switch to', () => {
+    render(<AccountRow entry={entry({ is_active: true })} onSwap={vi.fn()} thresholds={[75, 90]} />);
+    expect(screen.queryByRole('button', { name: /^Switch/ })).toBeNull();
+    expect(screen.getByText('Active')).toBeInTheDocument();
   });
 });

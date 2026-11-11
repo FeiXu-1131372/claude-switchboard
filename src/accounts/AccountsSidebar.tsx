@@ -61,7 +61,7 @@ export function AccountsSidebar({
         className="
           flex h-[var(--shell-header-height)] shrink-0 items-center justify-between
           border-b border-[var(--color-rule)]
-          pl-[var(--space-lg)] pr-[var(--space-sm)]
+          pl-[var(--popover-pad)] pr-[var(--space-sm)]
           cursor-default select-none
         "
       >
@@ -92,7 +92,7 @@ export function AccountsSidebar({
 
       <div className="flex-1 overflow-y-auto">
         {accounts.length === 0 && (
-          <div className="px-[var(--space-lg)] py-[var(--space-md)] text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]">
+          <div className="px-[var(--popover-pad)] py-[var(--space-md)] text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]">
             No accounts managed yet.
           </div>
         )}
@@ -116,7 +116,7 @@ export function AccountsSidebar({
         })}
       </div>
 
-      <div className="shrink-0 px-[var(--space-lg)] py-[var(--space-md)] border-t border-[var(--color-rule)]">
+      <div className="shrink-0 px-[var(--popover-pad)] py-[var(--space-md)] border-t border-[var(--color-rule)]">
         <button
           type="button"
           onClick={openChooser}

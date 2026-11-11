@@ -65,16 +65,31 @@ function PlanBadge({ plan }: { plan: string | null }) {
   );
 }
 
+/** Two reset times closer than this are one window stamped twice. */
+const SAME_RESET_MS = 60_000;
+
+/** Whether two windows reset at the same moment. The API stamps the weekly
+ * and Fable windows a few microseconds apart even when they are one window,
+ * so "the same" is "within a minute". Missing or unreadable is never the same. */
+export function sameReset(a?: string | null, b?: string | null): boolean {
+  if (!a || !b) return false;
+  const gap = Math.abs(Date.parse(a) - Date.parse(b));
+  return Number.isFinite(gap) && gap <= SAME_RESET_MS;
+}
+
 function CompactMeter({
   label,
   data,
   warnAt,
   dangerAt,
+  showReset = true,
 }: {
   label: string;
   data: { utilization: number; resets_at?: string | null } | null;
   warnAt: number;
   dangerAt: number;
+  /** False when the line above already gives this meter's reset time. */
+  showReset?: boolean;
 }) {
   if (!data) return null;
   const clamped = Math.max(0, Math.min(100, data.utilization));
@@ -108,9 +123,11 @@ function CompactMeter({
           style={{ width: `${clamped}%` }}
         />
       </div>
-      <div className="min-h-[14px]">
-        {data.resets_at && <ResetCountdown resetsAt={data.resets_at} />}
-      </div>
+      {showReset && data.resets_at && (
+        <div>
+          <ResetCountdown resetsAt={data.resets_at} />
+        </div>
+      )}
     </div>
   );
 }
@@ -306,7 +323,7 @@ export function AccountRow({
         ${showSwap ? 'hover:bg-[var(--color-track)] focus-within:bg-[var(--color-track)]' : ''}
       `}
     >
-      <div className="flex items-center gap-[var(--space-xs)]">
+      <div className="relative flex items-center gap-[var(--space-xs)]">
         <span
           className={`flex-1 min-w-0 truncate text-[length:var(--text-body)] ${
             entry.is_active
@@ -335,29 +352,38 @@ export function AccountRow({
             Active
           </span>
         )}
+        {/* Always there: the one thing an inactive row is for should not
+            have to be found by hovering. Sentence case sets it apart from the
+            plan and Active tags, which are states, not actions. */}
         {showSwap && (
           <button
             type="button"
             onClick={onSwap}
             disabled={swapBusy}
+            aria-label={`${swapping ? 'Switching' : 'Switch'} to ${entry.email}`}
             className={`
               shrink-0 rounded-[var(--radius-pill)]
               border border-[var(--color-border)]
               px-[var(--space-xs)] py-[1px]
-              text-[length:var(--text-micro)] uppercase tracking-[var(--tracking-label)]
+              text-[length:var(--text-micro)] font-[var(--weight-medium)]
               text-[color:var(--color-text-secondary)]
-              transition-opacity duration-[var(--duration-fast)]
-              opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100
+              transition-[color,border-color] duration-[var(--duration-fast)]
               hover:text-[color:var(--color-accent-text)] hover:border-[color:var(--color-accent)]
-              disabled:cursor-not-allowed disabled:hover:text-[color:var(--color-text-muted)] disabled:hover:border-[color:var(--color-border)]
+              disabled:cursor-not-allowed disabled:text-[color:var(--color-text-muted)]
+              disabled:hover:text-[color:var(--color-text-muted)] disabled:hover:border-[color:var(--color-border)]
               focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] focus-visible:outline-offset-2
             `}
           >
-            {swapping ? 'Switching…' : 'Switch account'}
+            {swapping ? 'Switching…' : 'Switch'}
           </button>
         )}
+        {/* Hangs in the row's right margin, so the address keeps the width
+            this hover-only button would otherwise hold back at rest. */}
         {onRemove && (
-          <div ref={menuRef} className="relative shrink-0">
+          <div
+            ref={menuRef}
+            className="absolute left-full top-1/2 flex w-[var(--popover-pad)] -translate-y-1/2 justify-center"
+          >
             <button
               type="button"
               aria-label="More actions"
@@ -370,13 +396,13 @@ export function AccountRow({
               }}
               disabled={removing}
               className={`
-                inline-flex items-center justify-center w-[22px] h-[18px]
+                inline-flex items-center justify-center w-[var(--popover-pad)] h-[var(--popover-pad)]
                 rounded-[var(--radius-sm)]
                 text-[color:var(--color-text-muted)]
                 transition-[background,color,opacity] duration-[var(--duration-fast)]
                 ${menuOpen ? 'opacity-100 bg-[var(--color-bg-card)] text-[color:var(--color-text-secondary)]' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100'}
                 hover:bg-[var(--color-bg-card)] hover:text-[color:var(--color-text-secondary)]
-                focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] focus-visible:outline-offset-1
+                focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] focus-visible:-outline-offset-1
                 disabled:opacity-30 disabled:pointer-events-none
               `}
             >
@@ -543,6 +569,9 @@ export function AccountRow({
               data={sevenDayFable}
               warnAt={thresholds[0]}
               dangerAt={thresholds[1]}
+              // One weekly window shown as two meters: the 7d meter above
+              // already says when it resets.
+              showReset={!sameReset(sevenDay?.resets_at, sevenDayFable.resets_at)}
             />
           )}
           {staleHint && (
@@ -561,17 +590,17 @@ export function AccountRow({
       {/* Warm-up — collapsed to a one-line summary by default; expands to
           the full controls on click. The summary keeps the configured state
           glanceable without the section eating vertical space in every row. */}
-      <div className="border-t border-neutral-700/40 pt-2 mt-1">
+      <div className="mt-[var(--space-xs)] border-t border-[var(--color-border-subtle)] pt-[var(--space-sm)]">
         <button
           type="button"
           onClick={() => setWarmupOpen((v) => !v)}
           aria-expanded={warmupOpen}
-          className="flex w-full items-center justify-between gap-2"
+          className="flex w-full items-center justify-between gap-[var(--space-sm)]"
         >
-          <span className="text-[11px] text-neutral-400 uppercase tracking-wide">
+          <span className="text-[length:var(--text-label)] uppercase tracking-[var(--tracking-label)] text-[color:var(--color-text-muted)]">
             Warm-up
           </span>
-          <span className="flex items-center gap-1.5 text-[11px] text-neutral-500">
+          <span className="flex items-center gap-[var(--space-xs)] text-[length:var(--text-label)] text-[color:var(--color-text-muted)]">
             {warmupSummary}
             <ChevronRight
               size={12}
@@ -580,9 +609,9 @@ export function AccountRow({
           </span>
         </button>
         {warmupOpen && (
-          <div className="mt-2 space-y-2">
+          <div className="mt-[var(--space-sm)] flex flex-col gap-[var(--space-sm)]">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] text-neutral-400 uppercase tracking-wide">
+              <span className="text-[length:var(--text-label)] uppercase tracking-[var(--tracking-label)] text-[color:var(--color-text-muted)]">
                 Enabled
               </span>
               <WarmupToggle enabled={warmupEnabled} onToggle={handleToggle} />

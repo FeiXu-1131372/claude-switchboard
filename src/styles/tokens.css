@@ -288,7 +288,7 @@ body {
   --report-min-height: 560px;
   /* The expanded window's frame: one header row, and the accounts column. */
   --shell-header-height: 44px;
-  --sidebar-width: 272px;
+  --sidebar-width: 280px;
 
   /* Charts: the plot's height and the gutter its axis labels sit in. */
   --chart-height: 160px;
