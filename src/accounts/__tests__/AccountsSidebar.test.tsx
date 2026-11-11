@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useAppStore } from '../../lib/store';
 
@@ -27,6 +27,13 @@ const DEFAULT_MOCK_STATE = () => ({
 
 let mockState = DEFAULT_MOCK_STATE();
 
+const windowMock = vi.hoisted(() => ({ getCurrentWindow: vi.fn() }));
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: windowMock.getCurrentWindow,
+  LogicalPosition: class {},
+}));
+vi.mock('@tauri-apps/api/event', () => ({ emit: vi.fn(), listen: vi.fn() }));
+
 vi.mock('../useAccountManagement', () => ({
   useAccountManagement: () => mockState,
 }));
@@ -54,7 +61,35 @@ import { AccountsSidebar } from '../AccountsSidebar';
 describe('AccountsSidebar', () => {
   beforeEach(() => {
     mockState = DEFAULT_MOCK_STATE();
+    windowMock.getCurrentWindow.mockReset().mockImplementation(() => {
+      throw new Error('outside Tauri');
+    });
     useAppStore.getState().resetModalStack?.();
+  });
+
+  it('offers to hide itself when it is given a way to', () => {
+    const onHide = vi.fn();
+    render(<AccountsSidebar onHide={onHide} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Hide accounts' }));
+    expect(onHide).toHaveBeenCalledTimes(1);
+  });
+
+  it('has no hide button on its own', () => {
+    render(<AccountsSidebar />);
+    expect(screen.queryByRole('button', { name: 'Hide accounts' })).toBeNull();
+  });
+
+  it('its top strip moves the window, its buttons do not', () => {
+    if (!window.PointerEvent) {
+      window.PointerEvent = class extends MouseEvent {
+        pointerId = 1;
+      } as unknown as typeof PointerEvent;
+    }
+    render(<AccountsSidebar onHide={() => {}} />);
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Refresh all' }), { button: 0 });
+    expect(windowMock.getCurrentWindow).not.toHaveBeenCalled();
+    fireEvent.pointerDown(screen.getByText(/^accounts$/i), { button: 0 });
+    expect(windowMock.getCurrentWindow).toHaveBeenCalledTimes(1);
   });
 
   it('renders an ACCOUNTS label', () => {

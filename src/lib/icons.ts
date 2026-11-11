@@ -71,3 +71,4 @@ export { Settings as IconSettings } from 'lucide-react';
 export { TrendingUp as IconTrends } from 'lucide-react';
 export { TriangleAlert as IconWarning } from 'lucide-react';
 export { Zap as IconLive } from 'lucide-react';
+export { PanelLeftClose as IconSidebarHide, PanelLeftOpen as IconSidebarShow } from 'lucide-react';

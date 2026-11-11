@@ -78,8 +78,20 @@ interface ReportState extends SavedView {
 
 const STORAGE_KEY = 'report-view-v1';
 
+/** Tabs an older build saved under an id this build no longer has, and the
+ * tab each one's content now lives in. Applied when the saved tab is read, so
+ * an upgrade reopens on the same content instead of falling back to the first
+ * tab. */
+export const LEGACY_TAB: Record<string, string> = {
+  browse: 'sessions',
+  models: 'breakdown',
+  projects: 'breakdown',
+  cache: 'breakdown',
+  heatmap: 'trends',
+};
+
 const DEFAULT_SAVED: SavedView = {
-  activeTab: 'browse',
+  activeTab: 'sessions',
   range: '30d',
   metric: 'cost',
   sidebarCollapsed: false,
@@ -97,7 +109,12 @@ function readSaved(): SavedView {
   }
   const saved = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   return {
-    activeTab: typeof saved.activeTab === 'string' ? saved.activeTab : DEFAULT_SAVED.activeTab,
+    activeTab:
+      typeof saved.activeTab !== 'string'
+        ? DEFAULT_SAVED.activeTab
+        : Object.hasOwn(LEGACY_TAB, saved.activeTab)
+          ? LEGACY_TAB[saved.activeTab]
+          : saved.activeTab,
     range:
       typeof saved.range === 'string' && saved.range in RANGE_DAYS
         ? (saved.range as ReportRange)

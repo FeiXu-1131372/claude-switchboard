@@ -4,6 +4,7 @@ import {
   RANGE_DAYS,
   rehydrateReportStore,
   useReportStore,
+  LEGACY_TAB,
 } from './reportState';
 
 const KEY = 'report-view-v1';
@@ -17,7 +18,7 @@ afterEach(() => vi.restoreAllMocks());
 describe('useReportStore', () => {
   it('starts on the defaults', () => {
     const s = useReportStore.getState();
-    expect(s.activeTab).toBe('browse');
+    expect(s.activeTab).toBe('sessions');
     expect(s.range).toBe('30d');
     expect(s.metric).toBe('cost');
     expect(s.sidebarCollapsed).toBe(false);
@@ -42,7 +43,7 @@ describe('useReportStore', () => {
     });
 
     // A reload: the in-memory state is gone, only storage is left.
-    useReportStore.setState({ activeTab: 'browse', range: '30d', metric: 'cost', sidebarCollapsed: false });
+    useReportStore.setState({ activeTab: 'sessions', range: '30d', metric: 'cost', sidebarCollapsed: false });
     rehydrateReportStore();
     expect(useReportStore.getState()).toMatchObject({
       activeTab: 'trends',
@@ -72,13 +73,13 @@ describe('useReportStore', () => {
     expect(() => useReportStore.getState().setActiveTab('cost')).not.toThrow();
     expect(useReportStore.getState().activeTab).toBe('cost');
     expect(() => rehydrateReportStore()).not.toThrow();
-    expect(useReportStore.getState().activeTab).toBe('browse');
+    expect(useReportStore.getState().activeTab).toBe('sessions');
   });
 
   it('ignores a corrupt saved value', () => {
     localStorage.setItem(KEY, 'not json');
     rehydrateReportStore();
-    expect(useReportStore.getState().activeTab).toBe('browse');
+    expect(useReportStore.getState().activeTab).toBe('sessions');
     expect(useReportStore.getState().range).toBe('30d');
   });
 
@@ -89,7 +90,7 @@ describe('useReportStore', () => {
     );
     rehydrateReportStore();
     expect(useReportStore.getState()).toMatchObject({
-      activeTab: 'browse',
+      activeTab: 'sessions',
       range: '30d',
       metric: 'cost',
       sidebarCollapsed: false,
@@ -110,5 +111,29 @@ describe('useReportStore', () => {
     useReportStore.getState().setScrollTop('cost', 240);
     useReportStore.getState().setScrollTop('trends', 12);
     expect(useReportStore.getState().scrollTop).toEqual({ cost: 240, trends: 12 });
+  });
+
+  it.each([
+    ['browse', 'sessions'],
+    ['models', 'breakdown'],
+    ['projects', 'breakdown'],
+    ['cache', 'breakdown'],
+    ['heatmap', 'trends'],
+  ])('a tab saved as "%s" by an older build is read as "%s"', (saved, now) => {
+    localStorage.setItem(KEY, JSON.stringify({ activeTab: saved, range: '90d' }));
+    rehydrateReportStore();
+    expect(useReportStore.getState().activeTab).toBe(now);
+    // The rest of what was saved is untouched.
+    expect(useReportStore.getState().range).toBe('90d');
+  });
+
+  it('names every tab that was folded into another', () => {
+    expect(LEGACY_TAB).toEqual({
+      browse: 'sessions',
+      models: 'breakdown',
+      projects: 'breakdown',
+      cache: 'breakdown',
+      heatmap: 'trends',
+    });
   });
 });

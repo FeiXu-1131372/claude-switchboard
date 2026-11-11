@@ -286,6 +286,9 @@ body {
    * width is 100%. Min-height prevents a squished layout if the user shrinks. */
   --report-width: 100%;
   --report-min-height: 560px;
+  /* The expanded window's frame: one header row, and the accounts column. */
+  --shell-header-height: 44px;
+  --sidebar-width: 272px;
 
   /* Charts: the plot's height and the gutter its axis labels sit in. */
   --chart-height: 160px;

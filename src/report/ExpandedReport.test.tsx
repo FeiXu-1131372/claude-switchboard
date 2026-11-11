@@ -1,4 +1,5 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import type { Ref } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const ipcMock = vi.hoisted(() => ({
@@ -33,13 +34,20 @@ vi.mock('../providers/ProvidersTab', () => ({ ProvidersTab: () => <div>Providers
 vi.mock('../sessions/SessionsBrowserTab', () => ({
   SessionsBrowserTab: () => <div>SessionsBrowserTab stub</div>,
 }));
-vi.mock('../accounts/AccountsSidebar', () => ({ AccountsSidebar: () => <aside>Accounts</aside> }));
+vi.mock('../accounts/AccountsSidebar', () => ({
+  AccountsSidebar: ({ onHide, hideButtonRef }: { onHide?: () => void; hideButtonRef?: Ref<HTMLButtonElement> }) => (
+    <aside>
+      Accounts
+      <button ref={hideButtonRef} type="button" aria-label="Hide accounts" onClick={onHide} />
+    </aside>
+  ),
+}));
 vi.mock('../components/modals/SettingsModal', () => ({
   SettingsModal: () => <div role="dialog">Settings stub</div>,
 }));
 
 import { ExpandedReport } from './ExpandedReport';
-import { useReportStore } from './reportState';
+import { rehydrateReportStore, useReportStore } from './reportState';
 
 beforeEach(() => {
   // jsdom has no ResizeObserver; the tab underline measures with one.
@@ -88,12 +96,85 @@ describe('ExpandedReport shell', () => {
     }
   });
 
-  it('the header names no window of its own: each tab states its range', () => {
+  it('the header is one row: the tabs, then the window controls', () => {
     render(<ExpandedReport />);
+    const header = screen.getByRole('banner');
+    expect(within(header).getAllByRole('tab')).toHaveLength(5);
+    for (const name of ['Refresh', 'Settings', 'Collapse details', 'Close']) {
+      expect(within(header).getByRole('button', { name })).toBeInTheDocument();
+    }
+  });
+
+  it('there is no separate title strip', () => {
+    render(<ExpandedReport />);
+    expect(screen.queryByText('Claude')).toBeNull();
+    // Nor a window of days in the header: each tab states its own range.
     for (const tab of screen.getAllByRole('tab')) {
       fireEvent.click(tab);
-      expect(screen.getByText(/· Live/).textContent).not.toMatch(/days/);
+      expect(screen.getByRole('banner').textContent).not.toMatch(/days|Live/);
     }
+  });
+
+  it('shows Stale only when data is stale', () => {
+    const fresh = render(<ExpandedReport />);
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByText('Stale')).toBeNull();
+    fresh.unmount();
+
+    appState.stale = true;
+    render(<ExpandedReport />);
+    expect(within(screen.getByRole('banner')).getByRole('status')).toHaveTextContent('Stale');
+  });
+
+  it.each([
+    ['heatmap', 'Trends'],
+    ['models', 'Breakdown'],
+    ['projects', 'Breakdown'],
+    ['cache', 'Breakdown'],
+    ['browse', 'Sessions'],
+  ])('a saved "%s" tab opens %s', (saved, label) => {
+    localStorage.setItem('report-view-v1', JSON.stringify({ activeTab: saved }));
+    rehydrateReportStore();
+    render(<ExpandedReport />);
+    expect(screen.getByRole('tab', { name: label })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('the sidebar can be collapsed and brought back, and the choice is remembered', () => {
+    render(<ExpandedReport />);
+    expect(screen.queryByRole('button', { name: 'Show accounts' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Hide accounts' }));
+    expect(screen.queryByText('Accounts')).toBeNull();
+    expect(useReportStore.getState().sidebarCollapsed).toBe(true);
+    expect(JSON.parse(localStorage.getItem('report-view-v1')!).sidebarCollapsed).toBe(true);
+
+    fireEvent.click(within(screen.getByRole('banner')).getByRole('button', { name: 'Show accounts' }));
+    expect(screen.getByText('Accounts')).toBeInTheDocument();
+    expect(useReportStore.getState().sidebarCollapsed).toBe(false);
+    expect(screen.queryByRole('button', { name: 'Show accounts' })).toBeNull();
+  });
+
+  it('opens with the sidebar hidden if it was left hidden', () => {
+    useReportStore.setState({ sidebarCollapsed: true });
+    render(<ExpandedReport />);
+    expect(screen.queryByText('Accounts')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Show accounts' })).toBeInTheDocument();
+  });
+
+  it('hiding or showing the sidebar leaves focus on the button that undoes it', () => {
+    render(<ExpandedReport />);
+    const hide = screen.getByRole('button', { name: 'Hide accounts' });
+    hide.focus();
+    fireEvent.click(hide);
+    const show = screen.getByRole('button', { name: 'Show accounts' });
+    expect(show).toHaveFocus();
+    fireEvent.click(show);
+    expect(screen.getByRole('button', { name: 'Hide accounts' })).toHaveFocus();
+  });
+
+  it('does not take focus for the sidebar button when the window opens', () => {
+    useReportStore.setState({ sidebarCollapsed: true });
+    render(<ExpandedReport />);
+    expect(screen.getByRole('button', { name: 'Show accounts' })).not.toHaveFocus();
   });
 
   it('shows the chosen tab', () => {
@@ -194,9 +275,9 @@ describe('ExpandedReport shell', () => {
   it('the panel is labelled by its tab', () => {
     render(<ExpandedReport />);
     const panel = screen.getByRole('tabpanel');
-    expect(panel).toHaveAttribute('aria-labelledby', 'report-tab-browse');
+    expect(panel).toHaveAttribute('aria-labelledby', 'report-tab-sessions');
     expect(panel).toHaveAttribute('tabindex', '0');
-    expect(screen.getByRole('tab', { name: 'Sessions' })).toHaveAttribute('id', 'report-tab-browse');
+    expect(screen.getByRole('tab', { name: 'Sessions' })).toHaveAttribute('id', 'report-tab-sessions');
     expect(screen.getByRole('tab', { name: 'Sessions' })).toHaveAttribute('aria-controls', panel.id);
 
     fireEvent.click(screen.getByRole('tab', { name: 'Trends' }));

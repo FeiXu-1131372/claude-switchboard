@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState, type KeyboardEvent, type UIEvent } from 'react';
 import { motion } from 'framer-motion';
+import { Badge } from '../components/ui/Badge';
 import { IconButton } from '../components/ui/IconButton';
 import { SessionsTab } from './SessionsTab';
 import { TrendsTab } from './TrendsTab';
@@ -7,7 +8,7 @@ import { BreakdownTab } from './BreakdownTab';
 import { useAppStore } from '../lib/store';
 import { ipc } from '../lib/ipc';
 import { tabSlide } from '../lib/motion';
-import { IconRefresh, IconCollapse, IconSettings, X } from '../lib/icons';
+import { IconRefresh, IconCollapse, IconSettings, IconSidebarShow, X } from '../lib/icons';
 import { handleDragStart, closeWindow } from '../lib/window-chrome';
 import { AccountsSidebar } from '../accounts/AccountsSidebar';
 import { SettingsModal } from '../components/modals/SettingsModal';
@@ -16,7 +17,7 @@ import { SessionsBrowserTab } from '../sessions/SessionsBrowserTab';
 import { useReportStore } from './reportState';
 
 const TAB_CONFIG = [
-  { id: 'browse', label: 'Sessions' },
+  { id: 'sessions', label: 'Sessions' },
   { id: 'cost', label: 'Cost' },
   { id: 'trends', label: 'Trends' },
   { id: 'breakdown', label: 'Breakdown' },
@@ -24,7 +25,7 @@ const TAB_CONFIG = [
 ] as const;
 
 const TAB_COMPONENTS: Record<string, React.FC> = {
-  browse: SessionsBrowserTab,
+  sessions: SessionsBrowserTab,
   cost: SessionsTab,
   trends: TrendsTab,
   breakdown: BreakdownTab,
@@ -34,9 +35,9 @@ const TAB_COMPONENTS: Record<string, React.FC> = {
 const TAB_IDS: readonly string[] = TAB_CONFIG.map((t) => t.id);
 
 export function ExpandedReport() {
-  // The tab is remembered across restarts. A saved id this build does not
-  // have (an older or newer build wrote it) opens the first tab instead of a
-  // blank panel.
+  // The tab is remembered across restarts. The store already reads a tab an
+  // older build folded into another as that other tab; any other id this
+  // build does not have opens the first tab instead of a blank panel.
   const savedTab = useReportStore((s) => s.activeTab);
   const setActiveTab = useReportStore((s) => s.setActiveTab);
   const activeTab = TAB_IDS.includes(savedTab) ? savedTab : TAB_IDS[0];
@@ -46,6 +47,28 @@ export function ExpandedReport() {
   const prevTabRef = useRef<string>(activeTab);
   const stale = useAppStore((s) => s.stale);
   const toggleViewMode = useAppStore((s) => s.toggleViewMode);
+
+  /* ── Accounts column ──
+   * Hidden, it gives its width to the content. The button that hides it goes
+   * away with it, so focus is handed to the one that brings it back (and the
+   * other way round) rather than dropped. Only after a press: a window that
+   * opens with the column hidden takes no focus for it. */
+  const sidebarCollapsed = useReportStore((s) => s.sidebarCollapsed);
+  const setSidebarCollapsed = useReportStore((s) => s.setSidebarCollapsed);
+  const showSidebarRef = useRef<HTMLButtonElement>(null);
+  const hideSidebarRef = useRef<HTMLButtonElement>(null);
+  const handFocusOn = useRef(false);
+
+  function setSidebar(collapsed: boolean) {
+    handFocusOn.current = true;
+    setSidebarCollapsed(collapsed);
+  }
+
+  useLayoutEffect(() => {
+    if (!handFocusOn.current) return;
+    handFocusOn.current = false;
+    (sidebarCollapsed ? showSidebarRef : hideSidebarRef).current?.focus();
+  }, [sidebarCollapsed]);
 
   const TabComponent = TAB_COMPONENTS[activeTab] ?? SessionsTab;
 
@@ -136,26 +159,49 @@ export function ExpandedReport() {
           background: 'var(--color-bg-base)',
         }}
       >
-        <AccountsSidebar />
+        {!sidebarCollapsed && (
+          <AccountsSidebar onHide={() => setSidebar(true)} hideButtonRef={hideSidebarRef} />
+        )}
         <div className="flex flex-1 flex-col overflow-hidden min-w-0">
-          {/* Header — generous padding, brand-warm tinted strip with hairline below */}
+          {/* One row: where you are on the left, the window's own controls on
+              the right, and between them room to take hold of the window. */}
           <header
             onPointerDown={handleDragStart}
             className="
-              relative flex items-center justify-between gap-[var(--space-md)]
-              px-[var(--space-2xl)] pt-[var(--space-xl)] pb-[var(--space-lg)]
-              shrink-0 cursor-default select-none
+              flex h-[var(--shell-header-height)] shrink-0 items-stretch gap-[var(--space-md)]
+              border-b border-[var(--color-rule)]
+              pl-[var(--space-2xl)] pr-[var(--space-md)]
+              cursor-default select-none
             "
           >
-            <div className="flex items-center gap-[var(--space-xs)] pointer-events-none">
-              <span className="text-[length:var(--text-label)] font-[var(--weight-semibold)] text-[color:var(--color-text-secondary)] tracking-[var(--tracking-label)] uppercase">
-                Claude
-              </span>
-              <span className="text-[length:var(--text-label)] tracking-[var(--tracking-label)] uppercase text-[color:var(--color-text-muted)]">
-                · {stale ? 'Stale' : 'Live'}
-              </span>
-            </div>
-            <div className="flex items-center gap-[2px]">
+            {sidebarCollapsed && (
+              <IconButton
+                ref={showSidebarRef}
+                label="Show accounts"
+                // Pulled left so its glyph, not its box, lines up with the content.
+                className="-ml-[var(--space-sm)] self-center"
+                onClick={() => setSidebar(false)}
+              >
+                <IconSidebarShow size={14} />
+              </IconButton>
+            )}
+            <TabBar
+              activeId={activeTab}
+              onSelect={setActiveTab}
+              tabs={TAB_CONFIG.map((t) => ({ id: t.id, label: t.label }))}
+            />
+            <div className="flex-1" />
+            <div className="flex items-center gap-[var(--space-2xs)]">
+              {stale && (
+                <Badge
+                  variant="warn"
+                  role="status"
+                  title="The last refresh did not complete, so these figures may be out of date."
+                  className="mr-[var(--space-xs)]"
+                >
+                  Stale
+                </Badge>
+              )}
               <IconButton label="Refresh" onClick={handleRefresh}>
                 <motion.span
                   animate={refreshing ? { rotate: 360 } : { rotate: 0 }}
@@ -180,13 +226,6 @@ export function ExpandedReport() {
               </IconButton>
             </div>
           </header>
-
-          {/* Tab bar — text-only, with a single sliding underline indicator */}
-          <TabBar
-            activeId={activeTab}
-            onSelect={setActiveTab}
-            tabs={TAB_CONFIG.map((t) => ({ id: t.id, label: t.label }))}
-          />
 
           {/* Tab content */}
           <div
@@ -238,6 +277,7 @@ function tabDomId(id: string): string {
  * Horizontal text nav with one moving underline that slides between tabs
  * (Apple's site nav, Linear's view switcher). Layout-tracked via refs so the
  * underline matches the actual rendered button width — no manual measuring.
+ * It fills the header's height, so the underline rests on the header's rule.
  *
  * Keyboard follows the ARIA tabs pattern: the tab list is one stop in the Tab
  * order (the selected tab), and Left/Right/Home/End move between tabs,
@@ -303,12 +343,7 @@ function TabBar({
     <div
       ref={containerRef}
       role="tablist"
-      className="
-        relative flex items-center gap-[var(--space-xl)]
-        px-[var(--space-2xl)]
-        border-b border-[var(--color-rule)]
-        shrink-0
-      "
+      className="relative flex shrink-0 items-stretch gap-[var(--space-xl)]"
     >
       {tabs.map((tab) => {
         const active = activeId === tab.id;
@@ -328,15 +363,13 @@ function TabBar({
             onKeyDown={handleKeyDown}
             className={[
               'relative inline-flex items-center',
-              'h-[44px]',
               // p-0 border-0 are explicit because WKWebView (Tauri on macOS)
               // gives <button> a default 2px–6px UA padding that Tailwind
               // preflight does not fully reset, inflating the measured
               // bounding rect past the visible text and dragging the sliding
               // underline indicator with it.
               'p-0 border-0 bg-transparent',
-              'text-[length:var(--text-label)] font-[var(--weight-medium)]',
-              'tracking-[var(--tracking-label)] uppercase',
+              'text-[length:var(--text-body)] font-[var(--weight-medium)]',
               'transition-colors duration-[var(--duration-fast)] ease-[var(--ease-out)]',
               'cursor-default',
               active
