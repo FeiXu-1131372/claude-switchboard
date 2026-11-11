@@ -230,25 +230,32 @@ describe('SessionsTab (Cost) — range and paging', () => {
     expect(await screen.findByText('Last 7 days · 1 session')).toBeInTheDocument();
   });
 
+  // These lists are hundreds of rows long. A role or accessible-name query
+  // works out the role and name of every element on the page, which takes
+  // seconds per call on a CI runner, so rows are counted from the DOM and
+  // controls are found by their text.
+  const rowsShown = () => document.querySelectorAll('button[aria-expanded="false"]').length;
+
   it('shows 250 rows, then 250 more on request', async () => {
     ipcMock.getSessionCosts.mockResolvedValue(manyRows(600));
     render(<SessionsTab />);
-    expect(await screen.findAllByRole('button', { expanded: false })).toHaveLength(250);
-    expect(screen.getByText('250 of 600 rows')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Show 250 more' }));
-    expect(screen.getAllByRole('button', { expanded: false })).toHaveLength(500);
+    expect(await screen.findByText('250 of 600 rows')).toBeInTheDocument();
+    expect(rowsShown()).toBe(250);
+    fireEvent.click(screen.getByText('Show 250 more'));
+    expect(rowsShown()).toBe(500);
     // What is left is fewer than a page, and the button says how many.
-    fireEvent.click(screen.getByRole('button', { name: 'Show 100 more' }));
-    expect(screen.getAllByRole('button', { expanded: false })).toHaveLength(600);
-    expect(screen.queryByRole('button', { name: /^Show \d+ more$/ })).toBeNull();
+    fireEvent.click(screen.getByText('Show 100 more'));
+    expect(rowsShown()).toBe(600);
+    expect(screen.queryByText(/^Show \d+ more$/)).toBeNull();
     expect(screen.queryByText(/of 600 rows/)).toBeNull();
   });
 
   it('offers no paging for a list that fits', async () => {
     ipcMock.getSessionCosts.mockResolvedValue(manyRows(250));
     render(<SessionsTab />);
-    expect(await screen.findAllByRole('button', { expanded: false })).toHaveLength(250);
-    expect(screen.queryByRole('button', { name: /^Show \d+ more$/ })).toBeNull();
+    await screen.findByText('Last 30 days · 250 sessions');
+    expect(rowsShown()).toBe(250);
+    expect(screen.queryByText(/^Show \d+ more$/)).toBeNull();
   });
 
   it('the toolbar total covers every row, not only the visible ones', async () => {
@@ -261,7 +268,7 @@ describe('SessionsTab (Cost) — range and paging', () => {
   it('a day’s total covers its rows that are not shown yet', async () => {
     ipcMock.getSessionCosts.mockResolvedValue(manyRows(600));
     render(<SessionsTab />);
-    await screen.findAllByRole('button', { expanded: false });
+    await screen.findByText('250 of 600 rows');
     // 250 rows of the first day's 300 are on screen; the day still cost $300.
     expect(screen.getAllByTestId('day-total').map((d) => d.textContent)).toEqual(['$300.00']);
   });
@@ -269,12 +276,12 @@ describe('SessionsTab (Cost) — range and paging', () => {
   it('goes back to the first page when the range changes', async () => {
     ipcMock.getSessionCosts.mockResolvedValue(manyRows(600));
     render(<SessionsTab />);
-    await screen.findAllByRole('button', { expanded: false });
-    fireEvent.click(screen.getByRole('button', { name: 'Show 250 more' }));
-    expect(screen.getAllByRole('button', { expanded: false })).toHaveLength(500);
-    fireEvent.click(screen.getByRole('button', { name: '90d' }));
+    await screen.findByText('250 of 600 rows');
+    fireEvent.click(screen.getByText('Show 250 more'));
+    expect(rowsShown()).toBe(500);
+    fireEvent.click(screen.getByText('90d'));
     await screen.findByText('Last 90 days · 600 sessions');
-    expect(screen.getAllByRole('button', { expanded: false })).toHaveLength(250);
+    expect(rowsShown()).toBe(250);
   });
 
   it('keeps the range control when the range holds nothing', async () => {
