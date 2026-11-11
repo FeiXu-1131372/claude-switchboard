@@ -312,8 +312,8 @@ function buildLedger(spec: ScaleSpec, now: Date): UsageCell[] {
 }
 
 /** Events for the given cells. Recent cells become several API calls, some
- * from subagents; older ones a single call, which is all the old Heatmap tab
- * needed from them. Costs and tokens always sum back to the cell. */
+ * from subagents; older ones a single call.
+ * Costs and tokens always sum back to the cell. */
 function eventsOf(cells: UsageCell[], now: Date): StoredSessionEvent[] {
   const recentFrom = now.getTime() - 7 * DAY_MS;
   const events: StoredSessionEvent[] = [];

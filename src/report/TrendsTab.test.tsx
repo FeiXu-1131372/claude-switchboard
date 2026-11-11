@@ -39,6 +39,9 @@ vi.mock('../lib/store', async () => {
   return { ...actual, useAppStore };
 });
 
+// The calendar loads its own data; here it only has to be in the right place.
+vi.mock('./ActivityCalendar', () => ({ ActivityCalendar: () => <div data-testid="activity-calendar" /> }));
+
 import { TrendsTab, fillDays, xLabel } from './TrendsTab';
 import { useReportStore } from './reportState';
 
@@ -291,7 +294,8 @@ describe('TrendsTab — scale, colour and toolbar', () => {
   it('puts the total and average in the toolbar', async () => {
     render(<TrendsTab />); // $4.82 + $1.10 over two days
     expect(await screen.findByText('$5.92')).toBeInTheDocument();
-    expect(screen.getByText(/\$2\.96\/day/)).toBeInTheDocument();
+    // Two of the thirty days had any use, and the average says it is over those.
+    expect(screen.getByText('Last 30 days · 2 active · avg $2.96/day')).toBeInTheDocument();
     expect(screen.queryByText(/total$/)).toBeNull();
   });
 
@@ -351,5 +355,24 @@ describe('TrendsTab — the time axis', () => {
       key: d, start: d, end: d, input_tokens: 0, output_tokens: 0, cost_usd: 0,
     }));
     expect(buckets.map((b, i) => xLabel(b, i, buckets, '7d'))).toEqual(['Oct 29', '30', '31', 'Nov 1', '2']);
+  });
+});
+
+describe('TrendsTab — activity calendar', () => {
+  it('sits under the chart', async () => {
+    ipcMock.getDailyTrends.mockResolvedValue(TRENDS);
+    ipcMock.getDailyModelBreakdown.mockResolvedValue(BREAKDOWN);
+    render(<TrendsTab />);
+    const axis = await screen.findByTestId('chart-axis');
+    const calendar = screen.getByTestId('activity-calendar');
+    expect(axis.compareDocumentPosition(calendar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('is still there when the chosen range is empty', async () => {
+    ipcMock.getDailyTrends.mockResolvedValue([]);
+    ipcMock.getDailyModelBreakdown.mockResolvedValue([]);
+    render(<TrendsTab />);
+    expect(await screen.findByText('Nothing in this range')).toBeInTheDocument();
+    expect(screen.getByTestId('activity-calendar')).toBeInTheDocument();
   });
 });

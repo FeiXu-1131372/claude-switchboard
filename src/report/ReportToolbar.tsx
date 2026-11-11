@@ -44,18 +44,23 @@ export function ReportToolbar({
   const setMetric = useReportStore((s) => s.setMetric);
 
   return (
-    <div className="flex flex-wrap items-end justify-between gap-x-[var(--space-md)] gap-y-[var(--space-sm)]">
-      <div aria-live="polite" className="flex min-w-0 flex-col gap-[var(--space-2xs)]">
+    <div className="flex items-end justify-between gap-[var(--space-md)]">
+      {/* The figure gives way, not the controls: they stay on this row and in
+          the same place on every tab, and a long caption is cut short. */}
+      <div aria-live="polite" className="flex min-w-0 flex-1 flex-col gap-[var(--space-2xs)]">
         <span className="mono tabular-nums text-[length:var(--text-title)] font-[var(--weight-semibold)] text-[color:var(--color-text)]">
           {figure}
         </span>
         {caption && (
-          <span className="truncate text-[length:var(--text-label)] text-[color:var(--color-text-muted)]">
+          <span
+            title={caption}
+            className="truncate text-[length:var(--text-label)] text-[color:var(--color-text-muted)]"
+          >
             {caption}
           </span>
         )}
       </div>
-      <div className="flex flex-wrap items-center gap-[var(--space-sm)]">
+      <div className="flex shrink-0 items-center gap-[var(--space-sm)]">
         {children}
         {showMetric && (
           <SegmentedControl label="Metric" value={metric} options={METRICS} onChange={setMetric} />

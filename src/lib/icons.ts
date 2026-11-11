@@ -55,7 +55,6 @@ export { Activity as IconPolling } from 'lucide-react';
 export { AlertTriangle as IconDanger } from 'lucide-react';
 export { ArrowRight as IconOpen } from 'lucide-react';
 export { BarChart3 as IconChart } from 'lucide-react';
-export { Calendar as IconHeatmap } from 'lucide-react';
 export { Clock as IconTimer } from 'lucide-react';
 export { CornerDownRight as IconSubagent } from 'lucide-react';
 // Compaction boundary in a session transcript — the context was summarised

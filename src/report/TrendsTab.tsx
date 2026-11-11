@@ -11,6 +11,7 @@ import { ipc } from '../lib/ipc';
 import { useTabData } from '../lib/useTabData';
 import { useAppStore } from '../lib/store';
 import type { DailyBucket, DailyModelBucket, ModelStats } from '../lib/types';
+import { ActivityCalendar } from './ActivityCalendar';
 import { formatAxis, niceTicks } from './chartScale';
 import { MODEL_COLOR, MODEL_VARIANT, modelKey, shortName } from './modelDisplay';
 import { ReportToolbar } from './ReportToolbar';
@@ -272,8 +273,11 @@ export function TrendsTab() {
   const sparse = granularity === 'day' && active.length < days;
   const caption = [
     RANGE_LABEL[range],
-    `avg ${show(average)}${per}${sparse ? ` on ${active.length} active ${active.length === 1 ? 'day' : 'days'}` : ''}`,
-  ].join(' · ');
+    sparse ? `${active.length} active` : null,
+    `avg ${show(average)}${per}`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   const toolbar = (
     <ReportToolbar
@@ -302,6 +306,7 @@ export function TrendsTab() {
           title="Nothing in this range"
           description="Usage appears here day by day as you use Claude Code."
         />
+        <ActivityCalendar />
       </div>
     );
   }
@@ -468,6 +473,8 @@ export function TrendsTab() {
           </div>
         </Card>
       )}
+
+      <ActivityCalendar />
     </div>
   );
 }

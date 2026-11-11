@@ -5,7 +5,6 @@ import { SessionsTab, WINDOW_DAYS } from './SessionsTab';
 import { ModelsTab } from './ModelsTab';
 import { TrendsTab } from './TrendsTab';
 import { ProjectsTab } from './ProjectsTab';
-import { HeatmapTab } from './HeatmapTab';
 import { CacheTab } from './CacheTab';
 import { useAppStore } from '../lib/store';
 import { ipc } from '../lib/ipc';
@@ -24,15 +23,13 @@ const TAB_CONFIG = [
   { id: 'models', label: 'Models' },
   { id: 'trends', label: 'Trends' },
   { id: 'projects', label: 'Projects' },
-  { id: 'heatmap', label: 'Heatmap' },
   { id: 'cache', label: 'Cache' },
   { id: 'providers', label: 'Providers' },
 ] as const;
 
 /** How far back each tab actually queries. The header used to hardcode
- *  "last 30 days" for every tab, which was wrong for Cost (7) and Heatmap
- *  (180) — a Cost total that omitted three weeks of spend was labelled as if
- *  it included them. Keep these in step with the `ipc.get*(n)` call in each
+ *  "last 30 days" for every tab, which was wrong for Cost (7) — a Cost total
+ *  that omitted three weeks of spend was labelled as if it included them. Keep these in step with the `ipc.get*(n)` call in each
  *  tab; `undefined` means the tab has no time window of its own. */
 const TAB_WINDOW_DAYS: Record<string, number | undefined> = {
   browse: undefined,
@@ -42,7 +39,6 @@ const TAB_WINDOW_DAYS: Record<string, number | undefined> = {
   // would be wrong as soon as the user changes it.
   trends: undefined,
   projects: 30,
-  heatmap: 180,
   cache: 30,
   providers: undefined,
 };
@@ -53,7 +49,6 @@ const TAB_COMPONENTS: Record<string, React.FC> = {
   models: ModelsTab,
   trends: TrendsTab,
   projects: ProjectsTab,
-  heatmap: HeatmapTab,
   cache: CacheTab,
   providers: ProvidersTab,
 };

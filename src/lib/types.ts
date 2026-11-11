@@ -27,8 +27,3 @@ export type { StoredSessionEvent as SessionEvent } from './generated/bindings';
 export type { StoredCompaction as Compaction } from './generated/bindings';
 
 // Frontend-only types — no Rust equivalent, not in generated bindings.
-export interface HeatmapCell {
-  date: string;
-  value: number;
-  level: 0 | 1 | 2 | 3 | 4;
-}

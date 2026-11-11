@@ -30,7 +30,6 @@ vi.mock('./SessionsTab', () => ({ SessionsTab: () => <div>SessionsTab stub</div>
 vi.mock('./ModelsTab', () => ({ ModelsTab: () => <div>ModelsTab stub</div> }));
 vi.mock('./TrendsTab', () => ({ TrendsTab: () => <div>TrendsTab stub</div> }));
 vi.mock('./ProjectsTab', () => ({ ProjectsTab: () => <div>ProjectsTab stub</div> }));
-vi.mock('./HeatmapTab', () => ({ HeatmapTab: () => <div>HeatmapTab stub</div> }));
 vi.mock('./CacheTab', () => ({ CacheTab: () => <div>CacheTab stub</div> }));
 vi.mock('../providers/ProvidersTab', () => ({ ProvidersTab: () => <div>ProvidersTab stub</div> }));
 vi.mock('../sessions/SessionsBrowserTab', () => ({
@@ -73,7 +72,9 @@ describe('ExpandedReport shell', () => {
     render(<ExpandedReport />);
     expect(screen.getByRole('tab', { name: 'Sessions' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByText('SessionsBrowserTab stub')).toBeInTheDocument();
-    expect(screen.getAllByRole('tab')).toHaveLength(8);
+    expect(screen.getAllByRole('tab')).toHaveLength(7);
+    // The heatmap is now the activity calendar inside Trends.
+    expect(screen.queryByRole('tab', { name: 'Heatmap' })).toBeNull();
   });
 
   it('shows the chosen tab', () => {
