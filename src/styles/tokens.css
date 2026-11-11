@@ -75,11 +75,6 @@
   --color-teal: oklch(48% 0.12 180);
   --color-teal-dim: oklch(68% 0.14 180 / 0.15);
 
-  /* Deprecated — alias kept one release for backward compat with consumers
-   * that still reference --color-safe. Slated for removal. */
-  --color-safe: var(--color-accent);
-  --color-safe-dim: var(--color-accent-dim);
-
   /* Model chips — tonal variations on warm family */
   --color-model-fable: oklch(48% 0.165 22);
   --color-model-fable-text: oklch(98% 0.005 85);
@@ -88,7 +83,6 @@
   --color-model-sonnet: oklch(60% 0.105 50);
   --color-model-sonnet-text: oklch(98% 0.005 85);
   --color-model-haiku: oklch(86% 0.040 70);
-  --color-model-haiku-text: var(--color-text);
 
   /* Utility */
   --color-track: oklch(40% 0.015 65 / 0.10);
@@ -243,10 +237,6 @@ body[data-theme="dark"] {
   --color-teal: oklch(90% 0.10 180);
   --color-teal-dim: oklch(68% 0.14 180 / 0.15);
 
-  /* Aliases */
-  --color-safe: var(--color-accent);
-  --color-safe-dim: var(--color-accent-dim);
-
   /* Model chips — same tonal idea but darker for dark text on light text */
   --color-model-fable: oklch(72% 0.155 22);
   --color-model-fable-text: oklch(20% 0.012 65);
@@ -255,7 +245,6 @@ body[data-theme="dark"] {
   --color-model-sonnet: oklch(64% 0.090 50);
   --color-model-sonnet-text: oklch(20% 0.012 65);
   --color-model-haiku: oklch(48% 0.045 70);
-  --color-model-haiku-text: var(--color-text);
 
   --color-track: oklch(95% 0.020 65 / 0.18);
   --color-overlay: oklch(10% 0.010 65 / 0.55);
@@ -538,6 +527,13 @@ body[data-palette="plum"][data-theme="dark"] {
  * Heat steps: how much was used, in the accent hue only. Amber and red are
  * kept for limits, so volume never borrows them. */
 body {
+  /* "Safe" is the accent: a meter under the warn threshold. (An older name,
+   * kept for the popover meters and the warm-up button.) */
+  --color-safe: var(--color-accent);
+  --color-safe-dim: var(--color-accent-dim);
+  /* The Haiku chip is pale in light and deep in dark, so it takes body text. */
+  --color-model-haiku-text: var(--color-text);
+
   /* A day with no use: a faint neutral that stays below the first step in
    * both themes. The track colour is brighter than a quarter-strength accent
    * on a dark card, which made idle days look busier than quiet ones. */

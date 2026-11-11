@@ -37,7 +37,14 @@ export function readStoredPalette(): Palette {
 
 export function readStoredPreference(): ThemePreference {
   if (typeof localStorage === 'undefined') return 'light';
-  const raw = localStorage.getItem(STORAGE_KEY);
+  let raw: string | null;
+  try {
+    raw = localStorage.getItem(STORAGE_KEY);
+  } catch {
+    // Storage blocked. This runs while the module loads, so throwing here
+    // would stop the whole app from mounting over a colour preference.
+    return 'light';
+  }
   // Legacy value 'cream' was the previous name for the light theme; migrate
   // silently so existing users keep their preference across the rename.
   if (raw === 'cream') return 'light';

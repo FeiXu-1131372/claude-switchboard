@@ -167,6 +167,25 @@ describe('colour themes', () => {
     expect(root.get(`--swatch-${id}`)).toBe(accent);
   });
 
+  // @theme lands on :root, where var() is worked out once and the result is
+  // inherited. A token there that points at one a theme changes on <body>
+  // keeps the original theme's colour: the popover meters stayed terracotta
+  // in every other light theme.
+  it('no :root token is an alias of a token that a theme changes', () => {
+    const themed = new Set([...DARK.keys(), ...others.flatMap(({ id }) => [...paletteLight(id).keys()])]);
+    const frozen = [...LIGHT]
+      .filter(([, value]) => [...value.matchAll(/var\((--[\w-]+)\)/g)].some((ref) => themed.has(ref[1])))
+      .map(([name]) => name);
+    expect(frozen).toEqual([]);
+  });
+
+  it('the aliases follow the theme from the derived block on <body>', () => {
+    const derived = declarations(blockAfter('\nbody {'));
+    expect(derived.get('--color-safe')).toBe('var(--color-accent)');
+    expect(derived.get('--color-safe-dim')).toBe('var(--color-accent-dim)');
+    expect(derived.get('--color-model-haiku-text')).toBe('var(--color-text)');
+  });
+
   it('no two themes share an accent', () => {
     const accents = PALETTES.map(({ id }) => resolve(THEMES[id === ORIGINAL ? 'light' : `${id} light`], '--color-accent'));
     expect(new Set(accents).size).toBe(PALETTES.length);

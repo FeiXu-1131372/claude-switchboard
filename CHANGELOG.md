@@ -15,7 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- **Five tabs instead of eight.** The expanded window is now Sessions, Cost, Trends, Breakdown and Providers, in one header row with the window buttons. Models, Projects and Cache are sections of the new Breakdown tab, and the heatmap is an activity calendar at the foot of Trends. The window reopens on the tab you left, and a tab saved under an old name opens its new home.
+- **Five tabs instead of eight.** The expanded window is now Sessions, Cost, Trends, Breakdown and Providers, in one header row with the window buttons. Models, Projects and Cache are sections of the new Breakdown tab, and the heatmap is an activity calendar at the foot of Trends. The window reopens on the tab you left.
 - **One range for Cost, Trends and Breakdown.** Pick 7 days, 30 days, 90 days or a year once and all three tabs follow it; each shows its total and the range it covers in the same place. Ranges are whole calendar days, so the three tabs add up to the same figure.
 - **Breakdown tab.** Spend or tokens by model (with a share bar, and small models folded into "Other"), by project (top ten, with a filter and "Show all"), and four cache figures, on one page.
 - **Trends.** The chart has a slot for every day of the range, switches between days and weeks, and keeps the click-a-bar breakdown. The activity calendar below it covers the last 26 weeks and can be walked with the arrow keys.

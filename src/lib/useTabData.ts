@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 function toMessage(e: unknown): string {
   if (e instanceof Error && e.message) return e.message;
@@ -45,6 +45,8 @@ function startingPoint<T>(key: string | undefined): Loaded<T> {
  * changes — pass a session-data-version counter here so the tab auto-refreshes
  * as new data arrives in the background. A refresh never brings the loading
  * state back: the data on screen stays until its replacement arrives.
+ * Triggers that change while a load is still running do not start another:
+ * that load lands, and one catch-up load follows.
  *
  * `cacheKey` names the question being asked (`'models:30'`). With one, the
  * last answer is shown at once on the next mount while a fresh one loads, and
@@ -61,35 +63,82 @@ export function useTabData<T>(
   // one frame of the previous key's data.
   const view = state.key === cacheKey ? state : startingPoint<T>(cacheKey);
 
+  // The loader closure is new on every render. The run below always calls
+  // the latest one, including for a catch-up load started from a promise.
+  const latest = useRef({ loader, cacheKey });
   useEffect(() => {
-    let cancelled = false;
+    latest.current = { loader, cacheKey };
+  });
+
+  // One load at a time per question. `id` names the load whose answer counts:
+  // a new key, reload() or leaving the tab moves it on, and an answer that
+  // comes back under an old id is dropped before it reaches the cache.
+  const run = useRef({ id: 0, busy: false, again: false, key: cacheKey, tick });
+
+  const start = useCallback(() => {
+    const r = run.current;
+    const id = ++r.id;
+    const key = latest.current.cacheKey;
+    r.busy = true;
+    r.again = false;
     setState((prev) => {
-      const base = prev.key === cacheKey ? prev : startingPoint<T>(cacheKey);
+      const base = prev.key === key ? prev : startingPoint<T>(key);
       if (base === prev && prev.error === null) return prev;
       return { ...base, error: null, settled: base.data !== null };
     });
-    loader()
+    latest.current
+      .loader()
       .then((data) => {
-        if (cancelled) return;
-        if (cacheKey !== undefined) cache.set(cacheKey, data);
-        setState({ key: cacheKey, data, error: null, settled: true });
+        if (id !== r.id) return;
+        if (key !== undefined) cache.set(key, data);
+        setState({ key, data, error: null, settled: true });
       })
       .catch((e) => {
-        if (cancelled) return;
+        if (id !== r.id) return;
         setState((prev) => ({
-          key: cacheKey,
-          data: prev.key === cacheKey ? prev.data : startingPoint<T>(cacheKey).data,
+          key,
+          data: prev.key === key ? prev.data : startingPoint<T>(key).data,
           error: toMessage(e),
           settled: true,
         }));
+      })
+      .finally(() => {
+        if (id !== r.id) return;
+        r.busy = false;
+        // Ticks that arrived meanwhile are answered by one catch-up load.
+        if (r.again) start();
       });
-    return () => {
-      cancelled = true;
-    };
-    // The loader closure is recomputed on every render; we deliberately
-    // re-run only on explicit reload() (tick), a new key, or an external trigger.
+  }, []);
+
+  useEffect(() => {
+    const r = run.current;
+    const onlyATrigger = r.key === cacheKey && r.tick === tick;
+    r.key = cacheKey;
+    r.tick = tick;
+    // New data arriving while a load is already running: starting another
+    // for every tick would throw away each answer just before it lands, so
+    // during a burst nothing would ever be shown, and the scans would queue
+    // up behind each other. Let this one land, then load once more.
+    if (onlyATrigger && r.busy) {
+      r.again = true;
+      return;
+    }
+    start();
+    // Re-run only on explicit reload() (tick), a new key, or an external
+    // trigger; the loader itself is read from `latest`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tick, cacheKey, ...triggers]);
+
+  // Leaving the tab: whatever is in flight no longer counts, and no catch-up
+  // load starts.
+  useEffect(() => {
+    const r = run.current;
+    return () => {
+      r.id++;
+      r.busy = false;
+      r.again = false;
+    };
+  }, []);
 
   const reload = useCallback(() => setTick((t) => t + 1), []);
   return { data: view.data, error: view.error, loading: !view.settled, reload };

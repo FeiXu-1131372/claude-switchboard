@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { DailyBucket, DailyModelBucket } from '../lib/types';
 
@@ -44,6 +44,7 @@ vi.mock('./ActivityCalendar', () => ({ ActivityCalendar: () => <div data-testid=
 
 import { TrendsTab, fillDays, xLabel } from './TrendsTab';
 import { useReportStore } from './reportState';
+import { useAppStore } from '../lib/store';
 
 beforeEach(() => {
   useReportStore.setState({ range: '30d', metric: 'cost' });
@@ -318,6 +319,62 @@ describe('TrendsTab — scale, colour and toolbar', () => {
     // An empty day is not a button and does not move the average.
     expect(screen.queryByRole('button', { name: /^Jul 21/ })).toBeNull();
     expect(screen.getByText(/\$1\.50\/day/)).toBeInTheDocument();
+  });
+});
+
+describe('TrendsTab — loading and failure', () => {
+  const never = () => new Promise<never>(() => {});
+
+  it('keeps the range and interval controls while a range loads', () => {
+    ipcMock.getDailyTrends.mockImplementation(never);
+    ipcMock.getDailyModelBreakdown.mockImplementation(never);
+    render(<TrendsTab />);
+    expect(screen.getByRole('button', { name: '90d' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Weekly' })).toBeInTheDocument();
+    expect(screen.getByText('Last 30 days')).toBeInTheDocument();
+  });
+
+  it('does not unmount the range control you just pressed', async () => {
+    ipcMock.getDailyTrends.mockResolvedValue(TRENDS);
+    ipcMock.getDailyModelBreakdown.mockResolvedValue(BREAKDOWN);
+    render(<TrendsTab />);
+    await screen.findByTestId('day-bar-2026-07-24');
+
+    ipcMock.getDailyTrends.mockImplementation(never);
+    const ninety = screen.getByRole('button', { name: '90d' });
+    fireEvent.click(ninety);
+    await waitFor(() => expect(ipcMock.getDailyTrends).toHaveBeenCalledWith(90));
+    expect(ninety).toBeInTheDocument();
+    expect(screen.getByText('Last 90 days')).toBeInTheDocument();
+  });
+
+  it('keeps the controls when the first load fails, so another range can be tried', async () => {
+    ipcMock.getDailyTrends.mockRejectedValue(new Error('database is locked'));
+    ipcMock.getDailyModelBreakdown.mockResolvedValue([]);
+    render(<TrendsTab />);
+    expect(await screen.findByText("Couldn't load trends")).toBeInTheDocument();
+    expect(screen.getByText('database is locked')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '7d' }));
+    await waitFor(() => expect(ipcMock.getDailyTrends).toHaveBeenCalledWith(7));
+  });
+
+  it('keeps the chart when a background refresh fails', async () => {
+    ipcMock.getDailyTrends.mockResolvedValue(TRENDS);
+    ipcMock.getDailyModelBreakdown.mockResolvedValue(BREAKDOWN);
+    const { rerender } = render(<TrendsTab />);
+    await screen.findByTestId('day-bar-2026-07-24');
+
+    ipcMock.getDailyTrends.mockClear();
+    ipcMock.getDailyTrends.mockRejectedValue(new Error('database is locked'));
+    useAppStore.getState().sessionDataVersion += 1;
+    rerender(<TrendsTab />);
+    await waitFor(() => expect(ipcMock.getDailyTrends).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+
+    expect(screen.getByTestId('day-bar-2026-07-24')).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load trends")).toBeNull();
   });
 });
 

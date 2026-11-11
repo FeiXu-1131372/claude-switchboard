@@ -39,6 +39,8 @@ describe('useThemeStore', () => {
 });
 
 describe('readStoredPreference', () => {
+  afterEach(() => vi.restoreAllMocks());
+
   beforeEach(() => {
     localStorage.clear();
   });
@@ -54,6 +56,13 @@ describe('readStoredPreference', () => {
 
   it('falls back to light for an unrecognized stored value', () => {
     localStorage.setItem('theme-preference', 'sepia');
+    expect(readStoredPreference()).toBe('light');
+  });
+
+  it('falls back to light when storage is blocked, so the app still starts', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
     expect(readStoredPreference()).toBe('light');
   });
 });

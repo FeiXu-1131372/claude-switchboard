@@ -244,18 +244,40 @@ export function TrendsTab() {
     return rows.length > 0 ? aggregateModels(rows) : null;
   }, [breakdown, selectedBucket]);
 
-  if (error) {
+  const intervalControl = (
+    <SegmentedControl
+      label="Interval"
+      value={granularity}
+      options={[
+        { value: 'day', label: 'Daily' },
+        { value: 'week', label: 'Weekly' },
+      ]}
+      onChange={(value) => setIntervalChoice({ range, value })}
+    />
+  );
+
+  // The controls stay in every state: a range that is loading or failed is
+  // exactly when they are wanted, and unmounting the button that was just
+  // pressed drops keyboard focus. A refresh that fails in the background
+  // leaves the chart as it was.
+  if (!trends || !breakdown) {
     return (
-      <EmptyState
-        icon={<IconTrends size={32} />}
-        title="Couldn't load trends"
-        description={error}
-        action={<Button variant="ghost" size="sm" onClick={reload}>Retry</Button>}
-      />
+      <div className="flex flex-col gap-[var(--space-md)]">
+        <ReportToolbar figure="—" caption={RANGE_LABEL[range]} showMetric>
+          {intervalControl}
+        </ReportToolbar>
+        {error && !loading ? (
+          <EmptyState
+            icon={<IconTrends size={32} />}
+            title="Couldn't load trends"
+            description={error}
+            action={<Button variant="ghost" size="sm" onClick={reload}>Retry</Button>}
+          />
+        ) : (
+          <SkeletonRows />
+        )}
+      </div>
     );
-  }
-  if (loading || !trends || !breakdown) {
-    return <SkeletonRows />;
   }
 
   const tokensOf = (b: ChartBucket) => b.input_tokens + b.output_tokens;
@@ -285,15 +307,7 @@ export function TrendsTab() {
       caption={trends.length > 0 ? caption : RANGE_LABEL[range]}
       showMetric
     >
-      <SegmentedControl
-        label="Interval"
-        value={granularity}
-        options={[
-          { value: 'day', label: 'Daily' },
-          { value: 'week', label: 'Weekly' },
-        ]}
-        onChange={(value) => setIntervalChoice({ range, value })}
-      />
+      {intervalControl}
     </ReportToolbar>
   );
 

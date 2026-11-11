@@ -107,4 +107,99 @@ describe('useTabData', () => {
     await waitFor(() => expect(result.current.error).toBe('offline'));
     expect(result.current.data).toBe('A');
   });
+
+  describe('refreshes that arrive faster than a load takes', () => {
+    /** A loader whose every call is answered by hand, in order. */
+    function manualLoader() {
+      const calls: ReturnType<typeof deferred<string>>[] = [];
+      const loader = vi.fn(() => {
+        const next = deferred<string>();
+        calls.push(next);
+        return next.promise;
+      });
+      return { loader, calls };
+    }
+
+    it('lets the load in flight land, then runs one more, however many ticks arrived', async () => {
+      const { loader, calls } = manualLoader();
+      const { result, rerender } = renderHook(({ v }) => useTabData(loader, [v], 'k'), {
+        initialProps: { v: 0 },
+      });
+      expect(loader).toHaveBeenCalledTimes(1);
+
+      // Three ticks while the first load is still running: no new load each.
+      rerender({ v: 1 });
+      rerender({ v: 2 });
+      rerender({ v: 3 });
+      expect(loader).toHaveBeenCalledTimes(1);
+
+      // The first answer is shown, not thrown away...
+      await act(async () => calls[0].resolve('first'));
+      expect(result.current.data).toBe('first');
+      // ...and exactly one catch-up load follows.
+      expect(loader).toHaveBeenCalledTimes(2);
+
+      await act(async () => calls[1].resolve('second'));
+      expect(result.current.data).toBe('second');
+      expect(loader).toHaveBeenCalledTimes(2);
+    });
+
+    it('runs the catch-up load after a load that failed', async () => {
+      const { loader, calls } = manualLoader();
+      const { result, rerender } = renderHook(({ v }) => useTabData(loader, [v], 'k'), {
+        initialProps: { v: 0 },
+      });
+      rerender({ v: 1 });
+      await act(async () => calls[0].reject(new Error('busy')));
+      expect(loader).toHaveBeenCalledTimes(2);
+      await act(async () => calls[1].resolve('ok'));
+      expect(result.current.data).toBe('ok');
+      expect(result.current.error).toBeNull();
+    });
+
+    it('a tick with nothing in flight loads straight away', async () => {
+      const { loader, calls } = manualLoader();
+      const { rerender } = renderHook(({ v }) => useTabData(loader, [v], 'k'), { initialProps: { v: 0 } });
+      await act(async () => calls[0].resolve('first'));
+      rerender({ v: 1 });
+      expect(loader).toHaveBeenCalledTimes(2);
+    });
+
+    it('a new key does not wait for the old key’s load, and drops its answer', async () => {
+      const { loader, calls } = manualLoader();
+      const { result, rerender } = renderHook(({ k }) => useTabData(loader, [], k), {
+        initialProps: { k: 'a' },
+      });
+      rerender({ k: 'b' });
+      expect(loader).toHaveBeenCalledTimes(2);
+
+      await act(async () => calls[0].resolve('for a'));
+      expect(result.current.data).toBeNull();
+      await act(async () => calls[1].resolve('for b'));
+      expect(result.current.data).toBe('for b');
+      expect(loader).toHaveBeenCalledTimes(2);
+    });
+
+    it('reload() does not wait for the load in flight', async () => {
+      const { loader, calls } = manualLoader();
+      const { result } = renderHook(() => useTabData(loader, [], 'k'));
+      act(() => result.current.reload());
+      expect(loader).toHaveBeenCalledTimes(2);
+      // The older answer arrives late and is ignored.
+      await act(async () => calls[1].resolve('newer'));
+      await act(async () => calls[0].resolve('older'));
+      expect(result.current.data).toBe('newer');
+    });
+
+    it('starts nothing after the tab is left', async () => {
+      const { loader, calls } = manualLoader();
+      const { rerender, unmount } = renderHook(({ v }) => useTabData(loader, [v], 'k'), {
+        initialProps: { v: 0 },
+      });
+      rerender({ v: 1 });
+      unmount();
+      await act(async () => calls[0].resolve('late'));
+      expect(loader).toHaveBeenCalledTimes(1);
+    });
+  });
 });
