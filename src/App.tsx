@@ -4,7 +4,7 @@ import { CompactPopover } from './popover/CompactPopover';
 import { ExpandedReport } from './report/ExpandedReport';
 import { AuthPanel } from './settings/AuthPanel';
 import { useAppStore } from './lib/store';
-import { useThemeStore, resolveTheme, type ResolvedTheme } from './lib/theme';
+import { applyTheme, useThemeStore } from './lib/theme';
 import { attachUpdateListeners } from './lib/updateEvents';
 import './styles/globals.css';
 import './styles/tokens.css';
@@ -26,19 +26,17 @@ export function App() {
   }, []);
 
   const themePreference = useThemeStore((s) => s.themePreference);
+  const palette = useThemeStore((s) => s.palette);
 
   useEffect(() => {
     const mql = window.matchMedia('(prefers-color-scheme: dark)');
-    const apply = () => {
-      const resolved: ResolvedTheme = resolveTheme(themePreference, mql.matches);
-      document.body.dataset.theme = resolved;
-    };
+    const apply = () => applyTheme(themePreference, palette, mql.matches);
     apply();
     if (themePreference === 'auto') {
       mql.addEventListener('change', apply);
       return () => mql.removeEventListener('change', apply);
     }
-  }, [themePreference]);
+  }, [themePreference, palette]);
 
   useEffect(() => {
     document.body.dataset.viewMode = viewMode;

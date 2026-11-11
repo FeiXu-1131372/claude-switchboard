@@ -6,6 +6,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { PALETTES } from '../lib/theme';
 
 type Rgb = [number, number, number];
 type Tokens = Map<string, string>;
@@ -26,11 +27,25 @@ function blockAfter(marker: string): string {
 }
 
 const LIGHT = declarations(blockAfter('@theme'));
+const DARK = declarations(blockAfter('body[data-theme="dark"]'));
+
+/** The original colour theme is the token file's base; each other one is a
+ * pair of blocks that restate only what they change. */
+const ORIGINAL = PALETTES[0].id;
+const paletteLight = (id: string) => declarations(blockAfter(`body[data-palette="${id}"] {`));
+const paletteDark = (id: string) => declarations(blockAfter(`body[data-palette="${id}"][data-theme="dark"] {`));
+
+/** Every colour theme in both modes, each built the way the cascade builds
+ * it: later blocks win, and anything a block leaves out comes from before. */
 const THEMES: Record<string, Tokens> = {
   light: LIGHT,
-  // A theme only restates what it changes; everything else is the light value.
-  dark: new Map([...LIGHT, ...declarations(blockAfter('body[data-theme="dark"]'))]),
+  dark: new Map([...LIGHT, ...DARK]),
 };
+for (const { id } of PALETTES) {
+  if (id === ORIGINAL) continue;
+  THEMES[`${id} light`] = new Map([...LIGHT, ...paletteLight(id)]);
+  THEMES[`${id} dark`] = new Map([...LIGHT, ...DARK, ...paletteLight(id), ...paletteDark(id)]);
+}
 
 function resolve(tokens: Tokens, name: string): string {
   let value = tokens.get(name);
@@ -110,4 +125,50 @@ describe('text contrast', () => {
         it(`${theme}: ${fg} on ${bg} is at least 4.5:1`, () => {
           expect(ratio(theme, fg, bg)).toBeGreaterThanOrEqual(4.5);
         });
+});
+
+describe('text on the accent fill', () => {
+  // Buttons, the Active tag and the switch notice put text on the accent
+  // itself. The accent is dark in light mode and light in dark mode, so the
+  // text on it has to flip too: white on a light accent is unreadable.
+  for (const theme of Object.keys(THEMES))
+    it(`${theme}: --color-on-accent on --color-accent is at least 4.5:1`, () => {
+      expect(ratio(theme, '--color-on-accent', '--color-accent')).toBeGreaterThanOrEqual(4.5);
+    });
+});
+
+describe('colour themes', () => {
+  const others = PALETTES.filter((p) => p.id !== ORIGINAL);
+
+  it('there is a light and a dark version of each', () => {
+    expect(Object.keys(THEMES)).toHaveLength(PALETTES.length * 2);
+  });
+
+  it.each(others)('$id sets its own surfaces, text and accent in both modes', ({ id }) => {
+    for (const block of [paletteLight(id), paletteDark(id)]) {
+      for (const token of ['--color-bg-base', '--color-bg-card', '--color-text', '--color-text-muted', '--color-accent', '--color-accent-text']) {
+        expect(block.has(token), `${id} is missing ${token}`).toBe(true);
+      }
+    }
+  });
+
+  // A theme's light block comes after the base dark block and has the same
+  // weight, so in dark mode it would win. The theme's dark block has to take
+  // back every token its light block set, or a light value leaks into dark.
+  it.each(others)('$id dark restates everything $id light sets', ({ id }) => {
+    const dark = paletteDark(id);
+    const leaked = [...paletteLight(id).keys()].filter((token) => !dark.has(token));
+    expect(leaked).toEqual([]);
+  });
+
+  it.each(PALETTES)('the $id swatch is that theme\u2019s accent', ({ id }) => {
+    const root = declarations(blockAfter(':root'));
+    const accent = id === ORIGINAL ? LIGHT.get('--color-accent') : paletteLight(id).get('--color-accent');
+    expect(root.get(`--swatch-${id}`)).toBe(accent);
+  });
+
+  it('no two themes share an accent', () => {
+    const accents = PALETTES.map(({ id }) => resolve(THEMES[id === ORIGINAL ? 'light' : `${id} light`], '--color-accent'));
+    expect(new Set(accents).size).toBe(PALETTES.length);
+  });
 });

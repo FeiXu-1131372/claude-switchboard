@@ -21,8 +21,12 @@
             resolved = 'light';
           }
           document.body.dataset.theme = resolved;
+          // The colour theme. A name this build has no colours for matches no
+          // rule, which leaves the original theme; the app corrects it on load.
+          document.body.dataset.palette = localStorage.getItem('theme-palette') || 'terracotta';
         } catch (e) {
           document.body.dataset.theme = 'light';
+          document.body.dataset.palette = 'terracotta';
         }
       })();
     </script>

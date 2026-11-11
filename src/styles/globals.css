@@ -65,8 +65,8 @@ body[data-view-mode="compact"] #root {
 body[data-theme="dark"][data-view-mode="compact"] #root {
   /* Dark popover keeps a subtle warm radial wash for a "light source" feel. */
   background:
-    radial-gradient(120% 80% at 0% 0%, oklch(72% 0.10 55 / 0.06), transparent 55%),
-    radial-gradient(120% 80% at 100% 100%, oklch(70% 0.140 38 / 0.04), transparent 55%),
+    radial-gradient(120% 80% at 0% 0%, var(--color-glow), transparent 55%),
+    radial-gradient(120% 80% at 100% 100%, color-mix(in oklch, var(--color-accent) 4%, transparent), transparent 55%),
     var(--color-bg-base);
 }
 
@@ -105,8 +105,8 @@ body[data-os="windows"] #root {
 
 body[data-os="windows"][data-theme="dark"] #root {
   background:
-    radial-gradient(120% 80% at 0% 0%, oklch(72% 0.10 55 / 0.06), transparent 55%),
-    radial-gradient(120% 80% at 100% 100%, oklch(70% 0.140 38 / 0.04), transparent 55%),
+    radial-gradient(120% 80% at 0% 0%, var(--color-glow), transparent 55%),
+    radial-gradient(120% 80% at 100% 100%, color-mix(in oklch, var(--color-accent) 4%, transparent), transparent 55%),
     var(--color-bg-base);
 }
 

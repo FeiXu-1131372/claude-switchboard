@@ -45,7 +45,7 @@ function SwapToast() {
   const code = report.running.vscode_with_extension.length;
   const hasRunning = cli > 0 || code > 0;
   return (
-    <div className="absolute bottom-[40px] left-[var(--popover-pad)] right-[var(--popover-pad)] rounded-[var(--radius-sm)] bg-[var(--color-accent)] px-[var(--space-sm)] py-[var(--space-2xs)] text-[length:var(--text-micro)] text-white shadow-[0_4px_14px_rgba(0,0,0,0.18)]">
+    <div className="absolute bottom-[40px] left-[var(--popover-pad)] right-[var(--popover-pad)] rounded-[var(--radius-sm)] bg-[var(--color-accent)] px-[var(--space-sm)] py-[var(--space-2xs)] text-[length:var(--text-micro)] text-[color:var(--color-on-accent)] shadow-[0_4px_14px_rgba(0,0,0,0.18)]">
       <div className="truncate">
         ✓ Switched to {email ?? `slot ${report.new_active_slot}`}
       </div>

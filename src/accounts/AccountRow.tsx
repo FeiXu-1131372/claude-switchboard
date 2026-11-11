@@ -346,7 +346,7 @@ export function AccountRow({
               shrink-0 inline-flex items-center rounded-[var(--radius-pill)]
               bg-[var(--color-accent)] px-[var(--space-xs)] py-[1px]
               text-[length:var(--text-micro)] font-[var(--weight-semibold)]
-              uppercase tracking-[var(--tracking-label)] text-white
+              uppercase tracking-[var(--tracking-label)] text-[color:var(--color-on-accent)]
             "
           >
             Active

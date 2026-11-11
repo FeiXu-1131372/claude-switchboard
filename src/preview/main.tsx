@@ -4,7 +4,8 @@
  *
  *   pnpm preview:ui → http://localhost:1430/preview.html
  *   ?scale=heavy|light|empty   how much history (default heavy)
- *   ?theme=light|dark          colour theme (default light)
+ *   ?theme=light|dark          light or dark mode (default light)
+ *   ?palette=<id>              colour theme (default terracotta)
  *   ?view=expanded|compact     which window (default expanded)
  *   ?delay=800                 answer report queries that many ms late, to see loading states
  */
@@ -22,15 +23,21 @@ async function start() {
   const scaleParam = params.get('scale') as PreviewScale | null;
   const scale = scaleParam && SCALES.includes(scaleParam) ? scaleParam : 'heavy';
   const theme = params.get('theme') === 'dark' ? 'dark' : 'light';
+  // Not checked against the list here: the theme store must not load before
+  // the choice is in storage, and it falls back to the original for a name
+  // it does not know.
+  const palette = params.get('palette') ?? 'terracotta';
   const viewMode = params.get('view') === 'compact' ? 'compact' : 'expanded';
   const delay = Math.max(0, Number(params.get('delay')) || 0);
 
   try {
     localStorage.setItem('theme-preference', theme);
+    localStorage.setItem('theme-palette', palette);
   } catch {
     // Storage blocked: the theme below still applies for this load.
   }
   document.body.dataset.theme = theme;
+  document.body.dataset.palette = palette;
   document.getElementById('frame')!.dataset.view = viewMode;
 
   const now = new Date();

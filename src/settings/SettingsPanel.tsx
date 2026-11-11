@@ -7,7 +7,7 @@ import { Button } from '../components/ui/Button';
 import { Select } from '../components/ui/Select';
 import type { Terminal } from '../lib/generated/bindings';
 import { useAppStore } from '../lib/store';
-import { useThemeStore, type ThemePreference } from '../lib/theme';
+import { AppearanceCard } from './AppearanceCard';
 import type { Settings } from '../lib/types';
 import {
   enable as enableAutostart,
@@ -40,8 +40,6 @@ export function SettingsPanel() {
   const setSettings = useAppStore((s) => s.setSettings);
   const usage = useAppStore((s) => s.usage);
   const accounts = useAppStore((s) => s.accounts);
-  const themePreference = useThemeStore((s) => s.themePreference);
-  const setThemePreference = useThemeStore((s) => s.setThemePreference);
   const [local, setLocal] = useState<Settings | null>(() => settings);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -135,28 +133,7 @@ export function SettingsPanel() {
         <h2 className="text-[length:var(--text-label)] font-[var(--weight-semibold)] text-[color:var(--color-text-muted)] uppercase tracking-[0.04em] px-[var(--space-2xs)]">
           Appearance
         </h2>
-        <Card className="p-[var(--space-md)] flex flex-col gap-[var(--space-xs)]">
-          {(['light', 'dark', 'auto'] as ThemePreference[]).map((opt) => (
-            <label
-              key={opt}
-              className="flex items-center gap-[var(--space-sm)] cursor-pointer py-[var(--space-2xs)]"
-            >
-              <input
-                type="radio"
-                name="theme-preference"
-                value={opt}
-                checked={themePreference === opt}
-                onChange={() => setThemePreference(opt)}
-                className="accent-[color:var(--color-accent)]"
-              />
-              <span className="text-[length:var(--text-body)] text-[color:var(--color-text)]">
-                {opt === 'light' && 'Light'}
-                {opt === 'dark' && 'Dark'}
-                {opt === 'auto' && 'Auto (follow system)'}
-              </span>
-            </label>
-          ))}
-        </Card>
+        <AppearanceCard />
       </section>
 
       {/* General */}

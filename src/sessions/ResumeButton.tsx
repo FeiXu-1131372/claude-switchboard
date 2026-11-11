@@ -62,7 +62,7 @@ export function ResumeButton({ label, disabledReason, vsCodeAvailable, onResume 
           rounded-[var(--radius-sm)] bg-[var(--color-accent)]
           px-[var(--space-sm)] py-[var(--space-2xs)]
           text-[length:var(--text-label)] font-[var(--weight-medium)]
-          text-[color:var(--color-bg-base)] select-none
+          text-[color:var(--color-on-accent)] select-none
           transition-opacity duration-[var(--duration-fast)] ease-[var(--ease-out)]
           group-hover:opacity-0 group-focus-within:opacity-0
         "
@@ -97,7 +97,7 @@ export function ResumeButton({ label, disabledReason, vsCodeAvailable, onResume 
               }
               className={[
                 'inline-flex items-center justify-center py-[var(--space-2xs)]',
-                'text-[color:var(--color-bg-base)]',
+                'text-[color:var(--color-on-accent)]',
                 'transition-[max-width,padding,opacity,filter] duration-[var(--duration-fast)] ease-[var(--ease-out)]',
                 'hover:brightness-110 active:brightness-95',
                 'focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)] focus-visible:outline-offset-1',
@@ -110,7 +110,7 @@ export function ResumeButton({ label, disabledReason, vsCodeAvailable, onResume 
                     // editor instead of a terminal. It has to be asked for.
                     [
                       'max-w-0 overflow-hidden px-0 opacity-0 pointer-events-none',
-                      'border-l border-[color:var(--color-bg-base)]/25',
+                      'border-l border-[color:var(--color-on-accent)]/25',
                       'group-hover:max-w-[2.5rem] group-hover:px-[var(--space-sm)]',
                       'group-hover:opacity-100 group-hover:pointer-events-auto',
                       'group-focus-within:max-w-[2.5rem] group-focus-within:px-[var(--space-sm)]',

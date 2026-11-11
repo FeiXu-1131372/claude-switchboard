@@ -179,7 +179,7 @@ export function SwapConfirmCard({
           disabled={busy}
           className="
             rounded-[var(--radius-sm)] bg-[var(--color-accent)] px-[var(--space-md)] py-[var(--space-2xs)]
-            text-[length:var(--text-label)] font-[var(--weight-semibold)] text-white
+            text-[length:var(--text-label)] font-[var(--weight-semibold)] text-[color:var(--color-on-accent)]
             hover:opacity-90
             disabled:opacity-50 disabled:cursor-not-allowed
           "
