@@ -13,6 +13,9 @@ export function formatTokens(n: number): string {
 /** Dollars with grouped thousands. Cents are kept below $10,000 and dropped
  * from there up, where they are noise next to five figures. */
 export function formatCost(usd: number): string {
+  // Nothing spent is exactly that; "less than a cent" is for a real amount
+  // too small to show.
+  if (!(usd > 0)) return '$0.00';
   if (usd < 0.01) return '<$0.01';
   const toCents = Math.round(usd * 100) / 100;
   return toCents < 10_000 ? `$${CENTS.format(toCents)}` : `$${WHOLE.format(usd)}`;

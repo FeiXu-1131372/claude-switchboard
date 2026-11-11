@@ -39,7 +39,12 @@ vi.mock('../lib/store', async () => {
   return { ...actual, useAppStore };
 });
 
-import { TrendsTab } from './TrendsTab';
+import { TrendsTab, fillDays, xLabel } from './TrendsTab';
+import { useReportStore } from './reportState';
+
+beforeEach(() => {
+  useReportStore.setState({ range: '30d', metric: 'cost' });
+});
 
 /** Tokens and spend disagree on purpose: the cheap day has 100× the tokens. */
 const DIVERGENT_TRENDS: DailyBucket[] = [
@@ -142,11 +147,10 @@ describe('TrendsTab — ranges and weekly bars', () => {
     const firstWeek = await screen.findByTestId('day-bar-2026-07-20');
     const secondWeek = screen.getByTestId('day-bar-2026-07-27');
     expect(screen.queryByTestId('day-bar-2026-07-22')).toBeNull();
-    // $3.00 against the $4.00 maximum = 75%
-    expect(parseFloat(firstWeek.style.height)).toBeCloseTo(75, 0);
-    expect(parseFloat(secondWeek.style.height)).toBeCloseTo(100, 0);
-    // $3–$4 weeks are not "heavy" spend — the daily $3 danger threshold must
-    // not turn every weekly bar red.
+    // $3.00 and $4.00 against the $5 top of the axis.
+    expect(parseFloat(firstWeek.style.height)).toBeCloseTo(60, 0);
+    expect(parseFloat(secondWeek.style.height)).toBeCloseTo(80, 0);
+    // Volume is one colour whatever it adds up to.
     expect(firstWeek.className).toContain('bg-[var(--color-accent)]');
     expect(
       screen.getByRole('button', { name: 'Jul 20 – Jul 26: $3.00, 3.0M tokens' }),
@@ -227,5 +231,125 @@ describe('TrendsTab — day breakdown panel', () => {
 
     fireEvent.click(screen.getByText('7d'));
     await waitFor(() => expect(screen.queryByTestId('day-breakdown-panel')).not.toBeInTheDocument());
+  });
+});
+
+describe('TrendsTab — scale, colour and toolbar', () => {
+  beforeEach(() => {
+    ipcMock.getDailyTrends.mockClear();
+    ipcMock.getDailyTrends.mockResolvedValue(TRENDS);
+    ipcMock.getDailyModelBreakdown.mockResolvedValue(BREAKDOWN);
+  });
+
+  it('does not colour bars by how much was spent', async () => {
+    ipcMock.getDailyTrends.mockResolvedValue([
+      { date: '2026-07-24', input_tokens: 1, output_tokens: 1, cost_usd: 900 },
+    ]);
+    render(<TrendsTab />);
+    const bar = await screen.findByTestId('day-bar-2026-07-24');
+    expect(bar.className).not.toMatch(/color-danger|color-warn/);
+    expect(bar.className).toContain('bg-[var(--color-accent)]');
+  });
+
+  it('labels the axis with round numbers', async () => {
+    ipcMock.getDailyTrends.mockResolvedValue(DIVERGENT_TRENDS); // tallest bar $5
+    render(<TrendsTab />);
+    const axis = await screen.findByTestId('chart-axis');
+    expect(within(axis).getByText('$5.00')).toBeInTheDocument();
+    expect(within(axis).getByText('$2.50')).toBeInTheDocument();
+    expect(within(axis).getByText('$0')).toBeInTheDocument();
+  });
+
+  it('relabels the axis in tokens when Tokens is selected', async () => {
+    ipcMock.getDailyTrends.mockResolvedValue(DIVERGENT_TRENDS); // tallest bar 1M tokens
+    render(<TrendsTab />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Tokens' }));
+    const axis = screen.getByTestId('chart-axis');
+    expect(within(axis).getByText('1M')).toBeInTheDocument();
+    expect(within(axis).getByText('500K')).toBeInTheDocument();
+  });
+
+  it('sizes bars against the top tick, not the tallest bar', async () => {
+    render(<TrendsTab />); // tallest bar $4.82, top tick $5
+    const tallest = await screen.findByTestId('day-bar-2026-07-24');
+    expect(parseFloat(tallest.style.height)).toBeCloseTo(96.4, 1);
+  });
+
+  it('uses the shared range', async () => {
+    useReportStore.setState({ range: '90d' });
+    render(<TrendsTab />);
+    await waitFor(() => expect(ipcMock.getDailyTrends).toHaveBeenCalledWith(90));
+    expect(ipcMock.getDailyTrends).not.toHaveBeenCalledWith(30);
+  });
+
+  it('uses the shared measure', async () => {
+    useReportStore.setState({ metric: 'tokens' });
+    render(<TrendsTab />);
+    expect(await screen.findByRole('button', { name: /^Jul 24: 12\.4M tokens/ })).toBeInTheDocument();
+  });
+
+  it('puts the total and average in the toolbar', async () => {
+    render(<TrendsTab />); // $4.82 + $1.10 over two days
+    expect(await screen.findByText('$5.92')).toBeInTheDocument();
+    expect(screen.getByText(/\$2\.96\/day/)).toBeInTheDocument();
+    expect(screen.queryByText(/total$/)).toBeNull();
+  });
+
+  it('keeps a slot for a day when nothing was used', async () => {
+    ipcMock.getDailyTrends.mockResolvedValue([
+      { date: '2026-07-20', input_tokens: 1, output_tokens: 1, cost_usd: 1 },
+      { date: '2026-07-23', input_tokens: 1, output_tokens: 1, cost_usd: 2 },
+    ]);
+    render(<TrendsTab />);
+    await screen.findByTestId('day-bar-2026-07-20');
+    // The 21st and 22nd are there, empty, so the 23rd sits three days along.
+    const slots = screen.getAllByTestId(/^day-slot-/).map((el) => el.getAttribute('data-testid'));
+    expect(slots.slice(0, 4)).toEqual([
+      'day-slot-2026-07-20',
+      'day-slot-2026-07-21',
+      'day-slot-2026-07-22',
+      'day-slot-2026-07-23',
+    ]);
+    expect(screen.queryByTestId('day-bar-2026-07-21')).toBeNull();
+    // An empty day is not a button and does not move the average.
+    expect(screen.queryByRole('button', { name: /^Jul 21/ })).toBeNull();
+    expect(screen.getByText(/\$1\.50\/day/)).toBeInTheDocument();
+  });
+});
+
+describe('TrendsTab — the time axis', () => {
+  const day = (date: string, cost_usd = 0): DailyBucket => ({ date, input_tokens: 0, output_tokens: 0, cost_usd });
+
+  it('covers the whole range up to today, with zeros where nothing was used', () => {
+    const filled = fillDays([day('2026-11-09', 2)], 7, new Date(2026, 10, 11, 15, 30));
+    expect(filled.map((d) => d.date)).toEqual([
+      '2026-11-05', '2026-11-06', '2026-11-07', '2026-11-08', '2026-11-09', '2026-11-10', '2026-11-11',
+    ]);
+    expect(filled.map((d) => d.cost_usd)).toEqual([0, 0, 0, 0, 2, 0, 0]);
+  });
+
+  it('never drops a day that came back, even outside the range it expects', () => {
+    const filled = fillDays([day('2026-11-01', 1), day('2026-11-12', 3)], 7, new Date(2026, 10, 11));
+    expect(filled[0].date).toBe('2026-11-01');
+    expect(filled[filled.length - 1].date).toBe('2026-11-12');
+    expect(filled.reduce((s, d) => s + d.cost_usd, 0)).toBe(4);
+  });
+
+  it('steps by calendar day across a daylight-saving change', () => {
+    const filled = fillDays([day('2026-09-25', 1)], 5, new Date(2026, 8, 29));
+    expect(filled.map((d) => d.date)).toEqual([
+      '2026-09-25', '2026-09-26', '2026-09-27', '2026-09-28', '2026-09-29',
+    ]);
+  });
+
+  it('has nothing to draw when nothing came back', () => {
+    expect(fillDays([], 30, new Date(2026, 10, 11))).toEqual([]);
+  });
+
+  it('names the month on the first label and where the month changes', () => {
+    const buckets = ['2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01', '2026-11-02'].map((d) => ({
+      key: d, start: d, end: d, input_tokens: 0, output_tokens: 0, cost_usd: 0,
+    }));
+    expect(buckets.map((b, i) => xLabel(b, i, buckets, '7d'))).toEqual(['Oct 29', '30', '31', 'Nov 1', '2']);
   });
 });

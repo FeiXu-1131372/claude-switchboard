@@ -37,8 +37,9 @@ describe('formatTokens', () => {
 });
 
 describe('formatCost', () => {
-  it('returns "<$0.01" for zero', () => {
-    expect(formatCost(0)).toBe('<$0.01');
+  it('returns "$0.00" for zero', () => {
+    // Nothing spent is not "less than a cent".
+    expect(formatCost(0)).toBe('$0.00');
   });
 
   it('returns "<$0.01" for values below 0.01', () => {

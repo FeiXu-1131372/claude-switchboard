@@ -284,6 +284,10 @@ body {
   --report-width: 100%;
   --report-min-height: 560px;
 
+  /* Charts: the plot's height and the gutter its axis labels sit in. */
+  --chart-height: 160px;
+  --chart-gutter: 44px;
+
   /* Progress bar heights */
   --bar-hairline: 2px;
   --bar-sm: 3px;

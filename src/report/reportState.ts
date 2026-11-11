@@ -20,6 +20,14 @@ export type ReportMetric = 'cost' | 'tokens';
 
 export const RANGE_DAYS: Record<ReportRange, number> = { '7d': 7, '30d': 30, '90d': 90, '1y': 365 };
 
+/** How a range is named beside a figure it was worked out for. */
+export const RANGE_LABEL: Record<ReportRange, string> = {
+  '7d': 'Last 7 days',
+  '30d': 'Last 30 days',
+  '90d': 'Last 90 days',
+  '1y': 'Last 365 days',
+};
+
 export type SortOption = 'recent' | 'oldest' | 'turns' | 'tokens' | 'cost' | 'peak_context' | 'title';
 export type TimeFilter = 'all' | 'today' | '7d' | '30d';
 

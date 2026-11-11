@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
@@ -11,13 +11,12 @@ import { ipc } from '../lib/ipc';
 import { useTabData } from '../lib/useTabData';
 import { useAppStore } from '../lib/store';
 import type { DailyBucket, DailyModelBucket, ModelStats } from '../lib/types';
+import { formatAxis, niceTicks } from './chartScale';
 import { MODEL_COLOR, MODEL_VARIANT, modelKey, shortName } from './modelDisplay';
+import { ReportToolbar } from './ReportToolbar';
+import { RANGE_DAYS, RANGE_LABEL, useReportStore, type ReportRange as Range } from './reportState';
 
-type Range = '7d' | '30d' | '90d' | '1y';
 type Granularity = 'day' | 'week';
-type Metric = 'cost' | 'tokens';
-
-const RANGE_DAYS: Record<Range, number> = { '7d': 7, '30d': 30, '90d': 90, '1y': 365 };
 
 /** Long ranges open at the zoom level that stays readable: daily bars for
  *  the two short windows, weekly bars for 90 days and a year. The user can
@@ -30,7 +29,7 @@ const DEFAULT_GRANULARITY: Record<Range, Granularity> = {
 };
 
 /** One bar on the chart: a calendar day, or a whole calendar week. */
-interface ChartBucket {
+export interface ChartBucket {
   key: string;
   /** Inclusive first day covered by the bar (YYYY-MM-DD, local). */
   start: string;
@@ -66,6 +65,37 @@ function addDays(date: string, days: number): string {
   const d = parseDay(date);
   d.setDate(d.getDate() + days);
   return formatDay(d);
+}
+
+/** More slots than this and the dates are not a usage history (a clock set
+ *  years out, say); the days are then drawn as they came. */
+const MAX_SLOTS = 800;
+
+/**
+ * One entry per calendar day from the start of the range to today, with a
+ * zero for a day nothing was used. The backend only returns days that have
+ * usage, and drawing those side by side would put two bars a week apart next
+ * to each other as if they were consecutive.
+ *
+ * The span is widened to hold every day that came back, so no usage is ever
+ * dropped for falling outside the range this clock expects.
+ */
+export function fillDays(trends: DailyBucket[], days: number, today: Date): DailyBucket[] {
+  if (trends.length === 0) return [];
+  const rangeStart = formatDay(
+    new Date(today.getFullYear(), today.getMonth(), today.getDate() - (days - 1)),
+  );
+  const dates = trends.map((d) => d.date);
+  const first = [rangeStart, ...dates].reduce((a, b) => (a < b ? a : b));
+  const last = [formatDay(today), ...dates].reduce((a, b) => (a > b ? a : b));
+  const byDate = new Map(trends.map((d) => [d.date, d]));
+  const out: DailyBucket[] = [];
+  for (const d = parseDay(first); formatDay(d) <= last; d.setDate(d.getDate() + 1)) {
+    if (out.length >= MAX_SLOTS) return [...trends].sort((a, b) => a.date.localeCompare(b.date));
+    const date = formatDay(d);
+    out.push(byDate.get(date) ?? { date, input_tokens: 0, output_tokens: 0, cost_usd: 0 });
+  }
+  return out;
 }
 
 function toBuckets(trends: DailyBucket[], granularity: Granularity): ChartBucket[] {
@@ -133,8 +163,10 @@ function bucketLabel(bucket: ChartBucket, granularity: Granularity): string {
     : shortDay(bucket.start);
 }
 
-/** Sparse x-axis labels: ~7 labels for most ranges, month names for a year. */
-function xLabel(
+/** Sparse x-axis labels: about seven for most ranges, month names for a year.
+ *  A short range shows the day of the month, and names the month on the first
+ *  label and wherever it changes, so "28 … 2" cannot be misread. */
+export function xLabel(
   bucket: ChartBucket,
   index: number,
   buckets: ChartBucket[],
@@ -151,19 +183,35 @@ function xLabel(
 
   const every = Math.max(1, Math.ceil(buckets.length / 7));
   if (index % every !== 0) return null;
+  if (range === '90d') return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
-  return range === '7d' || range === '30d'
-    ? date.toLocaleDateString('en-US', { day: 'numeric' })
-    : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const lastLabelled = buckets[index - every];
+  const newMonth = !lastLabelled || parseDay(lastLabelled.start).getMonth() !== date.getMonth();
+  return date.toLocaleDateString('en-US', newMonth ? { month: 'short', day: 'numeric' } : { day: 'numeric' });
+}
+
+/** Bars need less air between them as they get thinner. */
+function gapClass(count: number): string {
+  if (count <= 100) return 'gap-[2px]';
+  return count <= 200 ? 'gap-px' : 'gap-0';
 }
 
 export function TrendsTab() {
   const version = useAppStore((s) => s.sessionDataVersion);
-  const [range, setRange] = useState<Range>('30d');
-  const [granularity, setGranularity] = useState<Granularity>(DEFAULT_GRANULARITY['30d']);
-  const [metric, setMetric] = useState<Metric>('cost');
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const range = useReportStore((s) => s.range);
+  const metric = useReportStore((s) => s.metric);
   const days = RANGE_DAYS[range];
+
+  // A hand-picked interval and a selected bar both belong to the range they
+  // were chosen in. Keeping the range beside each means a new range starts
+  // from its own default with nothing selected, without an effect to reset
+  // them after the fact.
+  const [intervalChoice, setIntervalChoice] = useState<{ range: Range; value: Granularity } | null>(null);
+  const granularity =
+    intervalChoice?.range === range ? intervalChoice.value : DEFAULT_GRANULARITY[range];
+  const scope = `${range}:${granularity}`;
+  const [selection, setSelection] = useState<{ scope: string; key: string } | null>(null);
+  const selectedKey = selection?.scope === scope ? selection.key : null;
 
   const { data, error, loading, reload } = useTabData(
     () =>
@@ -174,24 +222,12 @@ export function TrendsTab() {
     `trends:${days}`,
   );
 
-  useEffect(() => {
-    setGranularity(DEFAULT_GRANULARITY[range]);
-  }, [range]);
-
-  useEffect(() => {
-    setSelectedKey(null);
-  }, [range, granularity]);
-
   const trends = data?.trends ?? null;
   const breakdown = data?.breakdown ?? null;
 
-  const visibleData = useMemo(
-    () => (trends ? trends.slice(-days) : []),
-    [trends, days],
-  );
   const chartBuckets = useMemo(
-    () => toBuckets(visibleData, granularity),
-    [visibleData, granularity],
+    () => toBuckets(fillDays(trends ?? [], days, new Date()), granularity),
+    [trends, days, granularity],
   );
 
   const selectedBucket = useMemo(
@@ -221,145 +257,151 @@ export function TrendsTab() {
     return <SkeletonRows />;
   }
 
+  const tokensOf = (b: ChartBucket) => b.input_tokens + b.output_tokens;
+  const valueOf = (b: ChartBucket) => (metric === 'cost' ? b.cost_usd : tokensOf(b));
+  const ticks = niceTicks(Math.max(0, ...chartBuckets.map(valueOf)));
+  const top = ticks[2];
+
+  // Averages are over the bars that have something in them: a fortnight away
+  // should not halve what a working day is said to cost.
+  const active = chartBuckets.filter((b) => b.cost_usd > 0 || tokensOf(b) > 0);
+  const total = active.reduce((sum, b) => sum + valueOf(b), 0);
+  const average = active.length > 0 ? total / active.length : 0;
+  const show = (value: number) => (metric === 'cost' ? formatCost(value) : formatTokens(value));
+  const per = granularity === 'week' ? '/wk' : '/day';
+  const sparse = granularity === 'day' && active.length < days;
+  const caption = [
+    RANGE_LABEL[range],
+    `avg ${show(average)}${per}${sparse ? ` on ${active.length} active ${active.length === 1 ? 'day' : 'days'}` : ''}`,
+  ].join(' · ');
+
+  const toolbar = (
+    <ReportToolbar
+      figure={metric === 'cost' ? formatCost(total) : `${formatTokens(total)} tokens`}
+      caption={trends.length > 0 ? caption : RANGE_LABEL[range]}
+      showMetric
+    >
+      <SegmentedControl
+        label="Interval"
+        value={granularity}
+        options={[
+          { value: 'day', label: 'Daily' },
+          { value: 'week', label: 'Weekly' },
+        ]}
+        onChange={(value) => setIntervalChoice({ range, value })}
+      />
+    </ReportToolbar>
+  );
+
   if (trends.length === 0) {
     return (
-      <EmptyState
-        icon={<IconTrends size={32} />}
-        title="No trend data"
-        description="Trends will appear after a few days of usage."
-      />
+      <div className="flex flex-col gap-[var(--space-md)]">
+        {toolbar}
+        <EmptyState
+          icon={<IconTrends size={32} />}
+          title="Nothing in this range"
+          description="Usage appears here day by day as you use Claude Code."
+        />
+      </div>
     );
   }
 
-  const valueOf = (b: ChartBucket) =>
-    metric === 'cost' ? b.cost_usd : b.input_tokens + b.output_tokens;
-  const maxValue = Math.max(...chartBuckets.map(valueOf), 1);
-  const chartHeight = 160;
-  // Warning colours were tuned for one day's spend; a weekly bar totals ~7
-  // days, so scale the thresholds with the bucket width.
-  const spendScale = granularity === 'week' ? 7 : 1;
-
-  const totalCost = chartBuckets.reduce((s, b) => s + b.cost_usd, 0);
-  const totalTokens = chartBuckets.reduce(
-    (s, b) => s + b.input_tokens + b.output_tokens,
-    0,
-  );
-  const average = chartBuckets.length > 0
-    ? (metric === 'cost' ? totalCost : totalTokens) / chartBuckets.length
-    : 0;
-  const averageSuffix = granularity === 'week' ? '/wk' : '/day';
-
   return (
     <div className="flex flex-col gap-[var(--space-md)]">
-      {/* Range, granularity and metric controls */}
-      <div className="flex flex-wrap items-center justify-between gap-[var(--space-sm)]">
-        <div className="flex flex-wrap items-center gap-[var(--space-sm)]">
-          <SegmentedControl
-            label="Range"
-            value={range}
-            options={[
-              { value: '7d', label: '7d' },
-              { value: '30d', label: '30d' },
-              { value: '90d', label: '90d' },
-              { value: '1y', label: '1y' },
-            ]}
-            onChange={setRange}
-          />
-          <SegmentedControl
-            label="Interval"
-            value={granularity}
-            options={[
-              { value: 'day', label: 'Daily' },
-              { value: 'week', label: 'Weekly' },
-            ]}
-            onChange={setGranularity}
-          />
-        </div>
-        <SegmentedControl
-          label="Metric"
-          value={metric}
-          options={[
-            { value: 'cost', label: 'Spent' },
-            { value: 'tokens', label: 'Tokens' },
-          ]}
-          onChange={setMetric}
-        />
-      </div>
+      {toolbar}
 
       {/* Chart */}
       <Card className="p-[var(--space-md)]">
-        <div className="flex items-end gap-[2px]" style={{ height: chartHeight }}>
-          {chartBuckets.map((bucket) => {
-            const tokens = bucket.input_tokens + bucket.output_tokens;
-            const heightPct = (valueOf(bucket) / maxValue) * 100;
-            const isDanger = bucket.cost_usd >= 3 * spendScale;
-            const isWarn = bucket.cost_usd >= 1.5 * spendScale && !isDanger;
-            const isSelected = bucket.key === selectedKey;
-            const primary =
-              metric === 'cost'
-                ? formatCost(bucket.cost_usd)
-                : `${formatTokens(tokens)} tokens`;
-            const secondary =
-              metric === 'cost' ? `${formatTokens(tokens)} tokens` : formatCost(bucket.cost_usd);
-            const when = bucketLabel(bucket, granularity);
-            const label = `${when}: ${primary}, ${secondary}`;
-
-            return (
-              <div
-                key={bucket.key}
-                className="flex-1 flex flex-col justify-end group relative"
-                style={{ height: '100%' }}
+        <div className="flex h-[var(--chart-height)]">
+          {/* Y axis: zero, the midpoint and a round top the bars are sized against. */}
+          <div data-testid="chart-axis" aria-hidden className="relative w-[var(--chart-gutter)] shrink-0">
+            {ticks.map((tick, i) => (
+              <span
+                key={tick}
+                className="absolute right-[var(--space-sm)] translate-y-1/2 mono tabular-nums text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]"
+                style={{ bottom: `${i * 50}%` }}
               >
-                <button
-                  type="button"
-                  aria-label={label}
-                  aria-pressed={isSelected}
-                  onClick={() =>
-                    setSelectedKey((k) => (k === bucket.key ? null : bucket.key))
-                  }
-                  className="w-full h-full flex flex-col justify-end"
-                >
+                {formatAxis(tick, metric)}
+              </span>
+            ))}
+          </div>
+          <div className="relative min-w-0 flex-1">
+            {ticks.map((tick, i) => (
+              <div
+                key={tick}
+                aria-hidden
+                className="absolute inset-x-0 border-t border-[var(--color-border-subtle)]"
+                style={{ bottom: `${i * 50}%` }}
+              />
+            ))}
+            <div className={`relative flex h-full items-end ${gapClass(chartBuckets.length)}`}>
+              {chartBuckets.map((bucket) => {
+                const tokens = tokensOf(bucket);
+                const value = valueOf(bucket);
+                const isSelected = bucket.key === selectedKey;
+                if (bucket.cost_usd <= 0 && tokens <= 0) {
+                  // Nothing was used: the slot keeps its place on the time
+                  // axis but there is nothing to select.
+                  return <div key={bucket.key} data-testid={`day-slot-${bucket.key}`} className="h-full flex-1" />;
+                }
+                const primary =
+                  metric === 'cost' ? formatCost(bucket.cost_usd) : `${formatTokens(tokens)} tokens`;
+                const secondary =
+                  metric === 'cost' ? `${formatTokens(tokens)} tokens` : formatCost(bucket.cost_usd);
+                const when = bucketLabel(bucket, granularity);
+
+                return (
                   <div
-                    data-testid={`day-bar-${bucket.key}`}
-                    className={[
-                      'w-full rounded-t-[2px] transition-[height,background-color] duration-[var(--duration-normal)]',
-                      isDanger
-                        ? 'bg-[var(--color-danger)]'
-                        : isWarn
-                          ? 'bg-[var(--color-warn)]'
-                          : 'bg-[var(--color-accent)]',
-                      isSelected
-                        ? 'opacity-100 ring-2 ring-[var(--color-border-focus)]'
-                        : 'opacity-80 group-hover:opacity-100',
-                    ].join(' ')}
-                    style={{ height: `${heightPct}%` }}
-                  />
-                </button>
-                {/* Tooltip */}
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-[var(--space-xs)] hidden group-hover:block z-10">
-                  <div className="bg-[var(--color-bg-elevated)] border border-[var(--color-border)] rounded-[var(--radius-sm)] px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">
-                    <div className="text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]">
-                      {when}
-                    </div>
-                    <div className="mono text-[length:var(--text-label)] text-[color:var(--color-text)]">
-                      {primary}
-                    </div>
-                    <div className="mono text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]">
-                      {secondary}
+                    key={bucket.key}
+                    data-testid={`day-slot-${bucket.key}`}
+                    className="group relative flex h-full flex-1 flex-col justify-end"
+                  >
+                    <button
+                      type="button"
+                      aria-label={`${when}: ${primary}, ${secondary}`}
+                      aria-pressed={isSelected}
+                      onClick={() => setSelection(isSelected ? null : { scope, key: bucket.key })}
+                      className="flex h-full w-full flex-col justify-end"
+                    >
+                      <div
+                        data-testid={`day-bar-${bucket.key}`}
+                        className={[
+                          'w-full min-h-px rounded-t-[var(--radius-bar)] bg-[var(--color-accent)]',
+                          'transition-[height,opacity] duration-[var(--duration-normal)]',
+                          isSelected
+                            ? 'opacity-100 ring-2 ring-[var(--color-border-focus)]'
+                            : 'opacity-80 group-hover:opacity-100',
+                        ].join(' ')}
+                        style={{ height: `${(value / top) * 100}%` }}
+                      />
+                    </button>
+                    {/* Tooltip */}
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-[var(--space-xs)] hidden group-hover:block z-10">
+                      <div className="bg-[var(--color-bg-elevated)] border border-[var(--color-border)] rounded-[var(--radius-sm)] px-[var(--space-sm)] py-[var(--space-xs)] whitespace-nowrap">
+                        <div className="text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]">
+                          {when}
+                        </div>
+                        <div className="mono text-[length:var(--text-label)] text-[color:var(--color-text)]">
+                          {primary}
+                        </div>
+                        <div className="mono text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]">
+                          {secondary}
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </div>
-            );
-          })}
+                );
+              })}
+            </div>
+          </div>
         </div>
 
         {/* X-axis labels */}
-        <div className="flex mt-[var(--space-xs)]">
+        <div className={`mt-[var(--space-xs)] flex pl-[var(--chart-gutter)] ${gapClass(chartBuckets.length)}`}>
           {chartBuckets.map((bucket, i) => (
             <span
               key={bucket.key}
-              className="flex-1 text-[length:var(--text-micro)] text-[color:var(--color-text-muted)] mono"
+              className="min-w-0 flex-1 whitespace-nowrap text-[length:var(--text-micro)] text-[color:var(--color-text-muted)] mono"
             >
               {xLabel(bucket, i, chartBuckets, range)}
             </span>
@@ -426,20 +468,6 @@ export function TrendsTab() {
           </div>
         </Card>
       )}
-
-      {/* Summary */}
-      <div className="flex items-center gap-[var(--space-md)] px-[var(--space-2xs)]">
-        <span className="mono text-[length:var(--text-label)] text-[color:var(--color-text-secondary)]">
-          Avg{' '}
-          {metric === 'cost'
-            ? `${formatCost(average)}${averageSuffix}`
-            : `${formatTokens(average)} tokens${averageSuffix}`}
-        </span>
-        <span className="text-[length:var(--text-label)] text-[color:var(--color-text-muted)]">·</span>
-        <span className="mono text-[length:var(--text-label)] text-[color:var(--color-text-secondary)]">
-          {formatCost(totalCost)} total
-        </span>
-      </div>
     </div>
   );
 }
