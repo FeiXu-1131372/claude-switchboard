@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## v1.5.0 — 2026-11-11
+
 ### Added
 
 - **Fable weekly limit.** Max and Ultra accounts have a separate weekly cap for Fable. It now sits beside 5H and 7D in the popover, on each account row and in the tray tooltip, and it fires the same threshold notifications as the 5-hour and 7-day windows. Its reset countdown is shown only when it differs from the weekly one.
@@ -210,7 +212,8 @@ First public release. See the [GitHub release notes](https://github.com/FeiXu-11
 - Settings persistence via SQLite; CSP set; corrupted-DB recovery.
 - Anthropic-warm token system with native vibrancy (macOS) / Mica (Windows 11) / translucent solid (Windows 10).
 
-[Unreleased]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.3.1...v1.4.0
 
 [1.3.1]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.3.0...v1.3.1
