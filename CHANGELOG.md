@@ -8,14 +8,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- **Fable weekly limit.** Max and Ultra accounts have a separate weekly cap for Fable. It now has its own row in the popover's Details, on each account row and in the tray tooltip, with its own reset countdown, and it fires the same threshold notifications as the 5-hour and 7-day windows.
+- **Fable weekly limit.** Max and Ultra accounts have a separate weekly cap for Fable. It now sits beside 5H and 7D in the popover, on each account row and in the tray tooltip, and it fires the same threshold notifications as the 5-hour and 7-day windows. Its reset countdown is shown only when it differs from the weekly one.
+- **Colour themes.** Settings → Appearance now offers five themes (Terracotta, Graphite, Tide, Moss and Plum), each in light and dark. Terracotta stays the default. Warning and danger colours are the same in every theme.
 - **Ultra plan.** The $200 tier is named Ultra everywhere. Ultra has no 5-hour window, so the 5h column is hidden for accounts that report none and the weekly bar takes the full width.
 - **Fable 5.2 and Mythos 5.2 pricing.** Both are priced at $8 in / $40 out per million tokens and counted as 1M-context models; stored session costs are repriced once on first launch. The OpenRouter preset defaults to Fable 5.2 and warm-up pings Haiku 5.5.
+
+### Changed
+
+- **Five tabs instead of eight.** The expanded window is now Sessions, Cost, Trends, Breakdown and Providers, in one header row with the window buttons. Models, Projects and Cache are sections of the new Breakdown tab, and the heatmap is an activity calendar at the foot of Trends. The window reopens on the tab you left, and a tab saved under an old name opens its new home.
+- **One range for Cost, Trends and Breakdown.** Pick 7 days, 30 days, 90 days or a year once and all three tabs follow it; each shows its total and the range it covers in the same place. Ranges are whole calendar days, so the three tabs add up to the same figure.
+- **Breakdown tab.** Spend or tokens by model (with a share bar, and small models folded into "Other"), by project (top ten, with a filter and "Show all"), and four cache figures, on one page.
+- **Trends.** The chart has a slot for every day of the range, switches between days and weeks, and keeps the click-a-bar breakdown. The activity calendar below it covers the last 26 weeks and can be walked with the arrow keys.
+- **Cost.** Follows the shared range, shows each day's total, and pages long lists 250 rows at a time.
+- **Accounts sidebar.** The Switch button is always visible on every other account, not only on hover. The sidebar can be hidden and shown from the header, and stays that way next time. When the weekly and Fable limits reset together, the reset time is shown once.
+- **Popover Details.** The Details row is offered only when there is something behind it (the Opus and Sonnet split, or pay-as-you-go).
+- **Returning to a tab is instant.** Each tab keeps what it last loaded and refreshes it in the background, and Sessions keeps its filters and scroll position.
 
 ### Fixed
 
 - **Plan badge stuck on the plan you signed in with.** An account that signed in on Pro and was upgraded later kept its Pro badge, and an account added through the browser sign-in showed no plan at all. Claude Code only writes the plan into its credentials at sign-in; the plan is now read from the profile Claude Code keeps refreshing, and the active account's badge follows a plan change within a minute. An inactive account still updates the next time you switch to it.
 - **Fable row on plans without Fable.** Anthropic's usage endpoint reports a Fable row for every account, so Pro accounts showed "Fable 0%". The row is now shown only on Max and Ultra, or when it carries actual usage.
+- **Project session counts and order.** A project's session count was the number of API calls, not sessions, and the order of the list could change from one load to the next. Each session is now counted once, with subagent runs folded into the conversation that started them, and projects come back most expensive first.
+- **Low-contrast button text in dark mode.** Text on accent-coloured buttons and tags was white on a light accent in dark mode. It now uses a dark ink that passes contrast in every theme.
 
 ## v1.4.0 — 2026-11-10
 

@@ -29,8 +29,9 @@ A ring around the menu-bar icon shows live percentage. Hover for a one-line summ
 The compact popover gives you everything you need to decide "can I keep coding?" in under a second:
 
 - **5H / 7D bars** with absolute reset times (`in 19m`, `in 46h 9m`) — never math-on-the-fly
+- **Fable beside them** when your account has the separate Fable weekly cap
 - **Burn-rate projection** — `→ ~26% by reset` extrapolates from your current pace
-- **Details disclosure** — expand for the Opus/Sonnet/Fable weekly split and pay-as-you-go credits, when your plan reports them (Pro and Team-Pro share a single combined 7-day quota, so the model rows don't apply there)
+- **Details disclosure** — expand for the Opus/Sonnet weekly split and pay-as-you-go credits. It appears only when your plan reports them (Pro and Team-Pro share a single combined 7-day quota, so the model rows don't apply there)
 
 <p align="center">
   <img src="docs/screenshots/macos-popover-details.png" alt="Popover with Details expanded — the pay-as-you-go row, shown only when the plan reports it" width="380" />
@@ -198,21 +199,23 @@ Managed credentials are stored locally in `accounts.json`. Switching writes the 
 
 ---
 
-## Cost and Trends, broken down
+## Cost, Trends and Breakdown
 
-**The token/cost tab from earlier versions is now called Cost — Sessions now means the session browser above.**
+**The token/cost tab from earlier versions is now called Cost — Sessions now means the session browser above.** Cost, Trends and Breakdown share one range (7 days, 30 days, 90 days or a year): pick it once and all three follow, and they add up to the same total.
 
 <p align="center">
   <img src="docs/screenshots/macos-cost.png" alt="Cost tab — sessions grouped by day with per-session tokens and cost, headless runs visually demoted" width="880" />
 </p>
 
-Cost groups sessions by day, rolls subagent runs into their parent conversation, and visually demotes headless or scheduled runs instead of showing a broken-looking blank row.
+Cost groups sessions by day with each day's total, rolls subagent runs into their parent conversation, and visually demotes headless or scheduled runs instead of showing a broken-looking blank row.
 
 <p align="center">
   <img src="docs/screenshots/macos-trends-day.png" alt="Trends tab with a day selected — that day's per-model token, cost, and cache breakdown, sorted by cost" width="880" />
 </p>
 
-Trends charts your usage over time — click any day to see that day's per-model token, cost, and cache breakdown, sorted by cost. The whole window loads with the chart, so opening a day is instant.
+Trends charts your usage over time, by day or by week — click any bar to see its per-model token, cost, and cache breakdown, sorted by cost. The whole window loads with the chart, so opening a day is instant. Below the chart, an activity calendar shows the last 26 weeks at a glance.
+
+Breakdown answers "where did it go?" on one page: spend or tokens by model, by project, and what the prompt cache saved. It replaces the separate Models, Projects and Cache tabs.
 
 ---
 
@@ -230,7 +233,7 @@ Trends charts your usage over time — click any day to see that day's per-model
   <img src="docs/screenshots/windows-popover.png" alt="Compact popover on Windows" width="380" />
 </p>
 
-The full report has eight tabs — Sessions, Cost, Models, Trends, Projects, Heatmap, Cache, Providers — sourced from your local Claude Code JSONL transcripts.
+The full report has five tabs — Sessions, Cost, Trends, Breakdown, Providers — sourced from your local Claude Code JSONL transcripts. (The two screenshots below are from an earlier version, when Models and Heatmap were tabs of their own; they are now part of Breakdown and Trends.)
 
 <p align="center">
   <img src="docs/screenshots/windows-expanded-models.png" alt="Expanded report — Models tab with per-model token breakdown" width="720" />
@@ -264,7 +267,8 @@ The full report has eight tabs — Sessions, Cost, Models, Trends, Projects, Hea
 - **Multi-account, one-click swap** — every account in one popover, click to switch, running sessions adopt in ~30s
 - **Burn-rate projection** — extrapolates your pace and color-cues against your threshold
 - **Threshold notifications** — warn / danger levels you choose; one alert per bucket cycle
-- **Eight-tab expanded report** — Sessions, Cost, Models, Trends, Projects, Heatmap, Cache, Providers
+- **Five-tab expanded report** — Sessions, Cost, Trends, Breakdown, Providers, with one shared range
+- **Five colour themes** — Terracotta, Graphite, Tide, Moss and Plum, each in light and dark
 - **Tier-aware cost math** — Sonnet 4's 1M-context tier and the 5-minute / 1-hour cache write split
 - **Custom model providers** — launch Claude Code against GLM, Kimi, DeepSeek, MiniMax, OpenRouter, or a custom endpoint, per-session or as a global default
 - **Session browser + resume** — every past session with its own recap, one click from resuming into a terminal or a VS Code tab, always forked

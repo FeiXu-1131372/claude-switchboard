@@ -13,7 +13,9 @@ Calm, precise, premium. Not playful, not corporate, not technical-for-its-own-sa
 ### Aesthetic Direction
 Glassy native widget — feels like it belongs in the OS, not like a standalone product with its own chrome. References: macOS Control Center, Raycast popover, Linear's density. Anti-references: generic admin dashboards, ai-token-monitor's rounded Nunito aesthetic, claude-usage-bar's stock SwiftUI.
 
-**Color palette:** Anthropic warm orange/terracotta as the surface tint foundation. Teal/cyan as the primary interactive accent. Neutral warm grays for surfaces and text. Usage thresholds use the expected traffic-light progression (safe/amber/danger) but with warm bias — amber-orange rather than pure yellow, coral-red rather than pure red.
+**Color palette:** Anthropic warm orange/terracotta as the surface tint foundation. Terracotta is the interactive accent and the only hue used for volume in charts. Teal marks non-Anthropic models. Amber and red are reserved for limits. Neutral warm grays for surfaces and text. Usage thresholds use the expected traffic-light progression (safe/amber/danger) but with warm bias — amber-orange rather than pure yellow, coral-red rather than pure red.
+
+**Colour themes:** Terracotta is the default of five themes chosen in Settings (Terracotta, Graphite, Tide, Moss, Plum), each in light and dark. A theme sets the surface tint and the accent; the warn and danger colours and the model colours are the same in every theme. Every theme is defined in `src/styles/tokens.css` and must pass `src/styles/contrast.test.ts`.
 
 **Typography:** System UI font (Inter on Windows, SF Pro on macOS via system stack). Monospace accents for all numeric data (JetBrains Mono). Tight tracking, generous line-height for readability.
 
@@ -26,6 +28,7 @@ Glassy native widget — feels like it belongs in the OS, not like a standalone 
 3. **One tight token set.** Every color, radius, spacing, and animation curve comes from tokens. No hard-coded values anywhere. Two screens must feel like the same app.
 4. **Native feel, not native boring.** Match the OS conventions for window behavior and chrome, but bring personality through type contrast, color temperature, and subtle glass effects.
 5. **Cross-platform parity is non-negotiable.** Design once, render the same. Platform differences limited to: vibrancy (macOS) vs Mica (Win11) vs translucent solid (Win10).
+6. **Tables, not cards.** Lists are dense rows on a shared grid with right-aligned tabular numbers.
 
 ### Stack
 - Tauri v2 + React 19 + TypeScript
