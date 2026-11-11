@@ -54,6 +54,8 @@ async function start() {
           return PRICING;
         case 'get_session_history':
           return windowOf(data, days(payload), now).events;
+        case 'get_session_costs':
+          return windowOf(data, days(payload), now).sessionCosts;
         case 'get_compactions':
           return windowOf(data, days(payload), now).compactions;
         case 'get_daily_trends':

@@ -48,6 +48,7 @@ describe('windowOf', () => {
       expect(sum(w.models.map((m) => m.cost_usd))).toBeCloseTo(daily, 6);
       expect(sum(w.projects.map((p) => p.total_cost_usd))).toBeCloseTo(daily, 6);
       expect(sum(w.events.map((e) => e.cost_usd))).toBeCloseTo(daily, 6);
+      expect(sum(w.sessionCosts.map((r) => r.total_cost_usd))).toBeCloseTo(daily, 6);
     }
   });
 
@@ -60,6 +61,19 @@ describe('windowOf', () => {
       const w = windowOf(d, days, NOW);
       expect(w.daily).toHaveLength(days);
       expect(w.daily[w.daily.length - 1].date).toBe(today);
+    }
+  });
+
+  it('session cost rows are one per conversation per day, newest first, with their subagents inside', () => {
+    const w = windowOf(buildFixtures('heavy', NOW), 7, NOW);
+    expect(new Set(w.sessionCosts.map((r) => r.id)).size).toBe(w.sessionCosts.length);
+    const stamps = w.sessionCosts.map((r) => r.latest_ts);
+    expect(stamps).toEqual([...stamps].sort().reverse());
+    const withAgents = w.sessionCosts.filter((r) => r.subagents.length > 0);
+    expect(withAgents.length).toBeGreaterThan(0);
+    for (const r of withAgents) {
+      expect(r.id.endsWith(`#${r.day}`)).toBe(true);
+      expect(r.subagents.reduce((s, a) => s + a.total_cost_usd, 0)).toBeLessThanOrEqual(r.total_cost_usd + 1e-9);
     }
   });
 

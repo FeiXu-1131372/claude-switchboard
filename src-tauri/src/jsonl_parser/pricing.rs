@@ -27,6 +27,16 @@ pub struct PricingTier {
     pub cache_1h_per_mtok: f64,
 }
 
+/// Dollars, split by the kind of token they paid for.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize, specta::Type)]
+pub struct CostBreakdown {
+    pub input: f64,
+    pub output: f64,
+    pub cache_read: f64,
+    pub cache_write_5m: f64,
+    pub cache_write_1h: f64,
+}
+
 #[derive(Debug, Deserialize)]
 struct PricingFile {
     pricing: Vec<PricingEntry>,
@@ -117,9 +127,23 @@ impl PricingTable {
         cache_5m: u64,
         cache_1h: u64,
     ) -> f64 {
-        let Some(e) = self.lookup(model) else {
-            return 0.0;
-        };
+        self.cost_by_category(model, input, output, cache_read, cache_5m, cache_1h)
+            .map(|c| c.input + c.output + c.cache_read + c.cache_write_5m + c.cache_write_1h)
+            .unwrap_or(0.0)
+    }
+
+    /// What one API call cost, split by the kind of token. `None` for a model
+    /// with no entry in the table.
+    pub fn cost_by_category(
+        &self,
+        model: &str,
+        input: u64,
+        output: u64,
+        cache_read: u64,
+        cache_5m: u64,
+        cache_1h: u64,
+    ) -> Option<CostBreakdown> {
+        let e = self.lookup(model)?;
         let m = 1_000_000.0;
 
         // For 1M-context models, Anthropic charges every input-side and
@@ -145,11 +169,13 @@ impl PricingTable {
             ),
         };
 
-        (input as f64) / m * input_rate
-            + (output as f64) / m * output_rate
-            + (cache_read as f64) / m * cr_rate
-            + (cache_5m as f64) / m * c5m_rate
-            + (cache_1h as f64) / m * c1h_rate
+        Some(CostBreakdown {
+            input: (input as f64) / m * input_rate,
+            output: (output as f64) / m * output_rate,
+            cache_read: (cache_read as f64) / m * cr_rate,
+            cache_write_5m: (cache_5m as f64) / m * c5m_rate,
+            cache_write_1h: (cache_1h as f64) / m * c1h_rate,
+        })
     }
 }
 
@@ -168,6 +194,32 @@ mod tests {
         assert_eq!(opus47.prefix, "opus-4-7");
         let opus_generic = tbl.lookup("opus-7-5-future").unwrap();
         assert_eq!(opus_generic.prefix, "opus");
+    }
+
+    #[test]
+    fn category_costs_sum_to_cost_for() {
+        let t = t();
+        for (m, i, o, r, c5, c1) in [
+            ("claude-opus-5-5", 1000, 2000, 30_000, 400, 50),
+            ("claude-haiku-5-5", 150_000, 10, 0, 0, 0),
+        ] {
+            let by = t.cost_by_category(m, i, o, r, c5, c1).unwrap();
+            let sum = by.input + by.output + by.cache_read + by.cache_write_5m + by.cache_write_1h;
+            assert!((sum - t.cost_for(m, i, o, r, c5, c1)).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn a_model_with_no_price_has_no_category_costs() {
+        assert!(t().cost_by_category("mystery-model-1", 10, 10, 10, 10, 10).is_none());
+    }
+
+    #[test]
+    fn the_tier_moves_every_category_of_that_call() {
+        let t = t();
+        let below = t.cost_by_category("claude-haiku-5-5", 100_000, 1000, 0, 0, 0).unwrap();
+        let above = t.cost_by_category("claude-haiku-5-5", 100_001, 1000, 0, 0, 0).unwrap();
+        assert!(above.output > below.output, "output is charged at the tier rate too");
     }
 
     #[test]

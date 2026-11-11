@@ -7,7 +7,7 @@
  * way they do in the real app where every command reads the same events.
  */
 import pricingFile from '../../src-tauri/pricing.json';
-import { lookupPricing } from '../lib/pricing';
+import { costPerCategory, lookupPricing } from '../lib/pricing';
 import type {
   AccountListEntry,
   CacheStats,
@@ -18,10 +18,12 @@ import type {
   PricingEntry,
   ProjectStats,
   Provider,
+  SessionCostRow,
   SessionSummary,
   Settings,
   StoredCompaction,
   StoredSessionEvent,
+  SubagentCost,
   Utilization,
 } from '../lib/generated/bindings';
 
@@ -68,6 +70,7 @@ export interface PreviewWindow {
   projects: ProjectStats[];
   cache: CacheStats;
   events: StoredSessionEvent[];
+  sessionCosts: SessionCostRow[];
   compactions: StoredCompaction[];
 }
 
@@ -365,6 +368,111 @@ function eventsOf(cells: UsageCell[], now: Date): StoredSessionEvent[] {
   return events;
 }
 
+/** The model with the most output; the first one seen on a tie. */
+function dominantOf(output: Map<string, number>): string {
+  let best = '';
+  let most = -1;
+  for (const [model, n] of output) {
+    if (n > most) {
+      most = n;
+      best = model;
+    }
+  }
+  return best;
+}
+
+/** Stand-in for the backend's `session_costs::aggregate`: one row per
+ * conversation per local day, subagents listed under the session that started
+ * them, newest first. */
+function sessionCostsOf(events: StoredSessionEvent[]): SessionCostRow[] {
+  type Sub = { row: SubagentCost; output: Map<string, number> };
+  const parents = new Map<string, { row: SessionCostRow; output: Map<string, number>; subs: Map<string, Sub> }>();
+  for (const e of events) {
+    const at = e.source_file.indexOf('/subagents/');
+    const day = dayKey(Date.parse(e.ts));
+    const id = `${at < 0 ? e.source_file : `${e.source_file.slice(0, at)}.jsonl`}#${day}`;
+    let p = parents.get(id);
+    if (!p) {
+      p = {
+        row: {
+          id,
+          project: e.project,
+          day,
+          latest_ts: e.ts,
+          turn_count: 0,
+          headline_tokens: 0,
+          total_cost_usd: 0,
+          dominant_model: e.model,
+          breakdown: { input: 0, output: 0, cache_read: 0, cache_write_5m: 0, cache_write_1h: 0 },
+          cost_breakdown: { input: 0, output: 0, cache_read: 0, cache_write_5m: 0, cache_write_1h: 0 },
+          subagents: [],
+        },
+        output: new Map(),
+        subs: new Map(),
+      };
+      parents.set(id, p);
+    }
+    const r = p.row;
+    r.turn_count += 1;
+    r.headline_tokens += e.input_tokens + e.output_tokens;
+    r.total_cost_usd += e.cost_usd;
+    if (e.ts > r.latest_ts) r.latest_ts = e.ts;
+    r.breakdown.input += e.input_tokens;
+    r.breakdown.output += e.output_tokens;
+    r.breakdown.cache_read += e.cache_read_tokens;
+    r.breakdown.cache_write_5m += e.cache_creation_5m_tokens;
+    r.breakdown.cache_write_1h += e.cache_creation_1h_tokens;
+    p.output.set(e.model, (p.output.get(e.model) ?? 0) + e.output_tokens);
+    const entry = lookupPricing(PRICING, e.model);
+    if (entry) {
+      const c = costPerCategory(entry, {
+        input: e.input_tokens,
+        output: e.output_tokens,
+        cache_read: e.cache_read_tokens,
+        cache_5m: e.cache_creation_5m_tokens,
+        cache_1h: e.cache_creation_1h_tokens,
+      });
+      r.cost_breakdown.input += c.input;
+      r.cost_breakdown.output += c.output;
+      r.cost_breakdown.cache_read += c.cache_read;
+      r.cost_breakdown.cache_write_5m += c.cache_5m;
+      r.cost_breakdown.cache_write_1h += c.cache_1h;
+    }
+    if (at >= 0) {
+      let s = p.subs.get(e.source_file);
+      if (!s) {
+        const hexId = /agent-([0-9a-f]+)/i.exec(e.source_file)?.[1];
+        s = {
+          row: {
+            id: e.source_file,
+            label: hexId ? `agent ${hexId.slice(0, 8)}` : 'subagent',
+            latest_ts: e.ts,
+            turn_count: 0,
+            headline_tokens: 0,
+            total_cost_usd: 0,
+            dominant_model: e.model,
+          },
+          output: new Map(),
+        };
+        p.subs.set(e.source_file, s);
+      }
+      s.row.turn_count += 1;
+      s.row.headline_tokens += e.input_tokens + e.output_tokens;
+      s.row.total_cost_usd += e.cost_usd;
+      if (e.ts > s.row.latest_ts) s.row.latest_ts = e.ts;
+      s.output.set(e.model, (s.output.get(e.model) ?? 0) + e.output_tokens);
+    }
+  }
+  const rows = [...parents.values()].map((p) => ({
+    ...p.row,
+    dominant_model: dominantOf(p.output),
+    subagents: [...p.subs.values()]
+      .map((s) => ({ ...s.row, dominant_model: dominantOf(s.output) }))
+      .sort((a, b) => a.latest_ts.localeCompare(b.latest_ts) || a.id.localeCompare(b.id)),
+  }));
+  return rows.sort((a, b) => b.latest_ts.localeCompare(a.latest_ts) || a.id.localeCompare(b.id));
+}
+
 function compactionsOf(cells: UsageCell[]): StoredCompaction[] {
   const out: StoredCompaction[] = [];
   const seen = new Set<string>();
@@ -465,7 +573,8 @@ export function windowOf(data: PreviewData, days: number, now: Date): PreviewWin
   const from = reportStart(days, now);
   const cells = data.ledger.filter((c) => c.ts >= from);
   const recent = cells.filter((c) => c.ts >= now.getTime() - 7 * DAY_MS);
-  return { ...aggregate(cells), events: eventsOf(cells, now), compactions: compactionsOf(recent) };
+  const events = eventsOf(cells, now);
+  return { ...aggregate(cells), events, sessionCosts: sessionCostsOf(events), compactions: compactionsOf(recent) };
 }
 
 function sessionSummaries(cells: UsageCell[], limit: number): SessionSummary[] {

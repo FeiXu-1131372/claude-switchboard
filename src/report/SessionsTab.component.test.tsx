@@ -1,10 +1,11 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { SessionSummary, StoredSessionEvent } from '../lib/generated/bindings';
+import type { SessionCostRow, SessionSummary } from '../lib/generated/bindings';
 import { useAppStore } from '../lib/store';
 
 const ipcMock = vi.hoisted(() => ({
   getSessionHistory: vi.fn(),
+  getSessionCosts: vi.fn(),
   getCompactions: vi.fn(),
   getPricing: vi.fn(),
   listResumableSessions: vi.fn(),
@@ -14,20 +15,19 @@ vi.mock('../lib/ipc', () => ({ ipc: ipcMock }));
 
 import { SessionsTab } from './SessionsTab';
 
-function ev(over: Partial<StoredSessionEvent> = {}): StoredSessionEvent {
+function row(over: Partial<SessionCostRow> = {}): SessionCostRow {
   return {
-    ts: '2026-11-10T10:00:00Z',
+    id: 'proj-alpha/abc123.jsonl#2026-11-10',
     project: 'alpha',
-    model: 'claude-sonnet-5',
-    input_tokens: 100,
-    output_tokens: 50,
-    cache_read_tokens: 0,
-    cache_creation_5m_tokens: 0,
-    cache_creation_1h_tokens: 0,
-    cost_usd: 1.23,
-    source_file: 'proj-alpha/abc123.jsonl',
-    source_line: 1,
-    event_id: 'evt-1',
+    day: '2026-11-10',
+    latest_ts: '2026-11-10T10:00:00Z',
+    turn_count: 1,
+    headline_tokens: 150,
+    total_cost_usd: 1.23,
+    dominant_model: 'claude-sonnet-5',
+    breakdown: { input: 100, output: 50, cache_read: 0, cache_write_5m: 0, cache_write_1h: 0 },
+    cost_breakdown: { input: 0.3, output: 0.93, cache_read: 0, cache_write_5m: 0, cache_write_1h: 0 },
+    subagents: [],
     ...over,
   };
 }
@@ -60,9 +60,8 @@ function summary(over: Partial<SessionSummary> = {}): SessionSummary {
 describe('SessionsTab (Cost) — session titles', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    ipcMock.getSessionHistory.mockResolvedValue([ev()]);
+    ipcMock.getSessionCosts.mockResolvedValue([row()]);
     ipcMock.getCompactions.mockResolvedValue([]);
-    ipcMock.getPricing.mockResolvedValue([]);
   });
 
   it('keeps the open row after the tab is left and reopened, with no loading state', async () => {
@@ -82,9 +81,9 @@ describe('SessionsTab (Cost) — session titles', () => {
     render(<SessionsTab />);
     fireEvent.click(await screen.findByRole('button', { expanded: false }));
 
-    let release!: (events: StoredSessionEvent[]) => void;
-    ipcMock.getSessionHistory.mockReturnValueOnce(
-      new Promise<StoredSessionEvent[]>((resolve) => {
+    let release!: (rows: SessionCostRow[]) => void;
+    ipcMock.getSessionCosts.mockReturnValueOnce(
+      new Promise<SessionCostRow[]>((resolve) => {
         release = resolve;
       }),
     );
@@ -94,7 +93,7 @@ describe('SessionsTab (Cost) — session titles', () => {
     // Refetch in flight: the row is still there and still open.
     expect(screen.getByRole('button', { expanded: true })).toBeInTheDocument();
 
-    await act(async () => release([ev(), ev({ event_id: 'evt-2', source_line: 2, cost_usd: 1 })]));
+    await act(async () => release([row({ turn_count: 2, total_cost_usd: 2.23 })]));
     expect(screen.getByRole('button', { expanded: true })).toBeInTheDocument();
     expect(screen.getByRole('button', { expanded: true })).toHaveTextContent('2 turns');
   });
@@ -135,7 +134,7 @@ describe('SessionsTab (Cost) — session titles', () => {
   });
 
   it('matches titles for legacy Windows transcript paths', async () => {
-    ipcMock.getSessionHistory.mockResolvedValue([ev({ source_file: 'proj-alpha\\abc123.jsonl' })]);
+    ipcMock.getSessionCosts.mockResolvedValue([row({ id: 'proj-alpha\\abc123.jsonl#2026-11-10' })]);
     ipcMock.listResumableSessions.mockResolvedValue([summary()]);
     render(<SessionsTab />);
     await waitFor(() => expect(screen.getByText('Fix the parser bug')).toBeInTheDocument());
@@ -152,7 +151,49 @@ describe('SessionsTab (Cost) — session titles', () => {
     });
 
     // The tab's own history query refreshes; the transcript scan does not.
-    await waitFor(() => expect(ipcMock.getSessionHistory).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(ipcMock.getSessionCosts).toHaveBeenCalledTimes(2));
     expect(ipcMock.listResumableSessions).toHaveBeenCalledTimes(1);
+  });
+
+  it('never asks for raw events', async () => {
+    ipcMock.listResumableSessions.mockResolvedValue([]);
+    render(<SessionsTab />);
+    await screen.findByText(/sessions?$/);
+    expect(ipcMock.getSessionHistory).not.toHaveBeenCalled();
+    expect(ipcMock.getPricing).not.toHaveBeenCalled();
+  });
+
+  it('counts a conversation once however many days it ran', async () => {
+    ipcMock.listResumableSessions.mockResolvedValue([]);
+    ipcMock.getSessionCosts.mockResolvedValue([
+      row({ id: 'proj-alpha/abc123.jsonl#2026-11-10', day: '2026-11-10', total_cost_usd: 2 }),
+      row({ id: 'proj-alpha/abc123.jsonl#2026-11-09', day: '2026-11-09', latest_ts: '2026-11-09T10:00:00Z', total_cost_usd: 3 }),
+    ]);
+    render(<SessionsTab />);
+    expect(await screen.findByText('1 session')).toBeInTheDocument();
+    expect(screen.getByText('$5.00')).toBeInTheDocument();
+  });
+
+  it('lists a row\u2019s subagents and category costs when it is opened', async () => {
+    ipcMock.listResumableSessions.mockResolvedValue([]);
+    ipcMock.getSessionCosts.mockResolvedValue([
+      row({
+        subagents: [
+          {
+            id: 'proj-alpha/abc123/subagents/agent-0a1b2c3d.jsonl',
+            label: 'agent 0a1b2c3d',
+            latest_ts: '2026-11-10T09:00:00Z',
+            turn_count: 1,
+            headline_tokens: 40,
+            total_cost_usd: 0.2,
+            dominant_model: 'claude-haiku-5-5',
+          },
+        ],
+      }),
+    ]);
+    render(<SessionsTab />);
+    fireEvent.click(await screen.findByRole('button', { expanded: false }));
+    expect(screen.getByText('agent 0a1b2c3d')).toBeInTheDocument();
+    expect(screen.getByText('$0.93')).toBeInTheDocument();
   });
 });

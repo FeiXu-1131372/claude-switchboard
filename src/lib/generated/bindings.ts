@@ -30,12 +30,23 @@ async getSessionHistory(days: number) : Promise<Result<StoredSessionEvent[], str
 }
 },
 /**
- * Compaction boundaries in the same window as `get_session_history`, so the
+ * Compaction boundaries in the same window as `get_session_costs`, so the
  * Cost tab can mark which sessions had their context reset partway through.
  */
 async getCompactions(days: number) : Promise<Result<StoredCompaction[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_compactions", { days }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * What each conversation cost on each of the last `days` days, newest first.
+ */
+async getSessionCosts(days: number) : Promise<Result<SessionCostRow[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_session_costs", { days }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -174,7 +185,7 @@ async importLongLivedToken(accessToken: string, label: string | null, replaceSlo
     return { status: "ok", data: await TAURI_INVOKE("import_long_lived_token", { accessToken, label, replaceSlot }) };
 } catch (e) {
     if(e instanceof Error) throw e;
-    else return { status: "error", error: e as any };
+    else return { status: "error", error: e  as any };
 }
 },
 async removeAccount(slot: number) : Promise<Result<null, string>> {
@@ -516,11 +527,11 @@ async recheckStatuslineBridge() : Promise<Result<BridgeTargetStatus[], string>> 
 
 /** user-defined types **/
 
-export type AccountListEntry = { slot: number;
+export type AccountListEntry = { slot: number; 
 /**
  * Display label, falling back to the verified email when available.
  */
-email: string;
+email: string; 
 /**
  * Stable local account identifier (a UUID or token fingerprint).
  * Pass this as `accountId` to warmup-related Tauri commands.
@@ -528,19 +539,6 @@ email: string;
 account_uuid: string; org_name: string | null; org_uuid: string | null; subscription_type: string | null; source: AddSource; is_active: boolean; cached_usage: CachedUsage | null; last_error: string | null }
 export type AddSource = "OAuth" | "ImportedFromClaudeCode" | "LongLivedToken"
 export type AuthSource = "OAuth" | "ClaudeCode"
-/**
- * Linear projection of where 5h utilization will land at the current
- * window's reset_at, based on observed slope so far this window. Borrowed
- * from ccusage's burn-rate idea — answers "should I keep coding?" with a
- * concrete number instead of just the bare current %. None when we don't
- * yet have enough samples (need at least 2 polls ≥ 2 minutes apart).
- */
-/**
- * What the settings card shows for one config folder (spec §7).
- * 
- * [`derive_state`] is a pure function of facts the manager gathers, so every
- * state in the table is testable on its own.
- */
 export type BridgeState = { kind: "off" } | 
 /**
  * No config home and no global config: Claude Code isn't installed here.
@@ -571,6 +569,13 @@ export type BridgeTargetStatus = {
  * Empty when the config folder doesn't exist yet.
  */
 id: string; config_home: string; settings_path: string; bridge_path: string; installed_command: string | null; original_command: string | null; shared_warning: string | null; state: BridgeState }
+/**
+ * Linear projection of where 5h utilization will land at the current
+ * window's reset_at, based on observed slope so far this window. Borrowed
+ * from ccusage's burn-rate idea — answers "should I keep coding?" with a
+ * concrete number instead of just the bare current %. None when we don't
+ * yet have enough samples (need at least 2 polls ≥ 2 minutes apart).
+ */
 export type BurnRateProjection = { 
 /**
  * Slope of five_hour.utilization, in percentage points per minute.
@@ -596,6 +601,10 @@ origin?: SnapshotOrigin;
  * status line's `rate_limits`, so they keep their own age.
  */
 carried_fetched_at?: string | null }
+/**
+ * Dollars, split by the kind of token they paid for.
+ */
+export type CostBreakdown = { input: number; output: number; cache_read: number; cache_write_5m: number; cache_write_1h: number }
 export type DailyBucket = { date: string; input_tokens: number; output_tokens: number; cost_usd: number }
 export type DailyModelBucket = { date: string; models: ModelStats[] }
 /**
@@ -630,10 +639,6 @@ export type LaunchSurface =
 "vs_code_tab"
 export type ModelStats = { model: string; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; cost_usd: number }
 /**
- * Serializable mirror of `Preset` for the frontend.
- */
-export type PresetInfo = { id: string; name: string; base_url: string; website: string; env: Partial<{ [key in string]: string }> }
-/**
  * What the consent panel needs, gathered without changing any setting.
  */
 export type PreflightReport = { 
@@ -649,6 +654,10 @@ latency_ms: number; settings_path: string; bridge_path: string;
  * The user's current command, `None` when there is none.
  */
 original_command: string | null; original_direct: string | null; original_via_bridge: string | null; shared_warning: string | null }
+/**
+ * Serializable mirror of `Preset` for the frontend.
+ */
+export type PresetInfo = { id: string; name: string; base_url: string; website: string; env: Partial<{ [key in string]: string }> }
 export type PricingEntry = { prefix: string; input_per_mtok: number; output_per_mtok: number; cache_read_per_mtok: number; cache_5m_per_mtok: number; cache_1h_per_mtok: number; 
 /**
  * Optional 1M-context tier (Sonnet 4 only at time of writing). When
@@ -697,6 +706,36 @@ export type RunningClaudeCode = { cli_processes: number; vscode_with_extension: 
  * {"type":"Custom","times":[{"hour":7,"minute":30},{"hour":17,"minute":0}]}
  */
 export type Schedule = { type: "Off" } | { type: "Every5h"; anchor: HhMm } | { type: "Custom"; times: HhMm[] }
+/**
+ * One conversation on one local day.
+ * 
+ * The day is part of the identity, not a label: a conversation resumed after
+ * a few days is several rows, each holding what was spent on its own date, so
+ * the rows under a day add up to that day's bar in Trends.
+ */
+export type SessionCostRow = { 
+/**
+ * `<parent transcript path>#<YYYY-MM-DD>`.
+ */
+id: string; project: string; day: string; latest_ts: string; 
+/**
+ * API calls that appear in the transcript. Unlogged-call rows add cost
+ * and tokens but are not turns.
+ */
+turn_count: number; 
+/**
+ * Input plus output, the parent and its subagents together. Cache tokens
+ * are far larger and mostly reuse, so they are left to the breakdown.
+ */
+headline_tokens: number; total_cost_usd: number; 
+/**
+ * The model that wrote the most output; the first one seen on a tie.
+ */
+dominant_model: string; breakdown: TokenBreakdown; cost_breakdown: CostBreakdown; 
+/**
+ * Oldest first, so the order they were started in reads top to bottom.
+ */
+subagents: SubagentCost[] }
 export type SessionSummary = { session_id: string; cwd: string; project_name: string; git_branch: string | null; title: string; 
 /**
  * Claude Code's own end-of-session summary (the `※ recap:` line). The
@@ -774,6 +813,7 @@ terminal?: Terminal | null;
  * Absent in older settings; automatic switching remains opt-in.
  */
 account_rotation?: RotationSettings | null }
+export type ShellResult = { shell: string; ok: boolean; detail: string }
 /**
  * Where a usage snapshot came from. Every origin but `Http` is a local
  * source that costs no `/usage` call.
@@ -794,7 +834,6 @@ export type SnapshotOrigin = "http" |
 /**
  * A `/compact` boundary inside one session transcript.
  */
-export type ShellResult = { shell: string; ok: boolean; detail: string }
 export type StoredCompaction = { ts: string; source_file: string; 
 /**
  * "manual" (`/compact`) or "auto" (context exhausted).
@@ -815,9 +854,25 @@ export type StoredSessionEvent = { ts: string; project: string; model: string; i
  * as a structural fallback for older / pre-requestId schemas.
  */
 event_id: string }
+/**
+ * A subagent's transcript, listed under the conversation that started it.
+ */
+export type SubagentCost = { 
+/**
+ * The subagent transcript's path.
+ */
+id: string; label: string; latest_ts: string; turn_count: number; headline_tokens: number; total_cost_usd: number; dominant_model: string }
 export type SwapReport = { new_active_slot: number; running: RunningClaudeCode }
 export type Terminal = "ghostty" | "terminal_app" | "iterm_2" | "kitty" | "wez_term" | "windows_terminal" | "power_shell"
-export type UsageSnapshot = { five_hour: Utilization | null; seven_day: Utilization | null; seven_day_sonnet: Utilization | null; seven_day_opus: Utilization | null; seven_day_fable: Utilization | null; extra_usage: ExtraUsage | null; fetched_at?: string }
+export type TokenBreakdown = { input: number; output: number; cache_read: number; cache_write_5m: number; cache_write_1h: number }
+export type UsageSnapshot = { five_hour: Utilization | null; seven_day: Utilization | null; seven_day_sonnet: Utilization | null; seven_day_opus: Utilization | null; 
+/**
+ * Model-scoped weekly limit for Fable, sourced from the modern
+ * `limits[]` array or a legacy alias. Only Max and Ultra come with
+ * Fable, but the API sends the row to every plan: see
+ * [`UsageSnapshot::hide_fable_without_access`].
+ */
+seven_day_fable: Utilization | null; extra_usage: ExtraUsage | null; fetched_at: string }
 export type Utilization = { utilization: number; resets_at?: string | null }
 /**
  * Per-account warm-up state returned by `get_warmup_state`.

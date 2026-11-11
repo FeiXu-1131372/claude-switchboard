@@ -14,6 +14,7 @@ pub mod providers;
 pub mod os_scheduler;
 pub mod scheduler;
 pub mod scheduler_glue;
+mod session_costs;
 pub mod sessions;
 mod statusline_setup;
 mod statusline_source;
@@ -122,6 +123,7 @@ pub fn run() {
             commands::get_pricing,
             commands::get_session_history,
             commands::get_compactions,
+            commands::get_session_costs,
             commands::get_daily_trends,
             commands::get_model_breakdown,
             commands::get_daily_model_breakdown,
@@ -181,6 +183,7 @@ pub fn run() {
             commands::get_pricing,
             commands::get_session_history,
             commands::get_compactions,
+            commands::get_session_costs,
             commands::get_daily_trends,
             commands::get_model_breakdown,
             commands::get_daily_model_breakdown,

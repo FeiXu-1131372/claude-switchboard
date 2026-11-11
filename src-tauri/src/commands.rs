@@ -119,7 +119,7 @@ fn report_events(
     state.db.events_between(from, Utc::now()).map_err(err_to_string)
 }
 
-/// Compaction boundaries in the same window as `get_session_history`, so the
+/// Compaction boundaries in the same window as `get_session_costs`, so the
 /// Cost tab can mark which sessions had their context reset partway through.
 #[command]
 #[specta::specta]
@@ -127,9 +127,19 @@ pub async fn get_compactions(
     days: u32,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<crate::store::StoredCompaction>, String> {
-    let to = Utc::now();
-    let from = to - Duration::days(days as i64);
-    state.db.compactions_between(from, to).map_err(err_to_string)
+    let from = report_window_start(days, &chrono::Local::now());
+    state.db.compactions_between(from, Utc::now()).map_err(err_to_string)
+}
+
+/// What each conversation cost on each of the last `days` days, newest first.
+#[command]
+#[specta::specta]
+pub async fn get_session_costs(
+    days: u32,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<crate::session_costs::SessionCostRow>, String> {
+    let events = report_events(days, &state)?;
+    Ok(crate::session_costs::aggregate(&events, &state.pricing, &chrono::Local))
 }
 
 #[command]

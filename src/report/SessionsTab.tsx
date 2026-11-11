@@ -8,9 +8,7 @@ import { ChevronDown, ChevronRight, IconCompact, IconSessions, IconSubagent } fr
 import { ipc } from '../lib/ipc';
 import { useTabData } from '../lib/useTabData';
 import { useAppStore } from '../lib/store';
-import { isUnloggedCallRow } from '../lib/types';
-import type { Compaction, PricingEntry, SessionEvent } from '../lib/types';
-import { costPerCategory, lookupPricing } from '../lib/pricing';
+import type { Compaction, SessionCostRow, SubagentCost } from '../lib/types';
 import { RESUMABLE_SESSIONS_KEY } from '../sessions/useResumableSessions';
 import { useReportStore } from './reportState';
 
@@ -61,57 +59,6 @@ function formatDayLabel(dayKey: string): string {
   });
 }
 
-type Breakdown = {
-  input: number;
-  output: number;
-  cache_read: number;
-  cache_write_5m: number;
-  cache_write_1h: number;
-};
-
-/** A subagent (Task/Agent tool) transcript rolled under its parent session.
- * Claude Code writes these to `<project>/<sessionId>/subagents/agent-*.jsonl`.
- * They share the parent conversation's `cwd`, so without nesting every
- * subagent would render as a duplicate top-level session row. */
-interface SubagentSession {
-  id: string;
-  label: string;
-  latest_ts: string;
-  turn_count: number;
-  headline_tokens: number;
-  total_cost_usd: number;
-  dominant_model: string;
-}
-
-interface AggregatedSession {
-  id: string;
-  project: string;
-  /** Local calendar day (`YYYY-MM-DD`) this row's turns happened on. A row
-   * covers exactly one day, so `total_cost_usd` is money actually spent on
-   * that date — see `aggregateSessions`. */
-  day: string;
-  latest_ts: string;
-  turn_count: number;
-  /** Headline tokens shown on the collapsed row: input + output only.
-   * Combined across the parent and all of its subagents — the row
-   * represents the whole conversation, and subagents' API calls are real
-   * usage the parent transcript does not include. Cache totals (which can
-   * be 10–100x larger but mostly reuse) are surfaced in the expandable
-   * breakdown. */
-  headline_tokens: number;
-  total_cost_usd: number;
-  /** Model with the most output tokens — surfaced via the row's badge. */
-  dominant_model: string;
-  /** Per-category token totals for the expandable breakdown (combined). */
-  breakdown: Breakdown;
-  /** Per-category cost contributions, summed over all turns. Mirrors the
-   * backend cost_for logic so totals match what's billed. */
-  cost_breakdown: Breakdown;
-  /** Subagent transcripts spawned by this conversation, in chronological
-   * order. Empty for sessions that never used the Task/Agent tool. */
-  subagents: SubagentSession[];
-}
-
 /** Splitting rows by day multiplies their count, so the cap is higher than
  *  the old per-conversation 100 — it still bounds the DOM on a heavy month. */
 const MAX_ROWS = 250;
@@ -120,28 +67,14 @@ const MAX_ROWS = 250;
  *  ExpandedReport so the header label cannot drift from what is queried. */
 export const WINDOW_DAYS = 7;
 
-const EMPTY_BREAKDOWN: Breakdown = {
-  input: 0,
-  output: 0,
-  cache_read: 0,
-  cache_write_5m: 0,
-  cache_write_1h: 0,
-};
-
-/** Subagent transcripts live at `<project>/<sessionId>/subagents/agent-*.jsonl`.
- * Detect that path shape and fold them under their parent's key. */
-const SUBAGENT_SEGMENT = '/subagents/agent-';
-
+/** Subagent transcripts live at `<project>/<sessionId>/subagents/agent-*.jsonl`
+ * and belong to the sibling `<sessionId>.jsonl`. Same rule as the backend's
+ * `session_file_of`, which is what a cost row's id is built from. */
 function parentKeyOf(sourceFile: string): string {
   const idx = sourceFile.indexOf('/subagents/');
   // The sibling parent transcript is `<sessionId>.jsonl` in the project dir,
   // i.e. everything before `/subagents/` plus a `.jsonl` suffix.
   return idx < 0 ? sourceFile : sourceFile.slice(0, idx) + '.jsonl';
-}
-
-function subagentLabel(sourceFile: string): string {
-  const m = sourceFile.match(/agent-([0-9a-f]+)/i);
-  return m ? `agent ${m[1].slice(0, 8)}` : 'subagent';
 }
 
 /** Cost rows are keyed `<transcript path>#<day>`. `listResumableSessions`
@@ -154,186 +87,18 @@ function sessionIdOfRowId(rowId: string): string {
   return name.endsWith('.jsonl') ? name.slice(0, -'.jsonl'.length) : name;
 }
 
-function pickDominant(modelTokens: Map<string, number>, fallback: string): string {
-  let best = fallback;
-  let bestTokens = -1;
-  for (const [model, tokens] of modelTokens) {
-    if (tokens > bestTokens) {
-      bestTokens = tokens;
-      best = model;
-    }
-  }
-  return best;
+/** The cost row a compaction belongs to: the same `<parent transcript>#<day>`
+ * the backend gives the row, so a compaction recorded in a subagent's
+ * transcript still lands on the conversation that started it. */
+export function compactionRowId(c: Pick<Compaction, 'source_file' | 'ts'>): string {
+  return `${parentKeyOf(c.source_file)}#${localDayKey(c.ts)}`;
 }
 
-interface ParentAgg {
-  project: string;
-  day: string;
-  latest_ts: string;
-  turn_count: number;
-  headline_tokens: number;
-  total_cost_usd: number;
-  dominant_model: string;
-  breakdown: Breakdown;
-  cost_breakdown: Breakdown;
-  modelTokens: Map<string, number>;
-  subs: Map<string, SubAgg>;
-}
-
-interface SubAgg {
-  label: string;
-  latest_ts: string;
-  turn_count: number;
-  headline_tokens: number;
-  total_cost_usd: number;
-  modelTokens: Map<string, number>;
-  dominant_model: string;
-}
-
-/**
- * Group raw assistant-message events into one row per conversation **per day**.
- * Each unique parent `source_file` (a JSONL path under ~/.claude/projects/) is
- * one conversation; the lines inside it are its turns. Subagent transcripts
- * (Task/Agent tool) are nested under their parent instead of shown as
- * duplicate top-level rows.
- *
- * The day is part of the key, not just a label. Grouping on `source_file`
- * alone produced one row per conversation stamped with its *most recent* turn
- * while summing cost across *every* turn — so resuming a conversation after a
- * few days moved its whole accumulated cost under today. Real case from a user
- * database: a conversation spanning Jul 26–29 rendered as "today · $12.33"
- * when $1.13 was spent that day and $11.20 belonged to the three days before.
- *
- * With the day in the key, each row's total is money spent on that date, so
- * the rows under a day header sum to that day's bar in the Trends tab.
- */
-export function aggregateSessions(
-  events: SessionEvent[],
-  pricing: PricingEntry[] | null,
-): AggregatedSession[] {
-  const parents = new Map<string, ParentAgg>();
-
-  for (const e of events) {
-    const isSub = e.source_file.includes(SUBAGENT_SEGMENT);
-    const day = localDayKey(e.ts);
-    // `#` cannot occur in a day key and does not appear in Claude Code's
-    // session paths, so it is an unambiguous separator for the composite key.
-    const pkey = `${parentKeyOf(e.source_file)}#${day}`;
-    let p = parents.get(pkey);
-    if (!p) {
-      p = {
-        project: e.project,
-        day,
-        latest_ts: e.ts,
-        turn_count: 0,
-        headline_tokens: 0,
-        total_cost_usd: 0,
-        dominant_model: e.model,
-        breakdown: { ...EMPTY_BREAKDOWN },
-        cost_breakdown: { ...EMPTY_BREAKDOWN },
-        modelTokens: new Map(),
-        subs: new Map(),
-      };
-      parents.set(pkey, p);
-    }
-
-    // Combined accumulation — the parent row represents the whole
-    // conversation, so subagent usage counts toward its totals. Unlogged-call
-    // rows add cost and tokens but are not turns.
-    const isTurn = !isUnloggedCallRow(e);
-    if (isTurn) p.turn_count += 1;
-    p.headline_tokens += e.input_tokens + e.output_tokens;
-    p.breakdown.input += e.input_tokens;
-    p.breakdown.output += e.output_tokens;
-    p.breakdown.cache_read += e.cache_read_tokens;
-    p.breakdown.cache_write_5m += e.cache_creation_5m_tokens;
-    p.breakdown.cache_write_1h += e.cache_creation_1h_tokens;
-    p.total_cost_usd += e.cost_usd;
-    if (e.ts > p.latest_ts) p.latest_ts = e.ts;
-    p.modelTokens.set(e.model, (p.modelTokens.get(e.model) ?? 0) + e.output_tokens);
-
-    // Per-category cost is computed per-turn so the Sonnet 1M-context
-    // tier (which switches based on the call's own context size, not the
-    // session total) is applied correctly.
-    if (pricing) {
-      const entry = lookupPricing(pricing, e.model);
-      if (entry) {
-        const c = costPerCategory(entry, {
-          input: e.input_tokens,
-          output: e.output_tokens,
-          cache_read: e.cache_read_tokens,
-          cache_5m: e.cache_creation_5m_tokens,
-          cache_1h: e.cache_creation_1h_tokens,
-        });
-        p.cost_breakdown.input += c.input;
-        p.cost_breakdown.output += c.output;
-        p.cost_breakdown.cache_read += c.cache_read;
-        p.cost_breakdown.cache_write_5m += c.cache_5m;
-        p.cost_breakdown.cache_write_1h += c.cache_1h;
-      }
-    }
-
-    if (isSub) {
-      let s = p.subs.get(e.source_file);
-      if (!s) {
-        s = {
-          label: subagentLabel(e.source_file),
-          latest_ts: e.ts,
-          turn_count: 0,
-          headline_tokens: 0,
-          total_cost_usd: 0,
-          modelTokens: new Map(),
-          dominant_model: e.model,
-        };
-        p.subs.set(e.source_file, s);
-      }
-      if (isTurn) s.turn_count += 1;
-      s.headline_tokens += e.input_tokens + e.output_tokens;
-      s.total_cost_usd += e.cost_usd;
-      if (e.ts > s.latest_ts) s.latest_ts = e.ts;
-      s.modelTokens.set(e.model, (s.modelTokens.get(e.model) ?? 0) + e.output_tokens);
-    }
-  }
-
-  const result: AggregatedSession[] = [];
-  for (const [id, p] of parents) {
-    const subagents: SubagentSession[] = [];
-    for (const [sid, s] of p.subs) {
-      subagents.push({
-        id: sid,
-        label: s.label,
-        latest_ts: s.latest_ts,
-        turn_count: s.turn_count,
-        headline_tokens: s.headline_tokens,
-        total_cost_usd: s.total_cost_usd,
-        dominant_model: pickDominant(s.modelTokens, s.dominant_model),
-      });
-    }
-    // Chronological so the parent's spawn order reads top-to-bottom.
-    subagents.sort((a, b) => (a.latest_ts < b.latest_ts ? -1 : 1));
-
-    result.push({
-      id,
-      project: p.project,
-      day: p.day,
-      latest_ts: p.latest_ts,
-      turn_count: p.turn_count,
-      headline_tokens: p.headline_tokens,
-      total_cost_usd: p.total_cost_usd,
-      dominant_model: pickDominant(p.modelTokens, p.dominant_model),
-      breakdown: p.breakdown,
-      cost_breakdown: p.cost_breakdown,
-      subagents,
-    });
-  }
-
-  result.sort((a, b) => (a.latest_ts < b.latest_ts ? 1 : -1));
-  return result;
-}
+const NO_ROWS: SessionCostRow[] = [];
 
 const BREAKDOWN_ROWS: Array<{
-  key: keyof AggregatedSession['breakdown'];
-  costKey: keyof AggregatedSession['cost_breakdown'];
+  key: keyof SessionCostRow['breakdown'];
+  costKey: keyof SessionCostRow['cost_breakdown'];
   label: string;
 }> = [
   { key: 'input', costKey: 'input', label: 'Input' },
@@ -347,8 +112,8 @@ function BreakdownTable({
   breakdown,
   costBreakdown,
 }: {
-  breakdown: AggregatedSession['breakdown'];
-  costBreakdown: AggregatedSession['cost_breakdown'];
+  breakdown: SessionCostRow['breakdown'];
+  costBreakdown: SessionCostRow['cost_breakdown'];
 }) {
   // Hide rows with zero tokens — keeps the table tight, since most
   // sessions don't use the 1h cache tier at all.
@@ -430,7 +195,7 @@ function CompactionRows({ items }: { items: Compaction[] }) {
 }
 
 /** An indented, muted row for one subagent under its parent session. */
-function SubagentRow({ sub }: { sub: SubagentSession }) {
+function SubagentRow({ sub }: { sub: SubagentCost }) {
   return (
     <div
       className={[
@@ -457,19 +222,17 @@ export function SessionsTab() {
   const version = useAppStore((s) => s.sessionDataVersion);
   const { data, error, loading, reload } = useTabData(
     () =>
-      Promise.all([ipc.getSessionHistory(WINDOW_DAYS), ipc.getCompactions(WINDOW_DAYS)]).then(
-        ([events, compactions]) => ({ events, compactions }),
+      Promise.all([ipc.getSessionCosts(WINDOW_DAYS), ipc.getCompactions(WINDOW_DAYS)]).then(
+        ([rows, compactions]) => ({ rows, compactions }),
       ),
     [version],
     `cost:${WINDOW_DAYS}`,
   );
-  const events = data?.events ?? null;
+  // One row per conversation per day, summed by the backend, newest first.
+  const sessions = data?.rows ?? NO_ROWS;
   // In the report store so the open row survives leaving the tab.
   const expandedId = useReportStore((s) => s.costOpenRow);
   const setExpandedId = useReportStore((s) => s.setCostOpenRow);
-
-  // Pricing rates are static for the lifetime of the process; fetch once.
-  const pricing: PricingEntry[] | null = useTabData(() => ipc.getPricing(), [], 'pricing').data;
 
   // Session titles come from the same summaries the Sessions tab renders,
   // and share its cached copy. Refreshed once per mount on purpose, not on
@@ -487,10 +250,6 @@ export function SessionsTab() {
     return map;
   }, [summaries]);
 
-  const sessions = useMemo(
-    () => aggregateSessions(events ?? [], pricing),
-    [events, pricing],
-  );
   const totalCost = useMemo(
     () => sessions.reduce((sum, s) => sum + s.total_cost_usd, 0),
     [sessions],
@@ -501,7 +260,7 @@ export function SessionsTab() {
   const compactionsByRow = useMemo(() => {
     const map = new Map<string, Compaction[]>();
     for (const c of data?.compactions ?? []) {
-      const key = `${parentKeyOf(c.source_file)}#${localDayKey(c.ts)}`;
+      const key = compactionRowId(c);
       const list = map.get(key);
       if (list) list.push(c);
       else map.set(key, [c]);
@@ -524,7 +283,7 @@ export function SessionsTab() {
    * sorted by `latest_ts` descending and every row covers a single day, so a
    * linear pass produces day groups in order without a second sort. */
   const days = useMemo(() => {
-    const out: Array<{ day: string; rows: AggregatedSession[]; cost: number }> = [];
+    const out: Array<{ day: string; rows: SessionCostRow[]; cost: number }> = [];
     for (const s of sessions.slice(0, MAX_ROWS)) {
       let group = out[out.length - 1];
       if (!group || group.day !== s.day) {
@@ -547,7 +306,7 @@ export function SessionsTab() {
       />
     );
   }
-  if (loading || !events) {
+  if (loading || !data) {
     return <SkeletonRows />;
   }
 
