@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Warm-up runs through Claude Code.** A direct request to the messages API is sometimes refused for a subscription token (a bare HTTP 429 on an account reading 0% of its 5-hour window). Warm-up now runs Claude Code headless (`claude -p` on Haiku) in a throwaway empty config folder, with the token passed only through the child's environment and anything that could sign it in as someone else removed. It falls back to the direct request only when Claude Code is missing or cannot start; if Claude Code ran and failed, that failure is what you see.
+- **Why a warm-up failed is now visible.** A 429 that carries none of the usage-limit headers is reported as "Anthropic refused the request" with its status and request id, not "Already at rate limit". The log records the status, the rate-limit headers and the start of the body of any refused warm-up (never credentials), and, for each account, which session's status-line reading is being used or why none is.
+- **Live usage from Claude Code's status line now works on Windows.** The switch under Settings → Polling → **Live usage from Claude Code** was hidden on Windows in 1.4 and 1.5 because the Windows side had never been run. It now is: Switchboard runs the bridge in every shell Claude Code could use there (Git Bash, PowerShell 7, Windows PowerShell) before it changes `settings.json`, installs the first spelling of the bridge's path that all of them accept (a plain forward-slash path, else the 8.3 short path, else `~/…`), and refuses, naming the shell, if one cannot run it. The bridge replaces itself on update even while Claude Code is running it. The bridge hands your command to the shell with the same quoting Claude Code uses, so a command like `"true"` (quotes, no spaces) behaves as it does without the bridge. The Windows uninstaller does not restore your original status line; the README has the one-line PowerShell command to do that by hand. Verified on Windows 11; see the README for what was not tested.
+
+### Fixed
+
+- **"Try again" on a warm-up was refused for 30 minutes after a failure.** The back-off after a failed warm-up exists to stop the scheduler hammering an account; it also blocked a deliberate click, which then said "already attempted recently or waiting to retry". A manual warm-up now ignores the back-off. It is still refused while another warm-up for that account is running or started less than a minute ago, and says so.
+- **A warm-up result the row did not recognise took the whole account row down.** An unknown outcome now shows "Warm-up failed".
+- **Installing the status-line bridge could fail on a busy Windows machine.** The first launch of a freshly copied program queues behind the system's scanner and can take several seconds; the check for it now waits up to 30 seconds instead of 5, and moving it into place retries for about 5 seconds.
+
 ## v1.5.0 — 2026-11-11
 
 ### Added

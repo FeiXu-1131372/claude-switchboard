@@ -108,7 +108,7 @@ In **Settings → Account rotation**, turn on automatic rotation and click **Sav
   <img src="docs/screenshots/macos-warmup.png" alt="Warm-up controls on an account: enabled, set to every 5 hours from 8:00 AM, with a Warm up now button" width="416" />
 </p>
 
-A warm-up sends a one-token "hi" to Haiku with the account's own credentials, which opens a fresh 5-hour window at a fraction of a cent of usage. If the account already has an active window, nothing is sent.
+A warm-up asks Claude Code to send a one-word "hi" to Haiku with the account's own credentials, which opens a fresh 5-hour window for a tiny amount of usage. It runs Claude Code headless in a throwaway empty folder, so it reads none of your settings and leaves nothing in your session history; if Claude Code isn't installed, a one-token request goes to the API directly. If the account already has an active window, nothing is sent. If the API refuses the warm-up, the account row says why (the status and request id) instead of calling it a rate limit, and **Warm up now** / **Try again** always tries again: only the automatic schedule waits out a retry back-off.
 
 Warm-up is **off by default and opt-in per account**, with a consent dialog the first time you enable it. Three schedules:
 
@@ -230,7 +230,7 @@ Adding an account does not change which one Claude Code uses. Click **Switch** w
   <img src="docs/screenshots/windows-tray-tooltip.png" alt="Windows tray tooltip with the 5-hour and 7-day percentages and their reset times" width="420" />
 </p>
 
-Two things differ on Windows today: background warm-up is fully verified there (see below), and [live usage from the status line](#live-usage-from-claude-codes-status-line) is macOS-only for now.
+On Windows, background warm-up is fully verified (see below), and [live usage from the status line](#live-usage-from-claude-codes-status-line) works with the shells Claude Code uses there (Git Bash or PowerShell).
 
 ---
 
@@ -284,7 +284,7 @@ pnpm tauri dev
 
 ### Accounts and tokens
 
-Each account lives in its own slot with its own polled usage. Managed credentials are stored locally in `accounts.json`. Switching writes the chosen credentials to the macOS Keychain or to Claude Code's credential file on Windows. Switchboard sends these tokens only to Anthropic's official API, for profile checks, usage polling and opt-in warm-ups.
+Each account lives in its own slot with its own polled usage. Managed credentials are stored locally in `accounts.json`. Switching writes the chosen credentials to the macOS Keychain or to Claude Code's credential file on Windows. Switchboard sends these tokens only to Anthropic's official API, for profile checks, usage polling and opt-in warm-ups. A warm-up also hands the account's token to a local Claude Code process through its environment, never through a file, and that process talks only to Anthropic.
 
 **Long-lived tokens have limits.**
 
@@ -314,7 +314,15 @@ Accounts added with a long-lived token cannot read their usage from Anthropic's 
 
 A copy of the file from before the first change is kept beside it as `settings.json.switchboard-statusline-anchor`.
 
-**Platform:** macOS today. The Windows version is written to the same design but has not been run on Windows, so the switch is hidden there.
+**Platform:** macOS and Windows. On Windows, Claude Code runs a status line in Git Bash or PowerShell, depending on what is installed. Before changing anything, Switchboard runs the bridge in every shell it could pick and uses the first spelling of the bridge's path that all of them accept; if any shell cannot run it, nothing is changed and the consent panel names that shell. The bridge is tested on Windows 11 in Git Bash, PowerShell 7 and Windows PowerShell 5.1. Not tested: a PC with neither Git nor PowerShell 7, non-UTF-8 code pages such as cp936, and locked-down machines (AppLocker, WDAC).
+
+On Windows, uninstalling Switchboard does not undo the edit. The bridge keeps showing your original status line, and stops recording usage after 30 days without the app. To put your status line back without Switchboard, run this in PowerShell:
+
+```powershell
+& "$env:USERPROFILE\.claude-switchboard\statusline\bridge.exe" --restore --all
+```
+
+or this in Command Prompt: `"%USERPROFILE%\.claude-switchboard\statusline\bridge.exe" --restore --all`.
 
 ### Warm-up in the background
 
@@ -351,7 +359,7 @@ Your old install is left in place, so you can still open `Claude Limits.app`.
 - **Third-party providers are third parties.** A session launched against one sends your prompts to that provider's endpoint, not to Anthropic. Switchboard stores the API key you give it locally and sends it only to that endpoint.
 - **Setting a default provider writes one file**, `~/.claude/settings.json`, with a backup and an undo record.
 - **Live usage edits one setting**, `statusLine.command`, after a consent screen, and restores it exactly when turned off.
-- **Warm-up is opt-in.** With your consent per account, Switchboard sends a one-token message to start the 5-hour window. Nothing else is ever sent, and you can revoke it at any time.
+- **Warm-up is opt-in.** With your consent per account, Switchboard starts the 5-hour window by having Claude Code (or, if it isn't installed, the API directly) send a one-word message to Haiku. Nothing else is ever sent, and you can revoke it at any time.
 
 ## Stack
 
