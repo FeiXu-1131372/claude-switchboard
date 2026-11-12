@@ -244,9 +244,14 @@ function Shell({ children, minimal }: { children: React.ReactNode; minimal?: boo
   return (
     <div
       className={`relative flex h-full w-full flex-col ${minimal ? 'popover-minimal' : ''}`}
+      // The design size is the ceiling, not a fixed box. WebView2 applies the
+      // system text-size preference as page zoom, so the window can hand the
+      // webview fewer CSS pixels than the app asks for. A fixed 360px shell
+      // then painted past the right edge and clipped the row badges; filling
+      // the viewport and capping at the token makes it reflow instead.
       style={{
-        width: 'var(--popover-width)',
-        height: minimal ? 'var(--popover-height-minimal)' : 'var(--popover-height)',
+        maxWidth: 'var(--popover-width)',
+        maxHeight: minimal ? 'var(--popover-height-minimal)' : 'var(--popover-height)',
       }}
     >
       {children}

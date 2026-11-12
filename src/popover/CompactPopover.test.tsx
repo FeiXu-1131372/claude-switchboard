@@ -57,6 +57,23 @@ it('lets a first token-only account be selected before any usage exists', () => 
   expect(screen.getByText('Manage imported accounts')).toBeInTheDocument();
 });
 
+it('fills the window it is given, capped at the design size', () => {
+  state.usage = reading(false);
+  const { container } = render(<CompactPopover />);
+  const shell = container.firstElementChild as HTMLElement;
+  // A fixed width/height here overflowed the webview when WebView2 applied
+  // the system text-size setting as page zoom, clipping the row badges.
+  expect(shell.style.width).toBe('');
+  expect(shell.style.height).toBe('');
+  expect(shell.style.maxWidth).toBe('var(--popover-width)');
+  expect(shell.style.maxHeight).toBe('var(--popover-height-minimal)');
+
+  // Settings and accounts use the full compact height, still as a ceiling.
+  fireEvent.click(screen.getByRole('button', { name: 'a@example.com' }));
+  const fullShell = container.firstElementChild as HTMLElement;
+  expect(fullShell.style.maxHeight).toBe('var(--popover-height)');
+});
+
 it('opens the taller window for the details and the short one for the glance', () => {
   state.usage = reading(true);
   render(<CompactPopover />);
