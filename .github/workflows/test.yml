@@ -60,18 +60,7 @@ jobs:
           pnpm test
 
       - name: Rust tests
-        if: runner.os != 'Windows'
         working-directory: src-tauri
-        run: cargo test --workspace --all-features --no-fail-fast
-
-      - name: Rust tests (Windows)
-        if: runner.os == 'Windows'
-        working-directory: src-tauri
-        # The Windows shell integration tests launch many PowerShell and Git
-        # Bash processes. Running them together starves the timing-sensitive
-        # pipe test on hosted runners, so serialize the Windows test harness.
-        env:
-          RUST_TEST_THREADS: 1
         run: cargo test --workspace --all-features --no-fail-fast
 
       - name: Rust clippy

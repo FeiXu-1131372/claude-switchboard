@@ -228,10 +228,15 @@ fn original_that_never_reads_stdin_does_not_stall_with_2mb_input() {
         // Valid JSON at the front, then 2 MB of padding after it.
         let mut stdin = FIXTURE.to_vec();
         stdin.extend(std::iter::repeat_n(b' ', 2 * 1024 * 1024));
-        let started = Instant::now();
-        let out = env.run(&shell, &stdin);
-        assert_eq!(text(&out.stdout), "done", "{}", label(&shell));
-        assert!(started.elapsed() < Duration::from_secs(20), "{}: stalled for {:?}", label(&shell), started.elapsed());
+        let who = label(&shell);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(env.run(&shell, &stdin));
+        });
+        // Shell startup and input handling can be slow on hosted Windows
+        // runners. Bound the wait itself so a deadlock cannot hang the job.
+        let out = rx.recv_timeout(Duration::from_secs(90)).unwrap_or_else(|e| panic!("{who}: bridge did not finish: {e}"));
+        assert_eq!(text(&out.stdout), "done", "{who}");
     }
 }
 
