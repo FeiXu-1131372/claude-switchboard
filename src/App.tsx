@@ -108,7 +108,12 @@ export function App() {
             height: viewMode === 'expanded' ? 640 : 380,
           }}
           transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-          style={{ overflow: 'hidden', margin: 'auto' }}
+          // The animated size is what the app asks for. The OS may hand the
+          // window less (mixed-DPI monitors, snapping, a manual resize), and
+          // a fixed box in a smaller window cut the report's right and bottom
+          // edges off, where macOS, with no box, simply reflows. Capping the
+          // box at the window makes it reflow here too.
+          style={{ overflow: 'hidden', margin: 'auto', maxWidth: '100%', maxHeight: '100%' }}
           className="win-animated-container"
         >
           {content}

@@ -7,6 +7,8 @@
  *   ?theme=light|dark          light or dark mode (default light)
  *   ?palette=<id>              colour theme (default terracotta)
  *   ?view=expanded|compact     which window (default expanded)
+ *   ?window=WxH                the window's real size in CSS px, for when the OS gives
+ *                              it less than the 960x640 the app asks for (e.g. 834x556)
  *   ?delay=800                 answer report queries that many ms late, to see loading states
  */
 import React from 'react';
@@ -38,7 +40,13 @@ async function start() {
   }
   document.body.dataset.theme = theme;
   document.body.dataset.palette = palette;
-  document.getElementById('frame')!.dataset.view = viewMode;
+  const frame = document.getElementById('frame')!;
+  frame.dataset.view = viewMode;
+  const windowSize = /^(\d{2,4})x(\d{2,4})$/.exec(params.get('window') ?? '');
+  if (windowSize) {
+    frame.style.width = `${windowSize[1]}px`;
+    frame.style.height = `${windowSize[2]}px`;
+  }
 
   const now = new Date();
   const data = buildFixtures(scale, now);
