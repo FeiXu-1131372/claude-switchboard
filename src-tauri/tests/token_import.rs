@@ -145,6 +145,8 @@ async fn preserves_existing_oauth_credentials_and_rejects_duplicate_tokens() {
                 id: "ordinary-id".into(),
                 email: "ordinary@example.invalid".into(),
                 name: None,
+                organization_uuid: None,
+                organization_name: None,
             },
         )
         .await

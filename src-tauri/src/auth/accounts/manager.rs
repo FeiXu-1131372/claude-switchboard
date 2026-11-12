@@ -60,15 +60,22 @@ impl AccountManager {
         let now = Utc::now();
         let token_expires_at = extract_expires_at(&cc_blob);
 
-        if let Some(existing) = store.find_by_account_uuid(&id.account_uuid).cloned() {
+        // The same Anthropic account can have several organizations (a Team seat
+        // and a personal login under one email), each with its own limits: only
+        // a sign-in to the same organization is the same account.
+        if let Some(existing) = store
+            .find_by_identity(&id.account_uuid, id.organization_uuid.as_deref())
+            .cloned()
+        {
             let slot = existing.slot;
             let updated = ManagedAccount {
                 slot,
                 email: id.email,
                 label: existing.label,
-                account_uuid: id.account_uuid,
-                organization_uuid: id.organization_uuid,
-                organization_name: id.organization_name,
+                // Its id does not change: history and warm-up settings hang on it.
+                account_uuid: existing.account_uuid,
+                organization_uuid: id.organization_uuid.or(existing.organization_uuid),
+                organization_name: id.organization_name.or(existing.organization_name),
                 subscription_type: id.subscription_type.or(existing.subscription_type),
                 source,
                 claude_code_oauth_blob: cc_blob,
@@ -83,11 +90,12 @@ impl AccountManager {
         }
 
         let slot = store.next_slot();
+        let local_id = store.local_id_for(&id.account_uuid, id.organization_uuid.as_deref());
         let acc = ManagedAccount {
             slot,
             email: id.email,
             label: None,
-            account_uuid: id.account_uuid,
+            account_uuid: local_id,
             organization_uuid: id.organization_uuid,
             organization_name: id.organization_name,
             subscription_type: id.subscription_type,
@@ -184,7 +192,8 @@ impl AccountManager {
             (prev_cc.as_ref(), prev_oauth_account.as_ref())
         {
             if let Some(prev_uuid) = prev_oa.get("accountUuid").and_then(|v| v.as_str()) {
-                if prev_uuid != target.account_uuid {
+                let prev_org = prev_oa.get("organizationUuid").and_then(|v| v.as_str());
+                if !target.is_identity(prev_uuid, prev_org) {
                     if let Err(e) =
                         self.capture_live_into_slot(prev_uuid, prev_cc_blob, prev_oa)
                     {
@@ -238,9 +247,7 @@ impl AccountManager {
         let lock = store::acquire_lock(&self.data_dir)?;
         let mut data = store::load(&self.data_dir)?;
         let outgoing_slot = data
-            .accounts
-            .values()
-            .find(|a| a.account_uuid == live_account_uuid)
+            .find_by_identity(live_account_uuid, live_oauth_account["organizationUuid"].as_str())
             .map(|a| a.slot);
         let Some(slot) = outgoing_slot else {
             return Ok(());
@@ -280,7 +287,8 @@ impl AccountManager {
         let Some(acc) = data.accounts.get_mut(&slot) else {
             return Ok(false);
         };
-        if acc.account_uuid != live_uuid || acc.oauth_account_blob == *live_oauth_account {
+        let live_org = live_oauth_account.get("organizationUuid").and_then(|v| v.as_str());
+        if !acc.is_identity(live_uuid, live_org) || acc.oauth_account_blob == *live_oauth_account {
             return Ok(false);
         }
         acc.oauth_account_blob = live_oauth_account.clone();
@@ -365,8 +373,8 @@ pub fn synthesize_blobs(
     let oa = serde_json::json!({
         "accountUuid": userinfo.id,
         "emailAddress": userinfo.email,
-        "organizationUuid": null,
-        "organizationName": null,
+        "organizationUuid": userinfo.organization_uuid,
+        "organizationName": userinfo.organization_name,
         "displayName": userinfo.name,
     });
     (cc, oa)
@@ -397,7 +405,9 @@ impl AccountManager {
         if data.accounts.values().any(|a| {
             Some(a.slot) != replace_slot
                 && (a.claude_code_oauth_blob["accessToken"].as_str() == Some(access_token)
-                    || profile.as_ref().is_some_and(|p| a.account_uuid == p.id))
+                    || profile
+                        .as_ref()
+                        .is_some_and(|p| a.is_identity(&p.id, p.organization_uuid.as_deref())))
         }) {
             return Err(anyhow!("This token or account is already saved. Its existing sign-in was not changed."));
         }
@@ -414,10 +424,17 @@ impl AccountManager {
                     "accountUuid": profile.id,
                     "emailAddress": profile.email,
                     "displayName": profile.name,
-                    "organizationUuid": null,
-                    "organizationName": null,
+                    "organizationUuid": profile.organization_uuid,
+                    "organizationName": profile.organization_name,
                 });
-                (profile.id, profile.email, oa)
+                // Another organization of the same Anthropic account is saved
+                // already: this one needs an id of its own.
+                let local_id = previous
+                    .as_ref()
+                    .filter(|a| a.anthropic_uuid() == profile.id)
+                    .map(|a| a.account_uuid.clone())
+                    .unwrap_or_else(|| data.local_id_for(&profile.id, profile.organization_uuid.as_deref()));
+                (local_id, profile.email, oa)
             }
             None => {
                 let id = previous.as_ref()
@@ -523,6 +540,168 @@ mod tests {
 
         let listed = mgr.list().unwrap();
         assert_eq!(listed.len(), 2);
+    }
+
+    // ---- one Anthropic account, several organizations ----
+    //
+    // A Team seat and a personal login under one email share the Anthropic
+    // account uuid and differ in organizationUuid, and have separate limits.
+
+    fn oa_in_org(uuid: &str, email: &str, org: &str) -> serde_json::Value {
+        serde_json::json!({
+            "accountUuid": uuid,
+            "emailAddress": email,
+            "organizationUuid": org,
+            "organizationName": format!("Org {org}"),
+        })
+    }
+
+    fn cc_in_org(uuid: &str, org: &str, tag: &str) -> serde_json::Value {
+        serde_json::json!({
+            "accessToken": format!("at-{uuid}-{org}-{tag}"),
+            "refreshToken": format!("rt-{uuid}-{org}-{tag}"),
+            "expiresAt": 1,
+            "scopes": ["user:inference", "user:profile"],
+        })
+    }
+
+    fn sign_in(mgr: &AccountManager, uuid: &str, email: &str, org: &str, tag: &str) -> u32 {
+        let (oa, cc) = (oa_in_org(uuid, email, org), cc_in_org(uuid, org, tag));
+        let id = identity::from_blobs(&oa, Some(&cc)).unwrap();
+        mgr.upsert(id, cc, oa, AddSource::OAuth).unwrap()
+    }
+
+    #[test]
+    fn one_email_in_two_organizations_is_two_accounts_and_neither_overwrites_the_other() {
+        let dir = tempdir().unwrap();
+        let mgr = AccountManager::new(dir.path().to_path_buf());
+        let team = sign_in(&mgr, "u1", "me@x", "org-team", "a");
+        let personal = sign_in(&mgr, "u1", "me@x", "org-personal", "a");
+        assert_ne!(team, personal, "the second sign-in must not replace the first");
+
+        let list = mgr.list().unwrap();
+        assert_eq!(list.len(), 2);
+        let team = list.iter().find(|a| a.slot == team).unwrap();
+        let personal = list.iter().find(|a| a.slot == personal).unwrap();
+        assert_eq!(team.claude_code_oauth_blob["accessToken"], "at-u1-org-team-a");
+        assert_eq!(personal.claude_code_oauth_blob["accessToken"], "at-u1-org-personal-a");
+        // Ids are what the database keys history and warm-up on: they must differ,
+        // and the first account keeps the id its history is already under.
+        assert_eq!(team.account_uuid, "u1");
+        assert_eq!(personal.account_uuid, "u1@org-personal");
+        assert_eq!(personal.anthropic_uuid(), "u1");
+        assert_eq!(personal.org_uuid(), Some("org-personal"));
+    }
+
+    #[test]
+    fn signing_in_again_updates_the_same_organization_in_place_and_keeps_its_id() {
+        let dir = tempdir().unwrap();
+        let mgr = AccountManager::new(dir.path().to_path_buf());
+        let team = sign_in(&mgr, "u1", "me@x", "org-team", "a");
+        let personal = sign_in(&mgr, "u1", "me@x", "org-personal", "a");
+
+        assert_eq!(sign_in(&mgr, "u1", "me@x", "org-personal", "b"), personal);
+        assert_eq!(sign_in(&mgr, "u1", "me@x", "org-team", "b"), team);
+        let list = mgr.list().unwrap();
+        assert_eq!(list.len(), 2, "no duplicates");
+        let personal = list.iter().find(|a| a.slot == personal).unwrap();
+        assert_eq!(personal.account_uuid, "u1@org-personal", "an update must not change the id");
+        assert_eq!(personal.claude_code_oauth_blob["accessToken"], "at-u1-org-personal-b");
+        let team = list.iter().find(|a| a.slot == team).unwrap();
+        assert_eq!(team.account_uuid, "u1");
+        assert_eq!(team.claude_code_oauth_blob["accessToken"], "at-u1-org-team-b");
+    }
+
+    #[test]
+    fn a_third_organization_gets_its_own_id_too() {
+        let dir = tempdir().unwrap();
+        let mgr = AccountManager::new(dir.path().to_path_buf());
+        sign_in(&mgr, "u1", "me@x", "org-a", "a");
+        sign_in(&mgr, "u1", "me@x", "org-b", "a");
+        sign_in(&mgr, "u1", "me@x", "org-c", "a");
+        let mut ids: Vec<String> = mgr.list().unwrap().into_iter().map(|a| a.account_uuid).collect();
+        ids.sort();
+        assert_eq!(ids, ["u1", "u1@org-b", "u1@org-c"]);
+    }
+
+    /// Accounts saved before the organization was recorded must keep updating in
+    /// place: the first sign-in that names an organization fills it in.
+    #[test]
+    fn an_account_that_never_recorded_its_organization_is_updated_not_duplicated() {
+        let dir = tempdir().unwrap();
+        let mgr = AccountManager::new(dir.path().to_path_buf());
+        let id = identity::from_blobs(&oa_slice("u1", "me@x"), Some(&cc_blob("u1", 1))).unwrap();
+        let legacy = mgr.upsert(id, cc_blob("u1", 1), oa_slice("u1", "me@x"), AddSource::OAuth).unwrap();
+        let again = sign_in(&mgr, "u1", "me@x", "org-team", "a");
+        assert_eq!(again, legacy);
+        let list = mgr.list().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].organization_uuid.as_deref(), Some("org-team"));
+        assert_eq!(list[0].account_uuid, "u1");
+    }
+
+    #[test]
+    fn the_live_login_is_matched_to_the_right_organization() {
+        let dir = tempdir().unwrap();
+        let mgr = AccountManager::new(dir.path().to_path_buf());
+        let team = sign_in(&mgr, "u1", "me@x", "org-team", "a");
+        sign_in(&mgr, "u1", "me@x", "org-personal", "a");
+        let list = mgr.list().unwrap();
+        let team_acc = list.iter().find(|a| a.slot == team).unwrap();
+        let personal_acc = list.iter().find(|a| a.slot != team).unwrap();
+        let live_team = oa_in_org("u1", "me@x", "org-team");
+        let live_personal = oa_in_org("u1", "me@x", "org-personal");
+        let cc = serde_json::Value::Null;
+        assert!(team_acc.matches_credentials(&cc, &live_team));
+        assert!(!team_acc.matches_credentials(&cc, &live_personal));
+        assert!(personal_acc.matches_credentials(&cc, &live_personal));
+        assert!(!personal_acc.matches_credentials(&cc, &live_team));
+        // A different Anthropic account never matches.
+        assert!(!team_acc.matches_credentials(&cc, &oa_in_org("u2", "you@x", "org-team")));
+    }
+
+    /// Sources that name only the Anthropic account (the CLI's usage cache) cannot
+    /// be attributed to either of two organizations that share it.
+    #[test]
+    fn an_account_knows_when_it_shares_its_anthropic_uuid_with_another() {
+        let dir = tempdir().unwrap();
+        let mgr = AccountManager::new(dir.path().to_path_buf());
+        let team = sign_in(&mgr, "u1", "me@x", "org-team", "a");
+        let personal = sign_in(&mgr, "u1", "me@x", "org-personal", "a");
+        let other = sign_in(&mgr, "u2", "you@x", "org-x", "a");
+        let list = mgr.list().unwrap();
+        let shares = |slot: u32| list.iter().find(|a| a.slot == slot).unwrap().shares_anthropic_uuid_with_another(&list);
+        assert!(shares(team));
+        assert!(shares(personal));
+        assert!(!shares(other), "an account alone does not share with itself");
+    }
+
+    /// Swapping away captures the live tokens into the outgoing account's slot.
+    /// With two organizations of one account that must be the right one.
+    #[test]
+    fn capture_live_into_slot_writes_the_outgoing_tokens_into_the_right_organization() {
+        let dir = tempdir().unwrap();
+        let mgr = AccountManager::new(dir.path().to_path_buf());
+        let team = sign_in(&mgr, "u1", "me@x", "org-team", "a");
+        let personal = sign_in(&mgr, "u1", "me@x", "org-personal", "a");
+        let refreshed = cc_in_org("u1", "org-personal", "refreshed");
+        mgr.capture_live_into_slot("u1", &refreshed, &oa_in_org("u1", "me@x", "org-personal")).unwrap();
+        let list = mgr.list().unwrap();
+        let token = |slot: u32| list.iter().find(|a| a.slot == slot).unwrap().claude_code_oauth_blob["accessToken"].clone();
+        assert_eq!(token(personal), "at-u1-org-personal-refreshed");
+        assert_eq!(token(team), "at-u1-org-team-a", "the other organization must be untouched");
+    }
+
+    #[test]
+    fn the_live_profile_is_synced_into_the_organization_it_belongs_to() {
+        let dir = tempdir().unwrap();
+        let mgr = AccountManager::new(dir.path().to_path_buf());
+        let team = sign_in(&mgr, "u1", "me@x", "org-team", "a");
+        let personal = sign_in(&mgr, "u1", "me@x", "org-personal", "a");
+        let mut live = oa_in_org("u1", "me@x", "org-personal");
+        live["displayName"] = serde_json::json!("Changed");
+        assert!(mgr.sync_live_profile(personal, &live).unwrap(), "the composite-id slot is updated");
+        assert!(!mgr.sync_live_profile(team, &live).unwrap(), "another organization's profile is not adopted");
     }
 
     #[tokio::test]
@@ -706,6 +885,8 @@ mod tests {
             id: "uuid-x".to_string(),
             email: "x@x.com".to_string(),
             name: Some("X".to_string()),
+            organization_uuid: None,
+            organization_name: None,
         };
         let (cc, oa) = super::synthesize_blobs(&token, &userinfo);
         assert_eq!(cc["accessToken"], "at-x");
@@ -713,5 +894,45 @@ mod tests {
         assert_eq!(cc["expiresAt"].as_i64().unwrap() / 1000, token.expires_at.timestamp());
         assert_eq!(oa["accountUuid"], "uuid-x");
         assert_eq!(oa["emailAddress"], "x@x.com");
+    }
+
+    fn userinfo_in_org(org: &str) -> crate::auth::account_identity::UserInfo {
+        crate::auth::account_identity::UserInfo {
+            id: "u1".to_string(),
+            email: "me@x".to_string(),
+            name: None,
+            organization_uuid: Some(org.to_string()),
+            organization_name: Some(format!("Org {org}")),
+        }
+    }
+
+    fn token_for(tag: &str) -> crate::auth::StoredToken {
+        crate::auth::StoredToken {
+            access_token: format!("at-{tag}"),
+            refresh_token: Some(format!("rt-{tag}")),
+            expires_at: Utc::now() + chrono::Duration::hours(8),
+        }
+    }
+
+    /// The in-app sign-in used to write `organizationUuid: null` whatever the
+    /// profile said, so no later step could tell two organizations apart.
+    #[test]
+    fn synthesize_blobs_carries_the_organization_from_the_profile() {
+        let (_, oa) = super::synthesize_blobs(&token_for("a"), &userinfo_in_org("org-team"));
+        assert_eq!(oa["organizationUuid"], "org-team");
+        assert_eq!(oa["organizationName"], "Org org-team");
+    }
+
+    #[tokio::test]
+    async fn adding_one_email_in_two_organizations_through_the_app_gives_two_accounts() {
+        let dir = tempdir().unwrap();
+        let mgr = AccountManager::new(dir.path().to_path_buf());
+        let team = mgr.add_from_oauth(token_for("team"), userinfo_in_org("org-team")).await.unwrap();
+        let personal = mgr.add_from_oauth(token_for("personal"), userinfo_in_org("org-personal")).await.unwrap();
+        assert_ne!(team, personal, "adding the second must not replace the first");
+        let list = mgr.list().unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(mgr.get(team).unwrap().unwrap().claude_code_oauth_blob["accessToken"], "at-team");
+        assert_eq!(mgr.get(personal).unwrap().unwrap().claude_code_oauth_blob["accessToken"], "at-personal");
     }
 }

@@ -17,11 +17,40 @@ pub struct UserInfo {
     pub id: String,
     pub email: String,
     pub name: Option<String>,
+    /// The organization this sign-in belongs to. One Anthropic account can sit
+    /// in several (a Team seat and a personal login under one email), each with
+    /// its own limits, so this is half of what makes an account *this* account.
+    pub organization_uuid: Option<String>,
+    pub organization_name: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct ProfileResponse {
     account: ProfileAccount,
+    #[serde(default)]
+    organization: Option<ProfileOrganization>,
+}
+
+#[derive(Deserialize)]
+struct ProfileOrganization {
+    #[serde(default)]
+    uuid: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+}
+
+impl ProfileResponse {
+    fn into_user_info(self) -> UserInfo {
+        let organization = self.organization;
+        let non_empty = |text: Option<String>| text.filter(|t| !t.trim().is_empty());
+        UserInfo {
+            id: self.account.uuid,
+            email: self.account.email,
+            name: self.account.display_name,
+            organization_uuid: non_empty(organization.as_ref().and_then(|o| o.uuid.clone())),
+            organization_name: non_empty(organization.and_then(|o| o.name)),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -76,11 +105,7 @@ impl IdentityFetcher {
                 if profile.account.uuid.trim().is_empty() || profile.account.email.trim().is_empty() {
                     return Err(anyhow!("Anthropic returned an incomplete account profile."));
                 }
-                Ok(Some(UserInfo {
-                    id: profile.account.uuid,
-                    email: profile.account.email,
-                    name: profile.account.display_name,
-                }))
+                Ok(Some(profile.into_user_info()))
             }
             status => Err(anyhow!("Could not check the token with Anthropic (HTTP {}). Try again later.", status.as_u16())),
         }
@@ -109,11 +134,7 @@ impl IdentityFetcher {
             return Err(anyhow!("profile failed: {status}"));
         }
         let profile: ProfileResponse = resp.json().await?;
-        let info = UserInfo {
-            id: profile.account.uuid,
-            email: profile.account.email,
-            name: profile.account.display_name,
-        };
+        let info = profile.into_user_info();
         tracing::info!(
             target: "switchboard.http",
             status = status.as_u16(),
@@ -129,5 +150,57 @@ impl IdentityFetcher {
 impl From<&UserInfo> for AccountId {
     fn from(u: &UserInfo) -> Self {
         AccountId(u.id.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn body(organization: Option<serde_json::Value>) -> String {
+        let mut v = serde_json::json!({
+            "account": { "uuid": "u1", "email": "me@x", "display_name": "Me" }
+        });
+        if let Some(org) = organization {
+            v["organization"] = org;
+        }
+        v.to_string()
+    }
+
+    async fn serve(status: usize, text: String) -> (mockito::ServerGuard, IdentityFetcher) {
+        let mut server = mockito::Server::new_async().await;
+        server.mock("GET", "/profile").with_status(status).with_body(text).create_async().await;
+        let fetcher = IdentityFetcher::with_endpoint(format!("{}/profile", server.url()));
+        (server, fetcher)
+    }
+
+    /// A Team seat and a personal login under one email are told apart only by
+    /// the organization, so the profile's organization must survive parsing.
+    #[tokio::test]
+    async fn the_profile_carries_the_organization() {
+        let org = serde_json::json!({ "uuid": "org-1", "name": "Catchsoftware" });
+        let (_server, fetcher) = serve(200, body(Some(org))).await;
+        let info = fetcher.fetch("tok").await.unwrap();
+        assert_eq!(info.id, "u1");
+        assert_eq!(info.organization_uuid.as_deref(), Some("org-1"));
+        assert_eq!(info.organization_name.as_deref(), Some("Catchsoftware"));
+    }
+
+    #[tokio::test]
+    async fn a_profile_without_an_organization_still_parses() {
+        let (_server, fetcher) = serve(200, body(None)).await;
+        let info = fetcher.fetch("tok").await.unwrap();
+        assert_eq!((info.organization_uuid, info.organization_name), (None, None));
+        // An organization object with nothing usable in it is no organization.
+        let (_server, fetcher) = serve(200, body(Some(serde_json::json!({ "uuid": "", "name": null })))).await;
+        assert_eq!(fetcher.fetch("tok").await.unwrap().organization_uuid, None);
+    }
+
+    #[tokio::test]
+    async fn the_token_import_profile_carries_the_organization_too() {
+        let org = serde_json::json!({ "uuid": "org-2", "name": "Personal" });
+        let (_server, fetcher) = serve(200, body(Some(org))).await;
+        let info = fetcher.fetch_for_token_import("tok").await.unwrap().unwrap();
+        assert_eq!(info.organization_uuid.as_deref(), Some("org-2"));
     }
 }

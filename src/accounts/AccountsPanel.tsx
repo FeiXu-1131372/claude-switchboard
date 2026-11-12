@@ -23,6 +23,7 @@ export function AccountsPanel({ onBack }: Props) {
   const {
     accounts,
     orgGroups,
+    qualifiers,
     currentActive,
     pending,
     swappingSlot,
@@ -89,6 +90,7 @@ export function AccountsPanel({ onBack }: Props) {
               entry={a}
               thresholds={thresholds}
               shareHint={shareHint}
+              qualifier={qualifiers.get(a.slot) ?? null}
               onSwap={() => requestSwap(a)}
               swapBusy={swappingSlot !== null}
               swapping={swappingSlot === a.slot}

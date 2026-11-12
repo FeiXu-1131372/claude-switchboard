@@ -81,7 +81,58 @@ impl ManagedAccount {
                 .filter(|token| !token.is_empty())
                 .is_some_and(|token| cc["accessToken"].as_str() == Some(token));
         }
-        oauth_account["accountUuid"].as_str() == Some(self.account_uuid.as_str())
+        self.is_identity(
+            oauth_account["accountUuid"].as_str().unwrap_or_default(),
+            oauth_account["organizationUuid"].as_str(),
+        )
+    }
+
+    /// The Anthropic account uuid.
+    ///
+    /// `account_uuid` is this app's id for the account (database rows and
+    /// warm-up are keyed on it). Usually it *is* the Anthropic uuid. A Team seat
+    /// and a personal login under one email are two organizations of one
+    /// Anthropic account, with separate limits, so they share that uuid: the
+    /// second and later ones carry their organization in the id
+    /// (`<uuid>@<organization uuid>`) to stay distinct. Anything that compares
+    /// against what Claude Code, the API or the status line says uses this.
+    pub fn anthropic_uuid(&self) -> &str {
+        self.account_uuid
+            .split_once('@')
+            .map_or(self.account_uuid.as_str(), |(uuid, _)| uuid)
+    }
+
+    /// The organization this account signs in to, as best it is known: Claude
+    /// Code's own copy of the profile is the freshest, then what was saved when
+    /// the account was added, then the id's suffix. `None` for an account that
+    /// never recorded one (older saves, a token with no profile).
+    pub fn org_uuid(&self) -> Option<&str> {
+        self.oauth_account_blob["organizationUuid"]
+            .as_str()
+            .filter(|org| !org.is_empty())
+            .or_else(|| self.organization_uuid.as_deref().filter(|org| !org.is_empty()))
+            .or_else(|| self.account_uuid.split_once('@').map(|(_, org)| org))
+    }
+
+    /// Whether `uuid` and `org`, as found in a live login, a sign-in or a
+    /// status-line reading, name this account. The organizations must agree
+    /// when both are known; one that is unknown on either side cannot
+    /// disagree, so an account saved before organizations were recorded still
+    /// matches its own sign-ins.
+    pub fn is_identity(&self, uuid: &str, org: Option<&str>) -> bool {
+        self.anthropic_uuid() == uuid
+            && match (self.org_uuid(), org.filter(|org| !org.is_empty())) {
+                (Some(mine), Some(theirs)) => mine == theirs,
+                _ => true,
+            }
+    }
+
+    /// Whether another saved account is the same Anthropic account in another
+    /// organization. A source that names only the Anthropic account (the CLI's
+    /// usage cache) cannot be attributed to either of the two.
+    pub fn shares_anthropic_uuid_with_another(&self, all: &[ManagedAccount]) -> bool {
+        all.iter()
+            .any(|other| other.slot != self.slot && other.anthropic_uuid() == self.anthropic_uuid())
     }
 }
 
@@ -100,6 +151,28 @@ impl AccountsStore {
 
     pub fn find_by_account_uuid(&self, uuid: &str) -> Option<&ManagedAccount> {
         self.accounts.values().find(|a| a.account_uuid == uuid)
+    }
+
+    /// The account a sign-in or live login with this Anthropic uuid and
+    /// organization belongs to. An exact organization match wins over one that
+    /// is only compatible (an account that never recorded its organization).
+    pub fn find_by_identity(&self, uuid: &str, org: Option<&str>) -> Option<&ManagedAccount> {
+        let org = org.filter(|org| !org.is_empty());
+        self.accounts
+            .values()
+            .find(|a| org.is_some() && a.org_uuid() == org && a.is_identity(uuid, org))
+            .or_else(|| self.accounts.values().find(|a| a.is_identity(uuid, org)))
+    }
+
+    /// The id for a *new* account with this Anthropic uuid and organization,
+    /// when [`Self::find_by_identity`] found none: the plain uuid, unless
+    /// another organization of the same Anthropic account is already saved, in
+    /// which case the organization is appended so the two stay distinct.
+    pub fn local_id_for(&self, uuid: &str, org: Option<&str>) -> String {
+        match org.filter(|org| !org.is_empty()) {
+            Some(org) if self.accounts.values().any(|a| a.anthropic_uuid() == uuid) => format!("{uuid}@{org}"),
+            _ => uuid.to_string(),
+        }
     }
 }
 

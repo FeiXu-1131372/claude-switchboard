@@ -238,7 +238,7 @@ async fn fetch_and_apply_one(
         // No `user:profile` scope, so `/usage` is off the table. A local
         // source (the statusline bridge's observations) may still know.
         let interval = Duration::from_secs(state.settings.read().polling_interval_secs.max(60));
-        let local = local_snapshot(state, &acc, active_slot, interval);
+        let local = local_snapshot(state, &acc, accounts, active_slot, interval);
         let newer = local
             .as_ref()
             .is_none_or(|(snap, _)| is_newer_than_shown(state, slot, snap.fetched_at));
@@ -294,7 +294,7 @@ async fn fetch_and_apply_one(
     // enough as it is — skip the call without re-applying. A dead source
     // ages out within a cycle and hands control back to the HTTP path.
     let interval = Duration::from_secs(state.settings.read().polling_interval_secs.max(60));
-    if let Some((snap, origin)) = local_snapshot(state, &acc, active_slot, interval) {
+    if let Some((snap, origin)) = local_snapshot(state, &acc, accounts, active_slot, interval) {
         let fetched_at = snap.fetched_at;
         // A statusline snapshot carries no Sonnet/Opus/extra-usage buckets of
         // its own. Once the ones it inherited are 15 minutes old, the slot
@@ -811,7 +811,7 @@ async fn adopt_local_during_bans(
         if !acc.supports_usage() {
             continue;
         }
-        let adoptable = local_snapshot(state, acc, active_slot, MAX_LOCAL_AGE_DURING_BAN)
+        let adoptable = local_snapshot(state, acc, accounts, active_slot, MAX_LOCAL_AGE_DURING_BAN)
             .filter(|(snap, _)| is_newer_than_shown(state, slot, snap.fetched_at));
         if let Some((snap, origin)) = adoptable {
             tracing::info!(target: "switchboard.poll", "slot {slot}: rate-limited; adopted {origin:?} snapshot");
@@ -1057,11 +1057,17 @@ pub(crate) fn is_within_age(fetched_at: DateTime<Utc>, max_age: Duration, now: D
 fn local_snapshot(
     state: &AppState,
     acc: &ManagedAccount,
+    accounts: &[ManagedAccount],
     active_slot: Option<u32>,
     max_age: Duration,
 ) -> Option<(UsageSnapshot, SnapshotOrigin)> {
-    let cli_cache = crate::auth::paths::claude_global_config()
-        .and_then(|path| read_cli_usage_cache(&path, &acc.account_uuid, max_age))
+    // The cache names only the Anthropic account. When two organizations of it
+    // are saved (a Team seat and a personal login) it belongs to one of them
+    // and nothing says which, so neither adopts it.
+    let cli_cache = (!acc.shares_anthropic_uuid_with_another(accounts))
+        .then(crate::auth::paths::claude_global_config)
+        .flatten()
+        .and_then(|path| read_cli_usage_cache(&path, acc.anthropic_uuid(), max_age))
         .map(|snap| (snap, SnapshotOrigin::CliCache));
     // The shared file carries no account identity; it describes the live
     // account, so only the active slot may adopt it.

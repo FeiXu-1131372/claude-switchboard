@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useAppStore } from '../lib/store';
 import { ipc } from '../lib/ipc';
+import { accountQualifiers } from './accountQualifiers';
 import type {
   AccountListEntry,
   RunningClaudeCode,
@@ -62,6 +63,8 @@ export function useAccountManagement() {
     }
     return map;
   }, [accounts]);
+
+  const qualifiers = useMemo(() => accountQualifiers(accounts), [accounts]);
 
   const currentActive = useMemo(
     () => accounts.find((a) => a.is_active) ?? null,
@@ -162,6 +165,7 @@ export function useAccountManagement() {
     accounts,
     currentActive,
     orgGroups,
+    qualifiers,
     pending,
     swappingSlot,
     confirmError,

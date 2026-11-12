@@ -66,6 +66,35 @@ impl KeychainGuardian {
     }
 }
 
+/// Whether the live `oauthAccount` is the login the guardian is guarding.
+///
+/// Compared on the profile itself, not on the app's id for the account: that
+/// id carries the organization (`<uuid>@<org>`) for the second organization of
+/// one Anthropic account, which the live login never says. And a Team seat and
+/// a personal login under one email share the Anthropic uuid and differ only
+/// in organization, so the uuid alone cannot tell a swap between them. An
+/// organization that is unknown on either side cannot disagree (an account
+/// saved before organizations were recorded).
+fn same_login(live: &Value, target: &Value, target_id: &str) -> bool {
+    let target_uuid = target
+        .get("accountUuid")
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| target_id.split('@').next().unwrap_or(target_id));
+    if live.get("accountUuid").and_then(|v| v.as_str()) != Some(target_uuid) {
+        return false;
+    }
+    let org = |blob: &Value| {
+        blob.get("organizationUuid")
+            .and_then(|v| v.as_str())
+            .filter(|o| !o.is_empty())
+            .map(str::to_string)
+    };
+    match (org(live), org(target)) {
+        (Some(a), Some(b)) => a == b,
+        _ => true,
+    }
+}
+
 async fn run_guardian<I: CredIO>(
     target_cc_blob: Value,
     target_oauth_account: Value,
@@ -92,17 +121,18 @@ async fn run_guardian<I: CredIO>(
         // rotation (CC refreshes its own AT/RT routinely) — do NOT
         // clobber. If it differs, the active account was swapped out
         // from under us; revert both files.
-        let live_uuid = match io.load_oauth_account().await {
-            Ok(Some(oa)) => oa
-                .get("accountUuid")
-                .and_then(|v| v.as_str())
-                .map(str::to_string),
-            Ok(None) => None,
+        let live_oa = match io.load_oauth_account().await {
+            Ok(oa) => oa,
             Err(e) => {
                 tracing::warn!("keychain_guardian: load_oauth_account failed: {e:#}");
                 continue;
             }
         };
+        let live_uuid = live_oa
+            .as_ref()
+            .and_then(|oa| oa.get("accountUuid"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
 
         let drifted = if target_oauth_account.is_null() {
             match io.load_cc().await {
@@ -111,8 +141,8 @@ async fn run_guardian<I: CredIO>(
                 Err(_) => continue,
             }
         } else {
-            match live_uuid.as_deref() {
-                Some(uuid) => uuid != target_account_uuid,
+            match live_oa.as_ref() {
+                Some(live) => !same_login(live, &target_oauth_account, &target_account_uuid),
                 // oauthAccount slice absent — treat as drift; we expect our
                 // own swap to have written it. If it's gone, something
                 // upstream cleared it and we should restore.
@@ -224,6 +254,48 @@ mod tests {
 
     fn oa(uuid: &str) -> Value {
         serde_json::json!({ "accountUuid": uuid, "emailAddress": "u@x" })
+    }
+
+    fn oa_in_org(uuid: &str, org: &str) -> Value {
+        serde_json::json!({ "accountUuid": uuid, "emailAddress": "u@x", "organizationUuid": org })
+    }
+
+    /// The second organization of one Anthropic account has an id of the form
+    /// `<uuid>@<org>`; the live login says only the plain uuid. That is the same
+    /// login, not drift: "fixing" it would rewrite the credentials every
+    /// second.
+    #[tokio::test(start_paused = true)]
+    async fn an_organization_scoped_id_is_not_mistaken_for_drift() {
+        let io = MockIO::new(cc("rt"), oa_in_org("u1", "org-personal"));
+        let g = KeychainGuardian::arm(cc("rt"), oa_in_org("u1", "org-personal"), "u1@org-personal".into(), io.clone());
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        assert_eq!(io.cc_writes.load(Ordering::SeqCst), 0);
+        assert_eq!(io.oa_writes.load(Ordering::SeqCst), 0);
+        g.cancel();
+    }
+
+    /// A swap from the Team seat to the personal login keeps the Anthropic
+    /// account uuid and changes only the organization. It is a different
+    /// account, and the guardian has to see that.
+    #[tokio::test(start_paused = true)]
+    async fn a_switch_to_another_organization_of_the_same_account_is_drift() {
+        let io = MockIO::new(cc("rt-personal"), oa_in_org("u1", "org-personal"));
+        let g = KeychainGuardian::arm(cc("rt-team"), oa_in_org("u1", "org-team"), "u1".into(), io.clone());
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        assert!(io.cc_writes.load(Ordering::SeqCst) >= 1, "the credentials are put back");
+        assert_eq!(io.oa.lock().unwrap().as_ref().unwrap()["organizationUuid"], "org-team");
+        g.cancel();
+    }
+
+    /// An account saved before organizations were recorded has none to compare:
+    /// the same uuid is the same login.
+    #[tokio::test(start_paused = true)]
+    async fn an_unknown_organization_does_not_count_as_a_difference() {
+        let io = MockIO::new(cc("rt"), oa_in_org("u1", "org-team"));
+        let g = KeychainGuardian::arm(cc("rt"), oa("u1"), "u1".into(), io.clone());
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        assert_eq!(io.cc_writes.load(Ordering::SeqCst), 0);
+        g.cancel();
     }
 
     #[tokio::test]

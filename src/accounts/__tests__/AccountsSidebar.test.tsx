@@ -8,6 +8,7 @@ const DEFAULT_MOCK_STATE = () => ({
     { slot: 2, email: 'b@y.com', is_active: false, account_uuid: 'u2', org_uuid: 'g1', cached_usage: null, last_error: null, subscription_type: 'pro' },
   ],
   orgGroups: new Map(),
+  qualifiers: new Map<number, string>(),
   currentActive: { slot: 1, email: 'a@x.com', is_active: true, account_uuid: 'u1' },
   pending: null as any,
   swappingSlot: null as number | null,
@@ -106,6 +107,18 @@ describe('AccountsSidebar', () => {
     render(<AccountsSidebar />);
     expect(screen.getByText('a@x.com')).toBeInTheDocument();
     expect(screen.getByText('b@y.com')).toBeInTheDocument();
+  });
+
+  it('tells two accounts under one address apart by their organization', () => {
+    mockState.accounts = [
+      { slot: 1, email: 'eric@x.com', is_active: true, account_uuid: 'u1', org_uuid: 'o1', cached_usage: null, last_error: null, subscription_type: 'team' },
+      { slot: 2, email: 'eric@x.com', is_active: false, account_uuid: 'u1@o2', org_uuid: 'o2', cached_usage: null, last_error: null, subscription_type: 'max' },
+    ];
+    mockState.qualifiers = new Map([[1, 'Catch Software'], [2, 'Personal org']]);
+    render(<AccountsSidebar />);
+    expect(screen.getAllByText('eric@x.com')).toHaveLength(2);
+    expect(screen.getByText('Catch Software')).toBeInTheDocument();
+    expect(screen.getByText('Personal org')).toBeInTheDocument();
   });
 
   it('renders the + Add account button', () => {

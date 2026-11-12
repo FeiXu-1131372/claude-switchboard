@@ -104,13 +104,18 @@ pub fn matches_account(obs: &Observation, ctx: &SlotContext) -> bool {
             organization_uuid,
             ..
         } => {
-            if ctx.acc.account_uuid != *account_uuid {
+            // The reading names the Anthropic account; the slot's own id can
+            // carry its organization too (see `ManagedAccount::anthropic_uuid`).
+            if ctx.acc.anthropic_uuid() != account_uuid {
                 return false;
             }
             // One person in a personal and a Team organization has separate
-            // limits under one account uuid: never credit the wrong ones.
-            match &ctx.acc.organization_uuid {
-                Some(slot_org) => organization_uuid.as_deref() == Some(slot_org.as_str()),
+            // limits under one account uuid: never credit the wrong ones. The
+            // slot's organization is read wherever it is recorded (its saved
+            // field, Claude Code's profile copy, or its id), not only the
+            // field an in-app sign-in used to leave empty.
+            match ctx.acc.org_uuid() {
+                Some(slot_org) => organization_uuid.as_deref() == Some(slot_org),
                 None => true,
             }
         }
@@ -682,6 +687,37 @@ mod tests {
         assert!(matches_account(&obs(oauth_id(Some("org-1"))), &ctx(&a, None)));
         assert!(!matches_account(&obs(oauth_id(Some("org-2"))), &ctx(&a, None)));
         assert!(!matches_account(&obs(oauth_id(None)), &ctx(&a, None)));
+    }
+
+    /// The second organization of one Anthropic account is saved under the id
+    /// `<uuid>@<org>`; the status line reports the plain uuid and the
+    /// organization, and that is what has to match.
+    #[test]
+    fn an_organization_scoped_id_matches_by_the_anthropic_uuid_and_its_organization() {
+        let a = acc(
+            AddSource::OAuth,
+            "u-1@org-2",
+            Some("org-2"),
+            json!({"accountUuid": "u-1", "organizationUuid": "org-2"}),
+        );
+        assert!(matches_account(&obs(oauth_id(Some("org-2"))), &ctx(&a, None)));
+        assert!(!matches_account(&obs(oauth_id(Some("org-1"))), &ctx(&a, None)));
+        assert!(!matches_account(&obs(oauth_id(None)), &ctx(&a, None)));
+    }
+
+    /// In-app sign-ins used to leave the saved organization empty while Claude
+    /// Code's profile copy had it. That copy still has to keep another
+    /// organization's reading out.
+    #[test]
+    fn an_organization_recorded_only_in_the_profile_blob_still_counts() {
+        let a = acc(
+            AddSource::OAuth,
+            "u-1",
+            None,
+            json!({"accountUuid": "u-1", "organizationUuid": "org-1"}),
+        );
+        assert!(matches_account(&obs(oauth_id(Some("org-1"))), &ctx(&a, None)));
+        assert!(!matches_account(&obs(oauth_id(Some("org-2"))), &ctx(&a, None)));
     }
 
     #[test]

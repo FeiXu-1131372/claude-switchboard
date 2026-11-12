@@ -336,3 +336,34 @@ describe('AccountRow switch', () => {
     expect(screen.getByText('Active')).toBeInTheDocument();
   });
 });
+
+describe('AccountRow for an address saved under two organizations', () => {
+  it('shows the organization beside the address, so the two rows can be told apart', () => {
+    render(
+      <AccountRow
+        entry={entry({ email: 'eric@x.com', org_name: 'Catch Software' })}
+        thresholds={[75, 90]}
+        qualifier="Catch Software"
+      />,
+    );
+    expect(screen.getByText('eric@x.com')).toBeInTheDocument();
+    expect(screen.getByText('Catch Software')).toBeInTheDocument();
+  });
+
+  it('names the organization on the switch button too', () => {
+    render(
+      <AccountRow
+        entry={entry({ email: 'eric@x.com', is_active: false })}
+        thresholds={[75, 90]}
+        qualifier="Catch Software"
+        onSwap={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Switch to eric@x.com (Catch Software)' })).toBeInTheDocument();
+  });
+
+  it('adds nothing when the address is not shared', () => {
+    render(<AccountRow entry={entry({ email: 'eric@x.com', is_active: false })} thresholds={[75, 90]} onSwap={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Switch to eric@x.com' })).toBeInTheDocument();
+  });
+});

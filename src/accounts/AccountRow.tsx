@@ -16,6 +16,12 @@ interface Props {
   entry: AccountListEntry;
   thresholds: [number, number];
   shareHint?: string | null;
+  /**
+   * The organization this account belongs to, given only when its address is
+   * saved under another organization too (a Team seat and a personal login),
+   * so the two rows can be told apart.
+   */
+  qualifier?: string | null;
   onSwap?: () => void;
   swapBusy?: boolean;
   swapping?: boolean;
@@ -133,6 +139,7 @@ export function AccountRow({
   entry,
   thresholds,
   shareHint,
+  qualifier = null,
   onSwap,
   swapBusy = false,
   swapping = false,
@@ -308,6 +315,8 @@ export function AccountRow({
         : `Custom (${schedule.times.length})`;
 
   const showSwap = !!onSwap && !entry.is_active;
+  // How the account is named where a name is spoken or hovered.
+  const fullName = qualifier ? `${entry.email} (${qualifier})` : entry.email;
 
   return (
     <div
@@ -327,7 +336,7 @@ export function AccountRow({
               ? 'font-[var(--weight-semibold)] text-[color:var(--color-text)]'
               : 'text-[color:var(--color-text)]'
           }`}
-          title={entry.email}
+          title={fullName}
         >
           {entry.email}
         </span>
@@ -357,7 +366,7 @@ export function AccountRow({
             type="button"
             onClick={onSwap}
             disabled={swapBusy}
-            aria-label={`${swapping ? 'Switching' : 'Switch'} to ${entry.email}`}
+            aria-label={`${swapping ? 'Switching' : 'Switch'} to ${fullName}`}
             className={`
               shrink-0 rounded-[var(--radius-pill)]
               border border-[var(--color-border)]
@@ -422,7 +431,7 @@ export function AccountRow({
                 {removeArmed ? (
                   <div className="flex flex-col gap-[var(--space-xs)] p-[var(--space-xs)]">
                     <p className="text-[length:var(--text-micro)] text-[color:var(--color-text-secondary)] leading-[var(--leading-label)]">
-                      Remove <span className="text-[color:var(--color-text)]">{entry.email}</span>?
+                      Remove <span className="text-[color:var(--color-text)]">{fullName}</span>?
                     </p>
                     {entry.is_active && (
                       <p className="text-[length:var(--text-micro)] text-[color:var(--color-text-muted)] leading-[var(--leading-label)]">
@@ -508,6 +517,15 @@ export function AccountRow({
           </div>
         )}
       </div>
+
+      {qualifier && (
+        <span
+          className="truncate text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]"
+          title={qualifier}
+        >
+          {qualifier}
+        </span>
+      )}
 
       {errLabel ? (
         <div className="flex items-center gap-[var(--space-xs)]">
