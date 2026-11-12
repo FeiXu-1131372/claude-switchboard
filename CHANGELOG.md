@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## v1.5.1 — 2026-11-12
+
 ### Added
 
 - **Warm-up runs through Claude Code.** A direct request to the messages API is sometimes refused for a subscription token (a bare HTTP 429 on an account reading 0% of its 5-hour window). Warm-up now runs Claude Code headless (`claude -p` on Haiku) in a throwaway empty config folder, with the token passed only through the child's environment and anything that could sign it in as someone else removed. It falls back to the direct request only when Claude Code is missing or cannot start; if Claude Code ran and failed, that failure is what you see.
@@ -14,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- **The compact popover could be cut off at a Windows text size above 100%.** WebView2 applies the system text-size setting as page zoom, so the window hands the webview fewer CSS pixels than the app asks for; the fixed 360 px compact shell then painted past the right edge and clipped the account badges and percentages. The shell now fills the window and caps at the design size, so it reflows instead of clipping.
 - **One email address in two organizations is two accounts.** A Team seat and a personal login under the same address share an Anthropic account id, and the app treated them as one: signing in with the second replaced the first, and each would also have been shown the other's usage. Accounts are now told apart by organization as well, so both are kept, with their own tokens, limits and warm-up. The first one keeps its existing id; the second is stored as `<id>@<organization>`. When an address is saved twice, each row shows its organization's name under the address. Nothing is read from Claude Code's shared usage cache for such an address, because that cache names only the account, not which organization it was for.
 - **The expanded window could be cut off on Windows.** The window animates inside a fixed 960 × 640 box, and when Windows gave the window less than that (for instance across monitors with different display scaling) the right and bottom edges of the report were clipped, where macOS simply reflows. The box is now never larger than the window.
 - **A strip of scrolling rows showed above the day heading on the Cost tab.** The heading stopped as far below the header as the scroll area's top padding, and rows passing under it were visible in that gap. It now sits flush under the header.
@@ -227,7 +230,8 @@ First public release. See the [GitHub release notes](https://github.com/FeiXu-11
 - Settings persistence via SQLite; CSP set; corrupted-DB recovery.
 - Anthropic-warm token system with native vibrancy (macOS) / Mica (Windows 11) / translucent solid (Windows 10).
 
-[Unreleased]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.3.1...v1.4.0
 
