@@ -233,3 +233,92 @@ async fn expired_crash_lease_is_recovered_and_old_owner_cannot_overwrite_result(
         Some("success")
     );
 }
+
+/// Ages the account's last claim so the 60-second double-click guard is out of
+/// the way and a test can isolate the rule it is about.
+fn age_last_claim(db: &Db, seconds: i64) {
+    db.conn()
+        .execute("UPDATE accounts SET last_warmup_at = last_warmup_at - ?1", [seconds])
+        .unwrap();
+}
+
+/// A rate-limited warm-up sets a 30-minute automatic retry back-off. That
+/// back-off stops the *scheduler* hammering a limited account. A person who
+/// clicks "Try again" asked on purpose, and must not be refused by it.
+#[tokio::test]
+async fn a_manual_retry_is_not_blocked_by_the_automatic_backoff() {
+    let (_dir, db, mut backend, now) = fixture();
+    backend.outcome = WarmupOutcome::AtRateLimit;
+    assert_eq!(scheduled(&db, &backend, now).await.unwrap().failed, 1);
+    let state = claim::run_state(&db.conn(), "fixture").unwrap();
+    assert_eq!(state.last_result.as_deref(), Some("rate_limited"));
+
+    // Two minutes on: past the double-click guard, far inside the 30-minute back-off.
+    age_last_claim(&db, 120);
+    backend.outcome = WarmupOutcome::Success;
+    let outcome = manual(&db, &backend, "fixture", None).await.expect("a deliberate retry must run");
+    assert_eq!(outcome, WarmupOutcome::Success);
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
+    let state = claim::run_state(&db.conn(), "fixture").unwrap();
+    assert_eq!(state.last_result.as_deref(), Some("success"));
+}
+
+/// The scheduler, on the other hand, still waits the back-off out.
+#[tokio::test]
+async fn the_scheduler_still_waits_out_a_rate_limit_backoff_after_a_manual_failure() {
+    let (_dir, db, mut backend, now) = fixture();
+    backend.outcome = WarmupOutcome::AtRateLimit;
+    manual(&db, &backend, "fixture", None).await.unwrap();
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        scheduled(&db, &backend, now + chrono::Duration::minutes(10)).await.unwrap().attempted,
+        0,
+        "a failed manual run still starts the automatic back-off"
+    );
+}
+
+/// Two runs for one account must never overlap: a run in flight holds a lease.
+#[tokio::test]
+async fn a_manual_click_is_still_refused_while_a_run_is_in_flight() {
+    let (_dir, db, backend, _now) = fixture();
+    let _in_flight = claim::claim_run(&db.conn(), "fixture", None, Utc::now().timestamp())
+        .unwrap()
+        .expect("the first claim wins");
+    age_last_claim(&db, 120);
+    let err = manual(&db, &backend, "fixture", None).await.unwrap_err().to_string();
+    assert!(err.contains("already running"), "{err}");
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+}
+
+/// A double click, or the scheduler and a click landing together.
+#[tokio::test]
+async fn a_second_manual_click_within_a_minute_is_refused_with_an_accurate_message() {
+    let (_dir, db, backend, _now) = fixture();
+    manual(&db, &backend, "fixture", None).await.unwrap();
+    let err = manual(&db, &backend, "fixture", None).await.unwrap_err().to_string();
+    assert!(err.contains("less than a minute ago"), "{err}");
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+}
+
+/// A refusal that is not a usage limit is recorded as such, with its reason in
+/// the message a person sees, and the scheduler backs off like it does for a
+/// limit (it must not hammer an account that is refusing it).
+#[tokio::test]
+async fn a_refusal_is_recorded_with_its_reason_and_the_scheduler_backs_off() {
+    let (_dir, db, mut backend, now) = fixture();
+    backend.outcome = WarmupOutcome::Refused {
+        detail: "HTTP 429, not a usage limit; request req_abc".into(),
+    };
+    assert_eq!(scheduled(&db, &backend, now).await.unwrap().failed, 1);
+    let state = claim::run_state(&db.conn(), "fixture").unwrap();
+    assert_eq!(state.last_result.as_deref(), Some("refused"));
+    let message = state.last_error.unwrap();
+    assert!(message.contains("refused"), "{message}");
+    assert!(message.contains("req_abc"), "{message}");
+    assert!(!message.contains("rate limited"), "it must not claim a limit: {message}");
+    assert_eq!(
+        scheduled(&db, &backend, now + chrono::Duration::minutes(10)).await.unwrap().attempted,
+        0,
+        "30-minute back-off"
+    );
+}

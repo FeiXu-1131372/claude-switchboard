@@ -94,6 +94,64 @@ pub async fn issue_to(
     Ok(resp)
 }
 
+/// How much of a refusal's body goes in the log.
+const BODY_LOG_LIMIT: usize = 600;
+
+/// How long to wait for a refusal's body before logging without it.
+const BODY_READ_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// One log line for a response that was not a success: its status, the few
+/// headers that explain a refusal (`request-id`, `retry-after`,
+/// `x-should-retry`, and every `anthropic-ratelimit-*`), and the start of the
+/// body.
+///
+/// An allowlist, never a denylist: the log is a local file a person may attach
+/// to a bug report, and nothing that authenticates a request (or a person)
+/// may reach it.
+pub(crate) fn describe_refusal(
+    status: reqwest::StatusCode,
+    headers: &reqwest::header::HeaderMap,
+    body: &[u8],
+) -> String {
+    let mut kept: Vec<String> = headers
+        .iter()
+        .filter(|(name, _)| {
+            let name = name.as_str();
+            matches!(name, "request-id" | "retry-after" | "x-should-retry")
+                || name.starts_with("anthropic-ratelimit-")
+        })
+        .filter_map(|(name, value)| value.to_str().ok().map(|v| format!("{}={v}", name.as_str())))
+        .collect();
+    kept.sort();
+
+    let text = String::from_utf8_lossy(body);
+    let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let body_part = if compact.is_empty() {
+        "body: (empty)".to_string()
+    } else {
+        let shown: String = compact.chars().take(BODY_LOG_LIMIT).collect();
+        let cut = if compact.chars().count() > BODY_LOG_LIMIT { "…" } else { "" };
+        format!("body: {shown}{cut}")
+    };
+
+    let mut parts = vec![format!("HTTP {}", status.as_u16())];
+    parts.extend(kept);
+    parts.push(body_part);
+    parts.join("; ")
+}
+
+/// Read a refused response and describe it. Consumes the response: only for a
+/// status that is about to be classified and dropped.
+pub(crate) async fn describe_response(resp: reqwest::Response) -> String {
+    let status = resp.status();
+    let headers = resp.headers().clone();
+    let body = match tokio::time::timeout(BODY_READ_TIMEOUT, resp.bytes()).await {
+        Ok(Ok(bytes)) => bytes,
+        _ => Default::default(),
+    };
+    describe_refusal(status, &headers, &body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,5 +201,98 @@ mod tests {
         let resp = issue_to(&client, "test-token", &server.url()).await.unwrap();
         assert_eq!(resp.status().as_u16(), 200);
         m.assert_async().await;
+    }
+
+    fn headers(pairs: &[(&str, &str)]) -> reqwest::header::HeaderMap {
+        let mut map = reqwest::header::HeaderMap::new();
+        for (k, v) in pairs {
+            map.insert(
+                reqwest::header::HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                reqwest::header::HeaderValue::from_str(v).unwrap(),
+            );
+        }
+        map
+    }
+
+    #[test]
+    fn a_refusal_is_described_with_its_status_rate_limit_headers_and_body() {
+        let line = describe_refusal(
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            &headers(&[
+                ("request-id", "req_011CXYZ"),
+                ("retry-after", "1800"),
+                ("anthropic-ratelimit-unified-status", "rejected"),
+                ("anthropic-ratelimit-unified-5h-reset", "1794455732"),
+                ("content-type", "application/json"),
+            ]),
+            br#"{"type":"error","error":{"type":"rate_limit_error","message":"Number of request tokens has exceeded your per-minute rate limit"}}"#,
+        );
+        assert!(line.starts_with("HTTP 429"), "{line}");
+        for want in [
+            "request-id=req_011CXYZ",
+            "retry-after=1800",
+            "anthropic-ratelimit-unified-status=rejected",
+            "anthropic-ratelimit-unified-5h-reset=1794455732",
+            "rate_limit_error",
+            "per-minute rate limit",
+        ] {
+            assert!(line.contains(want), "missing {want:?} in {line}");
+        }
+        assert!(!line.contains("content-type"), "only an allowlist of headers is kept: {line}");
+    }
+
+    /// The log is a plain local file a user may attach to a bug report: nothing
+    /// that authenticates a request or a person may reach it.
+    #[test]
+    fn a_refusal_never_logs_credentials_or_cookies() {
+        let line = describe_refusal(
+            reqwest::StatusCode::FORBIDDEN,
+            &headers(&[
+                ("authorization", "Bearer sk-ant-oat01-SECRET"),
+                ("x-api-key", "sk-ant-api03-SECRET"),
+                ("set-cookie", "session=SECRET"),
+                ("request-id", "req_1"),
+            ]),
+            b"{}",
+        );
+        assert!(!line.contains("SECRET"), "{line}");
+        assert!(line.contains("request-id=req_1"));
+    }
+
+    #[test]
+    fn a_long_body_is_cut_on_a_character_boundary_and_whitespace_is_collapsed() {
+        let body = format!("{{\n  \"message\": \"{}\"\n}}", "é".repeat(2000));
+        let line = describe_refusal(reqwest::StatusCode::BAD_REQUEST, &headers(&[]), body.as_bytes());
+        assert!(line.ends_with('…'), "a cut body says so: {}", &line[line.len().saturating_sub(20)..]);
+        assert!(line.chars().count() < 800, "{} chars", line.chars().count());
+        assert!(!line.contains('\n'), "one line in the log");
+        assert!(line.contains("{ \"message\": \"é"), "{line}");
+    }
+
+    #[test]
+    fn an_empty_or_binary_body_still_gives_a_line() {
+        let empty = describe_refusal(reqwest::StatusCode::SERVICE_UNAVAILABLE, &headers(&[]), b"");
+        assert_eq!(empty, "HTTP 503; body: (empty)");
+        let binary = describe_refusal(reqwest::StatusCode::BAD_GATEWAY, &headers(&[]), &[0xff, 0xfe, b'o', b'k']);
+        assert!(binary.starts_with("HTTP 502; body: "), "{binary}");
+    }
+
+    /// End to end through the real HTTP client: a 429 with a JSON body is read,
+    /// not discarded, and what came back is in the log line.
+    #[tokio::test]
+    async fn a_refused_response_is_read_and_described() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("POST", "/")
+            .with_status(429)
+            .with_header("retry-after", "1800")
+            .with_header("anthropic-ratelimit-unified-status", "rejected")
+            .with_body(r#"{"error":{"type":"rate_limit_error","message":"limit"}}"#)
+            .create_async()
+            .await;
+        let resp = issue_to(&reqwest::Client::new(), "t", &server.url()).await.unwrap();
+        let line = describe_response(resp).await;
+        assert!(line.contains("HTTP 429") && line.contains("retry-after=1800"), "{line}");
+        assert!(line.contains("rate_limit_error"), "{line}");
     }
 }

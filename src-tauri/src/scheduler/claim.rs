@@ -24,6 +24,13 @@ pub struct RunState {
 
 /// One atomic, cross-process lease. Completed scheduled occurrences are never
 /// replayed; failed ones can retry after their persisted backoff expires.
+///
+/// The back-off (`next_retry_at`) only stops the *scheduler* retrying a failed
+/// occurrence too soon, so it binds scheduled claims (`scheduled_fire` is
+/// `Some`) and not manual ones: a person who clicks "Warm up now" or "Try
+/// again" asked on purpose. Two things still refuse a manual claim: a run in
+/// flight (its lease has not expired), and any claim for this account in the
+/// last `CLAIM_WINDOW_SECS` (a double click, or a click racing the scheduler).
 pub fn claim_run(
     conn: &Connection,
     account_id: &str,
@@ -39,8 +46,9 @@ pub fn claim_run(
            AND EXISTS (SELECT 1 FROM settings WHERE key = 'warmup_consent_granted' AND value = '1')
          ON CONFLICT(account_id) DO UPDATE SET claim_token = ?2, lease_until = ?3,
            last_attempt_at = ?4, last_result = 'running', last_error = NULL
-         WHERE warmup_runs.lease_until <= ?4 AND warmup_runs.next_retry_at <= ?4
-           AND (?5 IS NULL OR warmup_runs.completed_fire IS NULL OR warmup_runs.completed_fire < ?5)",
+         WHERE warmup_runs.lease_until <= ?4
+           AND (?5 IS NULL OR (warmup_runs.next_retry_at <= ?4
+                AND (warmup_runs.completed_fire IS NULL OR warmup_runs.completed_fire < ?5)))",
         rusqlite::params![account_id, token, now + 120, now, scheduled_fire, now - CLAIM_WINDOW_SECS],
     )?;
     if won == 0 {
@@ -67,6 +75,13 @@ pub fn finish_run(
     let (status, error, retry, complete, success) = match result {
         Ok(Success) => ("success", None, 60, true, true),
         Ok(SkippedAlreadyActive) => ("already_active", None, 60, true, false),
+        Ok(Refused { detail }) => (
+            "refused",
+            Some(format!("Anthropic refused the warm-up request ({detail}).")),
+            1800,
+            false,
+            false,
+        ),
         Ok(NeedsReauth) => (
             "needs_reauth",
             Some("Sign in to this account again.".into()),

@@ -195,6 +195,29 @@ describe('AccountRow warm-up section', () => {
     expect(screen.queryByRole('switch')).toBeNull();
   });
 
+  // An account at 0% of its 5-hour window got a bare HTTP 429 from the API. The
+  // row used to call that "Already at rate limit", which was untrue.
+  it('says a refusal was a refusal, with its request id, not a rate limit', async () => {
+    ipcMock.getWarmupState.mockResolvedValueOnce({ warmup_enabled: true, schedule: { type: 'Off' } });
+    ipcMock.warmupAccountNow.mockResolvedValueOnce({
+      Refused: { detail: 'HTTP 429, not a usage limit; request req_abc' },
+    });
+    render(<AccountRow entry={entry({})} thresholds={[75, 90]} />);
+    fireEvent.click(await screen.findByRole('button', { name: /warm-up/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /warm up now/i }));
+    expect(await screen.findByText(/refused the request.*req_abc/i)).toBeTruthy();
+    expect(screen.queryByText(/already at rate limit/i)).toBeNull();
+  });
+
+  it('still calls a genuine usage limit a rate limit', async () => {
+    ipcMock.getWarmupState.mockResolvedValueOnce({ warmup_enabled: true, schedule: { type: 'Off' } });
+    ipcMock.warmupAccountNow.mockResolvedValueOnce('AtRateLimit');
+    render(<AccountRow entry={entry({})} thresholds={[75, 90]} />);
+    fireEvent.click(await screen.findByRole('button', { name: /warm-up/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /warm up now/i }));
+    expect(await screen.findByText(/already at rate limit/i)).toBeTruthy();
+  });
+
   it('summarizes the schedule on the collapsed line', async () => {
     ipcMock.getWarmupState.mockResolvedValueOnce({
       warmup_enabled: true,

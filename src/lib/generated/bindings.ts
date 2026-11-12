@@ -892,7 +892,8 @@ export type WarmupOutcome =
  */
 "NeedsReauth" | 
 /**
- * 429 — already at limit. Window running and at cap.
+ * 429 with the headers of a subscription usage limit: the account really
+ * is at a limit.
  */
 "AtRateLimit" | 
 /**
@@ -906,7 +907,14 @@ export type WarmupOutcome =
 /**
  * Other / unknown HTTP status.
  */
-{ OtherFailure: { status: number } }
+{ OtherFailure: { status: number } } | 
+/**
+ * The request was refused, and not because of a usage limit: a 429 that
+ * carries none of the `anthropic-ratelimit-*` headers a limit does. Seen
+ * in the wild on an account at 0% of its 5-hour window. `detail` says what
+ * came back (status, request id) in a form a person can read.
+ */
+{ Refused: { detail: string } }
 
 /** tauri-specta globals **/
 

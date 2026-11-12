@@ -2,6 +2,7 @@
 //! deliberately. Per spec §6.
 
 pub mod api_call;
+mod claude_cli;
 pub mod config;
 pub mod errors;
 pub mod runner;
@@ -45,7 +46,17 @@ where
     let token = oauth_token_loader().context("load OAuth token")?;
 
     match api_call::issue(http, &token).await {
-        Ok(resp) => Ok(errors::classify_status(resp.status().as_u16())),
+        Ok(resp) => {
+            let status = resp.status();
+            let headers = resp.headers().clone();
+            if !status.is_success() {
+                // Keep what came back: without it a 429 is just "rate
+                // limited", with no way to tell a real limit from a refusal.
+                let detail = api_call::describe_response(resp).await;
+                tracing::warn!(target: "switchboard.warmup", "warm-up refused: {detail}");
+            }
+            Ok(errors::classify_response(status.as_u16(), &headers))
+        }
         Err(e) if e.is_timeout() => Ok(WarmupOutcome::NetworkError),
         Err(e) if e.is_connect() => Ok(WarmupOutcome::NetworkError),
         Err(_) => Ok(WarmupOutcome::NetworkError),

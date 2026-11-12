@@ -68,7 +68,13 @@ impl Backend for AccountBackend<'_> {
             allowed(self.db, &account.account_uuid)?,
             "Warm-up has been disabled or consent revoked"
         );
-        super::warmup_account(None, || Ok(token), self.http).await
+        // Through Claude Code when it is installed: the API sometimes refuses
+        // the direct request that the CLI's own request gets through.
+        let claude = crate::providers::launcher::resolve_claude_binary().ok();
+        super::claude_cli::warm_up_or_fall_back(claude.as_deref(), &token, || {
+            super::warmup_account(None, || Ok(token.clone()), self.http)
+        })
+        .await
     }
 }
 
@@ -187,7 +193,11 @@ pub async fn manual(
         .find(|a| a.account_uuid == id)
         .context("Warm-up account was removed")?;
     let Some(lease) = claim::claim_run(&db.conn(), id, None, Utc::now().timestamp())? else {
-        anyhow::bail!("Warm-up already attempted recently or waiting to retry");
+        // Not the automatic retry back-off: a manual run ignores that. Only a
+        // run in flight, or one started a moment ago, lands here.
+        anyhow::bail!(
+            "A warm-up for this account is already running or was started less than a minute ago."
+        );
     };
     let outcome = perform(db, backend, &account, hot_snapshot).await;
     claim::finish_run(&db.conn(), &lease, &outcome, Utc::now().timestamp())?;

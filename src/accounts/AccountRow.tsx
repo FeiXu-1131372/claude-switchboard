@@ -31,6 +31,10 @@ function describeWarmupOutcome(outcome: WarmupOutcome): { status: WarmupNowStatu
   if (typeof outcome === 'object' && outcome !== null && 'OtherFailure' in outcome) {
     return { status: 'error', message: `Failed (HTTP ${outcome.OtherFailure.status})` };
   }
+  // The API said no, and not because the account is at a usage limit.
+  if (typeof outcome === 'object' && outcome !== null && 'Refused' in outcome) {
+    return { status: 'error', message: `Anthropic refused the request (${outcome.Refused.detail})` };
+  }
   switch (outcome) {
     case 'Success':
       return { status: 'success', message: '5h window refreshed' };
@@ -44,6 +48,10 @@ function describeWarmupOutcome(outcome: WarmupOutcome): { status: WarmupNowStatu
       return { status: 'error', message: 'Anthropic server error' };
     case 'NetworkError':
       return { status: 'error', message: 'Network error' };
+    default:
+      // An outcome this build doesn't know (a newer backend) must not take the
+      // row down with a destructuring error.
+      return { status: 'error', message: 'Warm-up failed' };
   }
 }
 
