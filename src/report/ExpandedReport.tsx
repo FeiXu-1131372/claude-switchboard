@@ -242,7 +242,7 @@ export function ExpandedReport() {
             onPointerDown={stopRestoring}
             onKeyDown={stopRestoring}
             className="
-              flex-1 overflow-y-auto px-[var(--space-2xl)] pb-[var(--space-2xl)] pt-[var(--space-lg)]
+              flex-1 overflow-y-auto px-[var(--space-2xl)] pb-[var(--space-2xl)] pt-[var(--report-pad-top)]
               outline-none focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]
               focus-visible:-outline-offset-2
             "

@@ -273,6 +273,22 @@ describe('SessionsTab (Cost) — range and paging', () => {
     expect(screen.getAllByTestId('day-total').map((d) => d.textContent)).toEqual(['$300.00']);
   });
 
+  /**
+   * The report's scroll area has top padding. A sticky offset of 0 is measured
+   * from inside that padding, so the day heading stopped that far below the top
+   * and the rows scrolling past showed through the strip above it. The offset
+   * has to cancel the padding. (jsdom does no sticky layout, so this pins the
+   * offset; the position itself was checked in a browser.)
+   */
+  it('keeps the day heading flush with the top of the scroll area', async () => {
+    ipcMock.getSessionCosts.mockResolvedValue(manyRows(5));
+    render(<SessionsTab />);
+    const heading = (await screen.findAllByTestId('day-total'))[0].parentElement!;
+    expect(heading.className).toContain('sticky');
+    expect(heading.className).toContain('top-[calc(var(--report-pad-top)*-1)]');
+    expect(heading.className).not.toContain('top-0');
+  });
+
   it('goes back to the first page when the range changes', async () => {
     ipcMock.getSessionCosts.mockResolvedValue(manyRows(600));
     render(<SessionsTab />);

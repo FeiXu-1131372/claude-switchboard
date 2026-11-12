@@ -358,7 +358,7 @@ export function SessionsTab() {
                 reconciled by eye. */}
             <div
               className="
-                sticky top-0 z-[1] flex items-baseline justify-between
+                sticky top-[calc(var(--report-pad-top)*-1)] z-[1] flex items-baseline justify-between
                 bg-[var(--color-bg-base)] px-[var(--space-sm)]
                 pt-[var(--space-md)] pb-[var(--space-2xs)]
               "

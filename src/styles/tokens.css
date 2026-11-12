@@ -562,6 +562,10 @@ body {
   /* The expanded window's frame: one header row, and the accounts column. */
   --shell-header-height: 44px;
   --sidebar-width: 280px;
+  /* Space above the report's scrolling content. A sticky heading inside it has
+   * to offset by minus this, or it stops this far below the header and the
+   * rows scrolling past show through the gap. */
+  --report-pad-top: var(--space-lg);
 
   /* Charts: the plot's height and the gutter its axis labels sit in. */
   --chart-height: 160px;
