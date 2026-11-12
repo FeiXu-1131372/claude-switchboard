@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   BridgeState,
   BridgeTargetStatus,
@@ -61,7 +61,7 @@ function report(over: Partial<PreflightReport> = {}): PreflightReport {
 
 function renderCard(t: BridgeTargetStatus | BridgeTargetStatus[]) {
   ipcMock.getStatuslineBridgeStatus.mockResolvedValue(Array.isArray(t) ? t : [t]);
-  return render(<StatuslineBridgeCard now={() => NOW} isWindows={false} />);
+  return render(<StatuslineBridgeCard now={() => NOW} />);
 }
 
 beforeEach(() => {
@@ -175,7 +175,7 @@ describe('StatuslineBridgeCard states (spec §7)', () => {
 
   it('shows the error when the status cannot be read, and Retry reloads it', async () => {
     ipcMock.getStatuslineBridgeStatus.mockRejectedValueOnce(new Error('store is locked'));
-    render(<StatuslineBridgeCard now={() => NOW} isWindows={false} />);
+    render(<StatuslineBridgeCard now={() => NOW} />);
     expect(await screen.findByText(/couldn't read the status line setup: store is locked/i)).toBeInTheDocument();
     ipcMock.getStatuslineBridgeStatus.mockResolvedValue([target({ kind: 'off' })]);
     await userEvent.click(screen.getByRole('button', { name: /retry/i }));
@@ -396,9 +396,86 @@ describe('turning off and the repair buttons', () => {
 });
 
 describe('platform', () => {
-  it('card_is_not_rendered_on_windows', () => {
-    const { container } = render(<StatuslineBridgeCard now={() => NOW} isWindows={true} />);
-    expect(container).toBeEmptyDOMElement();
-    expect(ipcMock.getStatuslineBridgeStatus).not.toHaveBeenCalled();
+  const WINDOWS_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
+  const WIN_SETTINGS = 'C:\\Users\\me\\.claude\\settings.json';
+  const WIN_BRIDGE = 'C:\\Users\\me\\.claude-switchboard\\statusline\\bridge.exe';
+  const WIN_COMMAND = 'C:/Users/me/.claude-switchboard/statusline/bridge.exe --target abc123def456';
+
+  beforeEach(() => {
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue(WINDOWS_UA);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function windowsTarget(state: BridgeState): BridgeTargetStatus {
+    return target(state, {
+      config_home: 'C:\\Users\\me\\.claude',
+      settings_path: WIN_SETTINGS,
+      bridge_path: WIN_BRIDGE,
+    });
+  }
+
+  it('card_is_rendered_on_windows', async () => {
+    ipcMock.getStatuslineBridgeStatus.mockResolvedValue([windowsTarget({ kind: 'off' })]);
+    render(<StatuslineBridgeCard now={() => NOW} />);
+    expect(await screen.findByRole('switch')).toBeInTheDocument();
+    expect(screen.getByText(/live usage from claude code/i)).toBeInTheDocument();
+    expect(ipcMock.getStatuslineBridgeStatus).toHaveBeenCalled();
+  });
+
+  it('consent_panel_shows_the_windows_command_and_paths', async () => {
+    ipcMock.getStatuslineBridgeStatus.mockResolvedValue([windowsTarget({ kind: 'off' })]);
+    ipcMock.preflightStatuslineBridge.mockResolvedValue(
+      report({
+        command: WIN_COMMAND,
+        settings_path: WIN_SETTINGS,
+        bridge_path: WIN_BRIDGE,
+        shells: [
+          { shell: 'Git Bash', ok: true, detail: '' },
+          { shell: 'PowerShell 7', ok: true, detail: '' },
+        ],
+      }),
+    );
+    render(<StatuslineBridgeCard now={() => NOW} />);
+    await userEvent.click(await screen.findByRole('switch'));
+    const panel = await screen.findByRole('group', { name: /turn on live usage/i });
+    expect(within(panel).getByText(WIN_SETTINGS)).toBeInTheDocument();
+    expect(within(panel).getByText(WIN_COMMAND)).toBeInTheDocument();
+    expect(within(panel).getByText(`${WIN_BRIDGE} --restore --all`)).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: 'Turn on' })).toBeEnabled();
+  });
+
+  it('quotes_the_windows_restore_command_when_the_path_has_a_space', async () => {
+    const spaced = 'C:\\Users\\Fei Xu\\.claude-switchboard\\statusline\\bridge.exe';
+    ipcMock.getStatuslineBridgeStatus.mockResolvedValue([windowsTarget({ kind: 'off' })]);
+    ipcMock.preflightStatuslineBridge.mockResolvedValue(
+      report({ command: WIN_COMMAND, settings_path: WIN_SETTINGS, bridge_path: spaced }),
+    );
+    render(<StatuslineBridgeCard now={() => NOW} />);
+    await userEvent.click(await screen.findByRole('switch'));
+    const panel = await screen.findByRole('group', { name: /turn on live usage/i });
+    // PowerShell needs the call operator in front of a quoted path.
+    expect(within(panel).getByText(`& "${spaced}" --restore --all`)).toBeInTheDocument();
+  });
+
+  it('names_the_windows_shell_that_failed_and_blocks_turn_on', async () => {
+    ipcMock.getStatuslineBridgeStatus.mockResolvedValue([windowsTarget({ kind: 'off' })]);
+    ipcMock.preflightStatuslineBridge.mockResolvedValue(
+      report({
+        command: WIN_COMMAND,
+        shells: [
+          { shell: 'Git Bash', ok: true, detail: '' },
+          { shell: 'PowerShell 7', ok: false, detail: 'exit 1: The term is not recognized' },
+        ],
+      }),
+    );
+    render(<StatuslineBridgeCard now={() => NOW} />);
+    await userEvent.click(await screen.findByRole('switch'));
+    const panel = await screen.findByRole('group', { name: /turn on live usage/i });
+    expect(
+      within(panel).getByText(/couldn't run in PowerShell 7: exit 1: The term is not recognized/i),
+    ).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: 'Turn on' })).toBeDisabled();
   });
 });

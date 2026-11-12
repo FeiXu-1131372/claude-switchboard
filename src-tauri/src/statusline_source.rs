@@ -17,7 +17,7 @@ use statusline_bridge::format::{obs_dir, bridge_root, Identity, Observation, Rat
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 /// After this long, a statusline adoption no longer satisfies an
 /// HTTP-capable slot's poll: the Sonnet/Opus/extra-usage buckets it carries
@@ -322,24 +322,104 @@ fn log_mismatch(path: &Path, obs: &Observation, why: &Rejection) {
     }
 }
 
+/// A rejection's name, for the log.
+fn reason_name(why: &Rejection) -> &'static str {
+    match why {
+        Rejection::NotThisAccount => "NotThisAccount",
+        Rejection::UnknownVersion => "UnknownVersion",
+        Rejection::Unconfirmed => "Unconfirmed",
+        Rejection::NoBuckets => "NoBuckets",
+        Rejection::OutOfWindow => "OutOfWindow",
+        Rejection::BeforeActiveSince => "BeforeActiveSince",
+        Rejection::IdentityMismatch { .. } => "IdentityMismatch",
+    }
+}
+
+/// What the app decided about an account's statusline readings, in one line:
+/// which session's reading it uses, and how many files it could not use and
+/// why (counted by reason, alphabetically, so the line is stable).
+fn summarize_outcome(winner: Option<(u32, DateTime<Utc>)>, files: usize, rejected: &[&str]) -> String {
+    let mut counts: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for reason in rejected {
+        *counts.entry(reason).or_default() += 1;
+    }
+    let reasons = counts
+        .iter()
+        .map(|(reason, n)| format!("{reason}×{n}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    match winner {
+        Some((pid, data_at)) => {
+            let used = format!(
+                "using the reading from Claude Code pid {pid} (data {} UTC)",
+                data_at.format("%H:%M:%S")
+            );
+            if reasons.is_empty() {
+                used
+            } else {
+                format!("{used}; not usable: {reasons}")
+            }
+        }
+        None if files == 0 => "no observation files yet".to_string(),
+        None => format!("no usable reading among {files} file(s): {reasons}"),
+    }
+}
+
+/// A changed outcome is logged, but not more than once per account per this
+/// long: sessions confirming one by one would otherwise fill the log.
+const OUTCOME_LOG_MIN_GAP: Duration = Duration::from_secs(30);
+
+fn should_log_outcome(last: Option<(&str, Instant)>, summary: &str, now: Instant) -> bool {
+    match last {
+        None => true,
+        Some((previous, at)) => previous != summary && now.duration_since(at) >= OUTCOME_LOG_MIN_GAP,
+    }
+}
+
+/// Log `summary` for `slot` when it is new (see [`should_log_outcome`]).
+fn log_outcome(slot: u32, summary: String) {
+    static LAST: OnceLock<Mutex<HashMap<u32, (String, Instant)>>> = OnceLock::new();
+    let mut last = LAST
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let now = Instant::now();
+    let previous = last.get(&slot).map(|(s, at)| (s.as_str(), *at));
+    if should_log_outcome(previous, &summary, now) {
+        tracing::info!(target: "switchboard.poll", "slot {slot}: statusline: {summary}");
+        last.insert(slot, (summary, now));
+    }
+}
+
 /// The freshest usable observation for one slot, merged into a snapshot.
 pub fn freshest_for_slot(
     dir: &Path,
     ctx: &SlotContext,
 ) -> Option<(UsageSnapshot, Option<DateTime<Utc>>)> {
-    let mut best: Option<(RateLimits, DateTime<Utc>)> = None;
+    let mut best: Option<(RateLimits, DateTime<Utc>, u32)> = None;
+    let mut files = 0usize;
+    let mut rejected: Vec<&'static str> = Vec::new();
     for (path, obs) in load_observations(dir) {
+        files += 1;
         match candidate(&obs, ctx) {
             Ok((limits, data_at)) => {
-                if best.as_ref().is_none_or(|(_, at)| data_at > *at) {
-                    best = Some((limits, data_at));
+                if best.as_ref().is_none_or(|(_, at, _)| data_at > *at) {
+                    best = Some((limits, data_at, obs.claude_pid));
                 }
             }
-            Err(why @ Rejection::IdentityMismatch { .. }) => log_mismatch(&path, &obs, &why),
-            Err(_) => {}
+            Err(why) => {
+                rejected.push(reason_name(&why));
+                if matches!(why, Rejection::IdentityMismatch { .. }) {
+                    log_mismatch(&path, &obs, &why);
+                }
+            }
         }
     }
-    let (limits, data_at) = best?;
+    log_outcome(
+        ctx.acc.slot,
+        summarize_outcome(best.as_ref().map(|(_, at, pid)| (*pid, *at)), files, &rejected),
+    );
+    let (limits, data_at, _) = best?;
     Some(merge_into_snapshot(&limits, data_at, carried_of(ctx.shown)))
 }
 
@@ -907,5 +987,110 @@ mod tests {
         );
         let second = freshest_for_slot(dir.path(), &ctx(&t, None)).unwrap().0;
         assert_eq!(second.five_hour.unwrap().utilization, 45.55);
+    }
+}
+
+// Review focus: the bridge writes the config home the way Claude Code's
+// environment spelled it, and the app builds its own from `USERPROFILE`.
+// Slash style, drive-letter case and a trailing separator must not stop an
+// observation from matching the app's own config home.
+#[cfg(all(test, windows))]
+mod windows_path_tests {
+    use super::*;
+
+    #[test]
+    fn same_dir_ignores_slash_style_drive_case_and_a_trailing_separator() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".claude");
+        std::fs::create_dir_all(&home).unwrap();
+        let canonical = home.canonicalize().unwrap();
+        // Strip the verbatim prefix (backslash backslash ? backslash) from the
+        // canonical form, then respell it.
+        let plain = canonical.to_string_lossy().trim_start_matches(r"\\?\").to_string();
+        let swapped_case = {
+            let mut chars = plain.chars();
+            let drive = chars.next().unwrap();
+            let flipped = if drive.is_ascii_uppercase() { drive.to_ascii_lowercase() } else { drive.to_ascii_uppercase() };
+            format!("{flipped}{}", chars.as_str())
+        };
+        let spellings = [
+            plain.clone(),
+            plain.replace('\\', "/"),
+            swapped_case,
+            format!("{plain}\\"),
+        ];
+        for spelling in spellings {
+            assert!(same_dir(Path::new(&spelling), &home), "{spelling} should name {}", home.display());
+        }
+        assert!(!same_dir(Path::new(&format!("{plain}-other")), &home));
+    }
+}
+
+// The line the app logs for an account's statusline readings, so a reading that
+// is not being used can be explained from the log instead of guessed at.
+#[cfg(test)]
+mod outcome_log_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn at(h: u32, m: u32, s: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 11, 12, h, m, s).unwrap()
+    }
+
+    #[test]
+    fn every_rejection_has_a_name() {
+        assert_eq!(reason_name(&Rejection::NotThisAccount), "NotThisAccount");
+        assert_eq!(reason_name(&Rejection::UnknownVersion), "UnknownVersion");
+        assert_eq!(reason_name(&Rejection::Unconfirmed), "Unconfirmed");
+        assert_eq!(reason_name(&Rejection::NoBuckets), "NoBuckets");
+        assert_eq!(reason_name(&Rejection::OutOfWindow), "OutOfWindow");
+        assert_eq!(reason_name(&Rejection::BeforeActiveSince), "BeforeActiveSince");
+        let mismatch = Rejection::IdentityMismatch { window: "five_hour", observed: 1, known: 2 };
+        assert_eq!(reason_name(&mismatch), "IdentityMismatch");
+    }
+
+    #[test]
+    fn a_used_reading_is_named_with_its_session_and_data_time() {
+        let said = summarize_outcome(Some((9404, at(2, 52, 15))), 1, &[]);
+        assert_eq!(said, "using the reading from Claude Code pid 9404 (data 02:52:15 UTC)");
+    }
+
+    #[test]
+    fn what_was_not_used_is_counted_by_reason_in_a_stable_order() {
+        let said = summarize_outcome(
+            Some((9404, at(2, 52, 15))),
+            4,
+            &["Unconfirmed", "NotThisAccount", "Unconfirmed", "OutOfWindow"],
+        );
+        assert_eq!(
+            said,
+            "using the reading from Claude Code pid 9404 (data 02:52:15 UTC); \
+             not usable: NotThisAccount×1, OutOfWindow×1, Unconfirmed×2"
+        );
+    }
+
+    #[test]
+    fn with_nothing_usable_the_reasons_say_why() {
+        let said = summarize_outcome(None, 7, &["Unconfirmed"; 6].iter().chain(&["OutOfWindow"]).copied().collect::<Vec<_>>());
+        assert_eq!(said, "no usable reading among 7 file(s): OutOfWindow×1, Unconfirmed×6");
+    }
+
+    #[test]
+    fn with_no_files_at_all_it_says_so() {
+        assert_eq!(summarize_outcome(None, 0, &[]), "no observation files yet");
+    }
+
+    #[test]
+    fn the_log_line_appears_on_change_and_at_most_every_30_seconds() {
+        let t0 = Instant::now();
+        let later = |s: u64| t0 + Duration::from_secs(s);
+        // The first outcome for an account is always worth a line.
+        assert!(should_log_outcome(None, "a", t0));
+        // Unchanged: never again, however long it has been.
+        assert!(!should_log_outcome(Some(("a", t0)), "a", later(600)));
+        // Changed, but a moment after the last line: wait.
+        assert!(!should_log_outcome(Some(("a", t0)), "b", later(10)));
+        // Changed and settled: log it.
+        assert!(should_log_outcome(Some(("a", t0)), "b", later(31)));
     }
 }

@@ -27,6 +27,18 @@ const NOT_REPORTING = [
 const mutedText = 'text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]';
 const bodyText = 'text-[length:var(--text-label)] text-[color:var(--color-text-secondary)]';
 
+/**
+ * The command that undoes the edit without the app, as typed in a terminal.
+ * A Windows path with a space needs quotes, and PowerShell (the default
+ * terminal there) needs its call operator in front of a quoted path.
+ */
+function restoreCommand(bridgePath: string): string {
+  const isWindowsPath = /^[A-Za-z]:[\\/]/.test(bridgePath);
+  return isWindowsPath && /\s/.test(bridgePath)
+    ? `& "${bridgePath}" --restore --all`
+    : `${bridgePath} --restore --all`;
+}
+
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -432,7 +444,7 @@ function ConsentPanel({ report, busy, acceptedShared, onAcceptedShared, onConfir
 
       <p className={bodyText}>
         Turning this off puts the setting back exactly as it was. To undo it without Switchboard,
-        run <Path>{report.bridge_path} --restore --all</Path>
+        run <Path>{restoreCommand(report.bridge_path)}</Path>
       </p>
 
       {failures.length > 0 && (
@@ -474,8 +486,6 @@ function ConsentPanel({ report, busy, acceptedShared, onAcceptedShared, onConfir
 interface StatuslineBridgeCardProps {
   /** Injected for tests. */
   now?: () => number;
-  /** Injected for tests; defaults to the webview's user agent. */
-  isWindows?: boolean;
 }
 
 /**
@@ -485,16 +495,7 @@ interface StatuslineBridgeCardProps {
  * Save: it changes another program's file and needs its own busy, success and
  * error feedback. Every IPC failure is shown; none is swallowed.
  */
-export function StatuslineBridgeCard({
-  now = Date.now,
-  isWindows = typeof navigator !== 'undefined' && navigator.userAgent.includes('Windows'),
-}: StatuslineBridgeCardProps) {
-  // The Windows runtime is written to spec but not yet verified on Windows.
-  if (isWindows) return null;
-  return <StatuslineBridgeCardInner now={now} />;
-}
-
-function StatuslineBridgeCardInner({ now }: { now: () => number }) {
+export function StatuslineBridgeCard({ now = Date.now }: StatuslineBridgeCardProps) {
   const [targets, setTargets] = useState<BridgeTargetStatus[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [, setTick] = useState(0);

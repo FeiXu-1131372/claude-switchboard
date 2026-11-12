@@ -627,3 +627,38 @@ Two reviews (upstream correctness against the 2.1.311 binary; safety for other u
 | m15 test matrix gaps | Accepted | Folded into §9 |
 
 **Added by this revision (not from either review):** the reset-time cross-check (§5.4 rule 5) as the containment for env-token sessions and any other misattribution, pending measurement 10.
+
+---
+
+## 12. Windows status (2026-11-12)
+
+The Windows gate is off: the switch shows on Windows and the manager enables, disables and reconciles there.
+
+**Verified on Windows 11** (automated, run in `cargo test`):
+
+- The bridge binary against Git Bash, PowerShell 7 and Windows PowerShell 5.1 (`statusline-bridge/tests/bridge_cli_windows.rs`): byte-exact pass-through, 1 MB output, 2 MB stdin to an original that never reads it, the full stdin reaching the original, exit-code parity with a direct run in the same shell, stderr inheritance, the depth guard, a missing target, the 30-day `last_seen` cut-off, hostile quoting (`"`, `'`, `%`, `$`, `\`, non-ASCII) printing what a direct run prints, an original with quotes but no whitespace (`"true"`) running, and the Job object ending the original's tree when the bridge is killed.
+- The manager end to end against the real bridge (`statusline_setup/windows_tests.rs`): enable, the installed command running in every shell, byte-exact disable, preflight refusal leaving no trace, startup reconcile (missing target file, missing bridge, a bridge that stops running), and replacing a bridge that is running (§4.1, the in-place replace is refused by Windows, the rename-away path is used).
+- §4.5 on real shells: a command form one shell cannot run (unquoted backslashes: bash eats them) is rejected; the first form that every shell accepts is installed.
+
+**Decisions made while implementing:**
+
+- The probe runs in every shell Claude Code could pick; the user's real original runs once, in the shell Claude Code would pick (§4.3), because a status line written for bash fails in PowerShell with or without the bridge.
+- The tilde command form is offered only for the default bridge folder.
+- Command lines are written with libuv's `quote_cmd_arg` (`shell_windows::quote_arg`, via `raw_arg`), which is what Node and Bun use, not Rust's std quoting. They differ for an argument that holds a `"` but no space or tab: std leaves it bare, and Git Bash rejects `"true"` with an unterminated quote (reproduced; found in review). `quote_arg` is pinned to libuv's own documented examples. This is libuv's behaviour by reading and by those examples; Bun's own spawn still cannot be run here.
+- The app's preflight and its startup probe run each command in a Job object that is closed when the run ends, and wait at most 3 s for the pipes afterwards. Git's `bin\bash.exe` is only a launcher; killing it alone left the real bash and the command alive and held the manager's lock for as long as the command ran (reproduced: 40 s for a 2 s timeout).
+- The version check on a freshly written bridge gets 30 s, not 5 s. First launch of a new executable queues behind the system's scanner: 0.4-0.8 s alone, a median of 7 s with 32 launching at once (measured). This is what made four tests fail only in the full parallel run.
+- Moving the bridge into place retries for about 5 s, and on a first install (nothing to move aside) it only retries, so a scanner holding the new file does not turn into "The system cannot find the file specified".
+- Startup probes an installed form only if it is one of the forms the manager would install; a command the user wrapped (`<ours>; echo extra`) is probed as the first form, as macOS always did.
+- The text that tells a person how to undo the edit by hand is PowerShell-runnable on Windows (`& "C:\…\bridge.exe" --restore --all`); POSIX single quotes are a parse error there.
+- A test-only cargo feature, `force-shell`, lets the Windows integration tests pick the shell the bridge uses (`SWITCHBOARD_TEST_SHELL=bash|<path>` or `powershell|<path>`). It is not in release builds.
+
+**Not verified, and not claimed:**
+
+- The Bun-pinned quoting corpus (§4.3, §9): Bun cannot run in CI. Quoting follows libuv's routine and its documented examples instead.
+- The tilde form resolves through `$HOME` in Git Bash. It is proven in the app's own environment, so a Claude Code started from an MSYS2/Cygwin terminal, or with a different exported `HOME`, can resolve it elsewhere. It is the form used when the profile path has an apostrophe, or a space on a volume without 8.3 names.
+- PowerShell as the only shell: an original ending in `exit N` (N other than 0, 1, 2) exits N when run directly, but 1 through the bridge (the outer shell's epilogue), so the exact exit-code comparison refuses to enable, although Claude Code treats both as "non-zero".
+- A machine with neither Git nor PowerShell 7 (Windows PowerShell 5.1 only): the bridge is tested there, the app's preflight is not.
+- OEM code pages (cp936) and PowerShell's double re-encoding of non-ASCII output.
+- AppLocker, WDAC, and a profile path with a space or apostrophe on a real machine (the selection rule is tested with fakes; the 8.3 short-path call is tested only where the volume has short names).
+- The NSIS uninstaller hook of §4.4. It was not written: the Tauri NSIS template cannot be inspected or built here, and a wrong guard would either break the Windows release build or switch the feature off at every auto-update. Uninstalling the app leaves the bridge passing the original through; `bridge.exe --restore --all` undoes the edit; the bridge stops recording after 30 days without the app (§4.4). `obs/` is not deleted on uninstall.
+- The §4.4 update safety net (re-applying after an uninstaller restore) is moot until the hook exists.

@@ -1,4 +1,5 @@
 mod app_state;
+mod child_process;
 mod account_rotation;
 pub mod auth;
 pub mod branding;

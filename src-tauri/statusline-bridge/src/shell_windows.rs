@@ -5,8 +5,11 @@
 //! so it compiles and is tested on every platform. Paths are plain `String`s
 //! with Windows separators, because a `PathBuf` on macOS would not split on
 //! `\`. The code that actually spawns a process is at the bottom, behind
-//! `cfg(windows)`, and is **UNTESTED(windows)**: it was written to the spec on
-//! a machine without Windows.
+//! `cfg(windows)`. `tests/bridge_cli_windows.rs` runs it against Git Bash,
+//! PowerShell 7 and Windows PowerShell 5.1 (pass-through, exit codes, large
+//! pipes, quoting parity with a direct run, the Job object). Not covered:
+//! quoting pinned against Bun's own spawn (Bun cannot run in CI), OEM code
+//! pages such as cp936, and AppLocker/WDAC.
 
 use std::collections::HashMap;
 
@@ -42,6 +45,12 @@ impl WinEnv {
             .filter(|v| !v.is_empty())
     }
 
+    /// `CLAUDE_CODE_POWERSHELL_RESPECT_EXECUTION_POLICY` is set: PowerShell is
+    /// then started without `-ExecutionPolicy Bypass`.
+    pub fn respects_execution_policy(&self) -> bool {
+        self.get("CLAUDE_CODE_POWERSHELL_RESPECT_EXECUTION_POLICY").is_some()
+    }
+
     fn path_dirs(&self) -> Vec<&str> {
         self.get("PATH")
             .map(|p| p.split(';').collect())
@@ -54,11 +63,103 @@ pub trait Fs {
     fn is_file(&self, path: &str) -> bool;
 }
 
+/// The real file system.
+pub struct RealFs;
+
+impl Fs for RealFs {
+    fn is_file(&self, path: &str) -> bool {
+        std::path::Path::new(path).is_file()
+    }
+}
+
 /// The shell Claude Code picks, with its path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Shell {
     Bash(String),
     PowerShell(String),
+}
+
+impl Shell {
+    /// What the consent panel calls this shell.
+    pub fn display_name(&self) -> String {
+        match self {
+            Shell::Bash(_) => "Git Bash".into(),
+            Shell::PowerShell(path) if basename(path).eq_ignore_ascii_case("pwsh.exe") => "PowerShell 7".into(),
+            Shell::PowerShell(_) => "Windows PowerShell".into(),
+        }
+    }
+}
+
+/// The program and arguments Claude Code uses to run a status-line command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Invocation {
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+/// One argument as libuv's `quote_cmd_arg` (src/win/process.c) writes it into a
+/// Windows command line. Node and Bun build theirs with that routine, so this
+/// is what Claude Code hands a shell.
+///
+/// It is not Rust's std quoting: std wraps an argument only when it holds a
+/// space or tab, libuv also wraps when it holds a `"`. For `"true"` that is
+/// the difference between a command Git Bash runs and one it rejects with an
+/// unterminated quote.
+pub fn quote_arg(arg: &str) -> String {
+    if arg.is_empty() {
+        return "\"\"".into();
+    }
+    if !arg.contains([' ', '\t', '"']) {
+        return arg.to_string();
+    }
+    if !arg.contains(['"', '\\']) {
+        return format!("\"{arg}\"");
+    }
+    // Walk backwards, doubling every backslash that ends up before a quote
+    // (or before the closing quote) and escaping each quote, then reverse.
+    let mut reversed = String::with_capacity(arg.len() + 8);
+    let mut before_quote = true;
+    for c in arg.chars().rev() {
+        reversed.push(c);
+        if before_quote && c == '\\' {
+            reversed.push('\\');
+        } else if c == '"' {
+            before_quote = true;
+            reversed.push('\\');
+        } else {
+            before_quote = false;
+        }
+    }
+    let body: String = reversed.chars().rev().collect();
+    format!("\"{body}\"")
+}
+
+/// `inv` as a [`std::process::Command`] whose command line is written with
+/// [`quote_arg`] (`raw_arg`), not std's quoting.
+#[cfg(windows)]
+pub fn windows_command(inv: &Invocation) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    let mut command = std::process::Command::new(&inv.program);
+    for arg in &inv.args {
+        command.raw_arg(quote_arg(arg));
+    }
+    command
+}
+
+/// How `shell` is started to run `original`: bash gets `-c <command>`, and
+/// PowerShell gets its flags (ending in `-Command`) then the command text.
+pub fn invocation(shell: &Shell, original: &str, respect_execution_policy: bool) -> Invocation {
+    match shell {
+        Shell::Bash(bash) => Invocation {
+            program: bash.clone(),
+            args: vec!["-c".into(), bash_command(original)],
+        },
+        Shell::PowerShell(ps) => {
+            let (mut args, text) = powershell_command(original, respect_execution_policy);
+            args.push(text);
+            Invocation { program: ps.clone(), args }
+        }
+    }
 }
 
 fn join(dir: &str, rest: &str) -> String {
@@ -203,11 +304,10 @@ pub fn powershell_command(original: &str, respect_execution_policy: bool) -> (Ve
 
 #[cfg(windows)]
 mod spawn {
-    // UNTESTED(windows): everything in this module.
     use super::*;
     use std::io::Write;
     use std::os::windows::io::AsRawHandle;
-    use std::process::{Child, Command, Stdio};
+    use std::process::{Child, Stdio};
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
@@ -220,20 +320,13 @@ mod spawn {
         GetCurrentProcessId, OpenProcess, WaitForSingleObject, INFINITE, PROCESS_SYNCHRONIZE,
     };
 
-    struct RealFs;
-    impl Fs for RealFs {
-        fn is_file(&self, path: &str) -> bool {
-            std::path::Path::new(path).is_file()
-        }
-    }
-
     /// A Job object that kills everything in it when its last handle closes.
     /// Held for the life of the bridge process: when the bridge dies, so does
     /// the original's whole tree.
-    struct Job(HANDLE);
+    pub struct Job(HANDLE);
 
     impl Job {
-        fn new() -> std::io::Result<Job> {
+        pub fn new() -> std::io::Result<Job> {
             // SAFETY: plain Win32 calls with valid arguments; the handle is
             // closed in `Drop`.
             unsafe {
@@ -258,7 +351,7 @@ mod spawn {
             }
         }
 
-        fn assign(&self, child: &Child) -> std::io::Result<()> {
+        pub fn assign(&self, child: &Child) -> std::io::Result<()> {
             // SAFETY: both handles are valid for the duration of the call.
             let ok = unsafe { AssignProcessToJobObject(self.0, child.as_raw_handle() as HANDLE) };
             if ok == 0 {
@@ -320,35 +413,42 @@ mod spawn {
         });
     }
 
+    /// Test seam (feature `force-shell`): `SWITCHBOARD_TEST_SHELL` names the
+    /// shell to use, as `bash|<path>` or `powershell|<path>`.
+    #[cfg(feature = "force-shell")]
+    fn forced_shell() -> Option<Shell> {
+        let value = std::env::var("SWITCHBOARD_TEST_SHELL").ok()?;
+        match value.split_once('|')? {
+            ("bash", path) => Some(Shell::Bash(path.to_string())),
+            ("powershell", path) => Some(Shell::PowerShell(path.to_string())),
+            _ => None,
+        }
+    }
+
+    #[cfg(not(feature = "force-shell"))]
+    fn forced_shell() -> Option<Shell> {
+        None
+    }
+
     pub fn spawn_original(
         original: &str,
         stdin_bytes: &[u8],
         depth_env: &str,
     ) -> std::io::Result<Child> {
         let env = WinEnv::from_process();
-        let shell = resolve_shell(&env, &RealFs).ok_or_else(|| {
+        let shell = forced_shell().or_else(|| resolve_shell(&env, &RealFs)).ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 "neither Git Bash nor PowerShell was found",
             )
         })?;
-        let mut command = match &shell {
-            Shell::Bash(bash) => {
-                let mut c = Command::new(bash);
-                c.arg("-c").arg(bash_command(original));
-                c
-            }
-            Shell::PowerShell(ps) => {
-                let respect = env.get("CLAUDE_CODE_POWERSHELL_RESPECT_EXECUTION_POLICY").is_some();
-                let (flags, text) = powershell_command(original, respect);
-                let mut c = Command::new(ps);
-                c.args(flags).arg(text);
-                c
-            }
-        };
-        // The std quoting is the CommandLineToArgvW convention libuv uses. The
-        // spec asks for a routine pinned against Bun's own quoting; that
-        // corpus has not been run, so a hostile command may differ.
+        let invocation = invocation(&shell, original, env.respects_execution_policy());
+        let mut command = windows_command(&invocation);
+        // The command line is written the way libuv writes it (`quote_arg`),
+        // which is how Claude Code's runtime builds it. The spec's corpus
+        // pinned against Bun itself cannot run here; the unit tests pin
+        // `quote_arg` to libuv's documented examples, and the integration tests
+        // run awkward originals through the real shells.
         let mut child = command
             .env(depth_env, "1")
             .stdin(Stdio::piped())
@@ -374,7 +474,7 @@ mod spawn {
 }
 
 #[cfg(windows)]
-pub use spawn::spawn_original;
+pub use spawn::{spawn_original, Job};
 
 #[cfg(test)]
 mod tests {
@@ -600,5 +700,119 @@ mod tests {
     fn a_script_with_arguments_still_gets_the_epilogue() {
         let (_, command) = powershell_command(r"C:\tools\line.ps1 -Verbose", false);
         assert!(command.ends_with("exit 2 } }"));
+    }
+
+    #[test]
+    fn invocation_for_bash_wraps_the_command_after_dash_c() {
+        let bash = Shell::Bash(r"C:\Program Files\Git\bin\bash.exe".into());
+        let script = invocation(&bash, "~/.claude/statusline.sh --x", false);
+        assert_eq!(script.program, r"C:\Program Files\Git\bin\bash.exe");
+        assert_eq!(script.args, ["-c", "bash ~/.claude/statusline.sh --x"]);
+        let plain = invocation(&bash, "node ~/line.js", false);
+        assert_eq!(plain.args, ["-c", "node ~/line.js"]);
+    }
+
+    #[test]
+    fn invocation_for_powershell_is_the_flags_then_the_command_with_epilogue() {
+        let ps = Shell::PowerShell(PS51.into());
+        let inv = invocation(&ps, "node ~/line.js", false);
+        assert_eq!(inv.program, PS51);
+        assert_eq!(
+            inv.args,
+            [
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "node ~/line.js\n; if (-not $?) { if ($LASTEXITCODE -eq 2) { exit 2 } }",
+            ]
+        );
+        let respecting = invocation(&ps, "x", true);
+        assert!(!respecting.args.iter().any(|a| a == "Bypass"));
+    }
+
+    #[test]
+    fn display_names_tell_the_three_shells_apart() {
+        assert_eq!(Shell::Bash(r"C:\Git\bin\bash.exe".into()).display_name(), "Git Bash");
+        assert_eq!(
+            Shell::PowerShell(r"C:\Program Files\PowerShell\7\pwsh.exe".into()).display_name(),
+            "PowerShell 7"
+        );
+        assert_eq!(Shell::PowerShell(r"D:\PS\PWSH.EXE".into()).display_name(), "PowerShell 7");
+        assert_eq!(Shell::PowerShell(PS51.into()).display_name(), "Windows PowerShell");
+    }
+
+    /// The examples in libuv's own comment on `quote_cmd_arg` (src/win/process.c),
+    /// the routine Node and Bun use to build a Windows command line, plus the
+    /// case that matters here: quotes with no whitespace.
+    #[test]
+    fn quote_arg_matches_libuv() {
+        let cases: &[(&str, &str)] = &[
+            ("", r#""""#),
+            ("hello", "hello"),
+            ("hello world", r#""hello world""#),
+            (r#"hello"world"#, r#""hello\"world""#),
+            (r#"hello""world"#, r#""hello\"\"world""#),
+            (r"hello\world", r"hello\world"),
+            (r"hello\\world", r"hello\\world"),
+            (r#"hello\"world"#, r#""hello\\\"world""#),
+            (r#"hello\\"world"#, r#""hello\\\\\"world""#),
+            (r"hello world\", r#""hello world\\""#),
+            // Rust's std would leave these unwrapped (no space or tab), and
+            // Git Bash then sees an unterminated quote.
+            (r#""true""#, r#""\"true\"""#),
+            (r#"echo "a b""#, r#""echo \"a b\"""#),
+        ];
+        for (input, want) in cases {
+            assert_eq!(quote_arg(input), *want, "quoting {input:?}");
+        }
+    }
+
+    #[test]
+    fn respects_execution_policy_reads_the_environment() {
+        assert!(!env(&[]).respects_execution_policy());
+        assert!(env(&[("CLAUDE_CODE_POWERSHELL_RESPECT_EXECUTION_POLICY", "1")]).respects_execution_policy());
+    }
+
+    #[cfg(windows)]
+    fn run_in_real_shell(shell: &Shell, original: &str) -> (Option<i32>, String) {
+        let inv = invocation(shell, original, false);
+        let out = windows_command(&inv)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .expect("the shell starts");
+        (out.status.code(), String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn real_shells_run_an_invocation() {
+        let shells = candidate_shells(&WinEnv::from_process(), &RealFs);
+        assert!(!shells.is_empty(), "this machine has neither Git Bash nor PowerShell");
+        for shell in &shells {
+            let (code, out) = run_in_real_shell(shell, "echo contract-ok");
+            assert_eq!(code, Some(0), "{}", shell.display_name());
+            assert!(out.contains("contract-ok"), "{}: {out:?}", shell.display_name());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn real_shells_keep_the_exit_code_the_documented_way() {
+        for shell in candidate_shells(&WinEnv::from_process(), &RealFs) {
+            let name = shell.display_name();
+            match &shell {
+                Shell::Bash(_) => assert_eq!(run_in_real_shell(&shell, "exit 3").0, Some(3), "{name}"),
+                Shell::PowerShell(_) => {
+                    // `exit` ends the shell with that code directly.
+                    assert_eq!(run_in_real_shell(&shell, "exit 3").0, Some(3), "{name}");
+                    // A failed native command surfaces as 1 ...
+                    assert_eq!(run_in_real_shell(&shell, "cmd /c exit 3").0, Some(1), "{name}");
+                    // ... except 2, which the epilogue passes through.
+                    assert_eq!(run_in_real_shell(&shell, "cmd /c exit 2").0, Some(2), "{name}");
+                }
+            }
+        }
     }
 }

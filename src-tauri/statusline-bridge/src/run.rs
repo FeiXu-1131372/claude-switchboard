@@ -245,8 +245,9 @@ fn spawn_original(command: &str, stdin_bytes: &[u8]) -> std::io::Result<std::pro
     Ok(child)
 }
 
-// UNTESTED(windows): the shell choice and command building are tested on every
-// platform in `shell_windows`; the spawn itself has not run on Windows.
+// The shell choice and command building are tested on every platform in
+// `shell_windows`; the spawn itself is tested on Windows by
+// `tests/bridge_cli_windows.rs`.
 #[cfg(windows)]
 fn spawn_original(command: &str, stdin_bytes: &[u8]) -> std::io::Result<std::process::Child> {
     crate::shell_windows::spawn_original(command, stdin_bytes, DEPTH_ENV)

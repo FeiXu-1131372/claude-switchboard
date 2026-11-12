@@ -72,6 +72,9 @@ windows-sys = { version = "0.59", features = [
   # DwmSetWindowAttribute — the popover's rounded corners come from DWM, not
   # from CSS, because an unpainted pixel on Windows is black. See lib.rs.
   "Win32_Graphics_Dwm",
+  # GetShortPathNameW — the 8.3 form of the bridge path for profile paths that
+  # contain a space (statusline_setup/windows.rs).
+  "Win32_Storage_FileSystem",
 ] }
 winreg = "0.55"
 

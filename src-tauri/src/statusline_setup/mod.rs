@@ -9,9 +9,14 @@
 //! reconciliation repairs our own files and re-checks the bridge; it never
 //! edits `settings.json`.
 
+#[cfg(test)]
+mod candidate_tests;
+mod shells;
 pub mod state;
 mod store;
 mod windows;
+#[cfg(all(test, windows))]
+mod windows_tests;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -21,11 +26,12 @@ use statusline_bridge::settings_edit::{self, DisableOutcome, EditRefused, Origin
 use statusline_bridge::target::{
     self, canonical_settings_path, is_bridge_command, target_id, Target, TargetState, TARGET_VERSION,
 };
-use std::io::{Read, Write};
+#[cfg(unix)]
+use shells::run_sh;
+use shells::PreflightShell;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::Mutex;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 use store::{BridgeStore, StoredState, StoredTarget};
 
 /// Released targets are kept this long after their last run: a session whose
@@ -35,9 +41,15 @@ const RELEASED_GC_DAYS: i64 = 7;
 /// A probe (and a real-original run) that takes longer than this has failed.
 const PREFLIGHT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How long a bridge gets to answer `--version`. The first launch of a freshly
+/// written executable queues behind the system's scanner: 0.4-0.8 s alone on a
+/// quiet Windows machine, a median of 7 s with 32 launching at once. Giving up
+/// at 5 s turned a busy machine into "Couldn't install the bridge: the
+/// installed bridge doesn't run".
+const VERSION_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
+
 #[derive(Debug)]
 pub enum BridgeError {
-    Unsupported,
     ClaudeCodeNotSetUp,
     SharedFileNotAccepted(String),
     /// The command already runs the bridge, but its target file is gone.
@@ -52,7 +64,6 @@ pub enum BridgeError {
 impl std::fmt::Display for BridgeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BridgeError::Unsupported => write!(f, "Live usage from Claude Code isn't available on this platform yet."),
             BridgeError::ClaudeCodeNotSetUp => write!(f, "Claude Code isn't set up on this computer."),
             BridgeError::SharedFileNotAccepted(warning) => write!(f, "{warning} Tick the box to continue."),
             BridgeError::SelfWrapNoTarget(how) => write!(
@@ -192,76 +203,6 @@ fn shell_quote(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
 }
 
-struct RunOutput {
-    code: Option<i32>,
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-    elapsed: Duration,
-}
-
-/// Run `command` the way Claude Code does on macOS (`/bin/sh -c`), with the
-/// given stdin, giving up after `timeout`.
-fn run_sh(command: &str, stdin: &[u8], timeout: Duration, root: Option<&Path>) -> std::io::Result<RunOutput> {
-    let started = Instant::now();
-    let mut cmd = Command::new("/bin/sh");
-    cmd.arg("-c").arg(command);
-    // The bridge finds its folder by itself (`~/.claude-switchboard/statusline`).
-    // Pointing it at ours keeps a manager with a custom root self-consistent;
-    // in production the two are the same path.
-    if let Some(root) = root {
-        cmd.env("SWITCHBOARD_STATUSLINE_DIR", root);
-    }
-    let mut child = cmd
-        // Never inherit a Claude Code session's identity or the guard.
-        .env_remove("CLAUDE_PID")
-        .env_remove("SWITCHBOARD_BRIDGE_DEPTH")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    let mut stdin_pipe = child.stdin.take();
-    let bytes = stdin.to_vec();
-    let writer = std::thread::spawn(move || {
-        if let Some(pipe) = stdin_pipe.as_mut() {
-            let _ = pipe.write_all(&bytes);
-        }
-    });
-    let mut out = child.stdout.take();
-    let mut err = child.stderr.take();
-    let read_out = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(o) = out.as_mut() {
-            let _ = o.read_to_end(&mut buf);
-        }
-        buf
-    });
-    let read_err = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(e) = err.as_mut() {
-            let _ = e.read_to_end(&mut buf);
-        }
-        buf
-    });
-    let code = loop {
-        match child.try_wait()? {
-            Some(status) => break status.code(),
-            None if started.elapsed() > timeout => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break None;
-            }
-            None => std::thread::sleep(Duration::from_millis(5)),
-        }
-    };
-    let _ = writer.join();
-    Ok(RunOutput {
-        code,
-        stdout: read_out.join().unwrap_or_default(),
-        stderr: read_err.join().unwrap_or_default(),
-        elapsed: started.elapsed(),
-    })
-}
-
 fn clip(bytes: &[u8]) -> String {
     let text = String::from_utf8_lossy(bytes);
     let text = text.trim_end();
@@ -274,7 +215,16 @@ fn clip(bytes: &[u8]) -> String {
 
 /// `switchboard-statusline 0.1.0` -> `(0, 1, 0)`.
 fn version_of(binary: &Path) -> Option<(u64, u64, u64)> {
-    let out = run_sh(&format!("{} --version", shell_quote(binary)), b"", Duration::from_secs(5), None).ok()?;
+    version_within(binary, VERSION_CHECK_TIMEOUT)
+}
+
+fn version_within(binary: &Path, timeout: Duration) -> Option<(u64, u64, u64)> {
+    #[cfg(unix)]
+    let out = run_sh(&format!("{} --version", shell_quote(binary)), b"", timeout, None).ok()?;
+    // No shell: the bridge is a plain executable, and quoting its path for a
+    // shell that may not be the one in use only adds a way to fail.
+    #[cfg(windows)]
+    let out = shells::run_program(binary, &["--version"], timeout).ok()?;
     if out.code != Some(0) {
         return None;
     }
@@ -296,6 +246,37 @@ fn sample_stdin(session_id: &str) -> Vec<u8> {
     .into_bytes()
 }
 
+/// What a preflight needs to know about the settings it is checking.
+struct PreflightInput<'a> {
+    config_home: &'a Path,
+    settings: &'a Path,
+    original: &'a OriginalStatusLine,
+    shared_warning: Option<String>,
+}
+
+/// Try `candidates` in order and stop at the first whose attempt `passed`.
+/// When none does, the last attempt comes back so its failure can be shown;
+/// an error ends the search at once. `None` for an empty list.
+fn first_passing<T, E>(
+    candidates: &[String],
+    mut attempt: impl FnMut(&str) -> Result<T, E>,
+    passed: impl Fn(&T) -> bool,
+) -> Option<Result<T, E>> {
+    let mut last = None;
+    for candidate in candidates {
+        let result = attempt(candidate);
+        let stop = match &result {
+            Ok(done) => passed(done),
+            Err(_) => true,
+        };
+        if stop {
+            return Some(result);
+        }
+        last = Some(result);
+    }
+    last
+}
+
 fn random_id() -> String {
     format!("{:012x}", rand::random::<u64>() & 0xFFFF_FFFF_FFFF)
 }
@@ -303,6 +284,70 @@ fn random_id() -> String {
 fn same_dir(a: &Path, b: &Path) -> bool {
     a == b || matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
 }
+
+/// Put `new` at `dest`.
+///
+/// On Windows a running `bridge.exe` cannot be overwritten, and Claude Code
+/// runs it on every status-line refresh. It can be renamed, though (spec
+/// §4.1): when the plain replace is refused, move the old file aside as
+/// `bridge.old-<ms>.exe`, rename the new one in, and put the old one back if
+/// that fails. [`sweep_old_copies`] deletes the leftovers once nothing runs them.
+#[cfg(windows)]
+fn replace_running_file(new: &Path, dest: &Path) -> std::io::Result<()> {
+    // A launch in the instant between two renames, or a scanner holding a
+    // freshly written file, passes in a moment: about 5 s is allowed.
+    fn retrying(mut op: impl FnMut() -> std::io::Result<()>) -> std::io::Result<()> {
+        let mut last = None;
+        for _ in 0..50 {
+            match op() {
+                Ok(()) => return Ok(()),
+                Err(e) => last = Some(e),
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        Err(last.unwrap_or_else(|| std::io::Error::other("no attempt was made")))
+    }
+
+    // Nothing to move aside (a first install): the only thing in the way is
+    // a scanner holding the new file.
+    if !dest.exists() {
+        return retrying(|| std::fs::rename(new, dest));
+    }
+    if std::fs::rename(new, dest).is_ok() {
+        return Ok(());
+    }
+    let old = dest.with_file_name(format!("bridge.old-{}.exe", now_ms()));
+    retrying(|| std::fs::rename(dest, &old))?;
+    if let Err(e) = retrying(|| std::fs::rename(new, dest)) {
+        // Leave a working bridge behind.
+        let _ = retrying(|| std::fs::rename(&old, dest));
+        return Err(e);
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn replace_running_file(new: &Path, dest: &Path) -> std::io::Result<()> {
+    std::fs::rename(new, dest)
+}
+
+/// Delete the `bridge.old-*.exe` copies [`replace_running_file`] left behind,
+/// the ones nothing runs any more. A copy still running refuses to be
+/// deleted and waits for the next sweep.
+#[cfg(windows)]
+fn sweep_old_copies(root: &Path) {
+    let Ok(entries) = std::fs::read_dir(root) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("bridge.old-") && name.ends_with(".exe") {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn sweep_old_copies(_root: &Path) {}
 
 pub struct BridgeManager {
     data_dir: PathBuf,
@@ -340,11 +385,42 @@ impl BridgeManager {
         format!("{} --target {id}", shell_quote(&self.bridge_path()))
     }
 
-    fn supported(&self) -> Result<(), BridgeError> {
-        if cfg!(windows) {
-            return Err(BridgeError::Unsupported);
+    /// The command that undoes the edit without the app, as a person types it.
+    /// On Windows that is PowerShell, the default terminal: the call operator
+    /// and double quotes (POSIX single quotes are a parse error there).
+    fn restore_command(&self) -> String {
+        #[cfg(windows)]
+        {
+            format!("& \"{}\" --restore --all", self.bridge_path().display())
         }
-        Ok(())
+        #[cfg(not(windows))]
+        {
+            format!("{} --restore --all", shell_quote(&self.bridge_path()))
+        }
+    }
+
+    /// The command strings to try for target `id`, best first. macOS has one;
+    /// Windows has the forms of spec §4.5, because no single spelling of a
+    /// path works unquoted in Git Bash, PowerShell 7 and PowerShell 5.1 for
+    /// every profile path.
+    fn command_candidates(&self, id: &str) -> Vec<String> {
+        #[cfg(windows)]
+        {
+            let path = self.bridge_path();
+            let short = windows::short_path(&path);
+            let mut forms =
+                windows::command_candidates(&path.to_string_lossy(), short.as_deref(), id, bridge_file_name());
+            // The tilde form means the default folder: for any other root it
+            // would run (or miss) a different bridge.
+            if !same_dir(&self.root, &bridge_root()) {
+                forms.retain(|c| !c.starts_with("~/"));
+            }
+            forms
+        }
+        #[cfg(not(windows))]
+        {
+            vec![self.command_for(id)]
+        }
     }
 
     /// `(config home, its settings.json)` for the chosen or default folder.
@@ -403,11 +479,12 @@ impl BridgeManager {
                 std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))
                     .map_err(|e| BridgeError::Install(e.to_string()))?;
             }
-            std::fs::rename(&tmp, &dest).map_err(|e| BridgeError::Install(e.to_string()))?;
+            replace_running_file(&tmp, &dest).map_err(|e| BridgeError::Install(e.to_string()))?;
         }
         if version_of(&dest).is_none() {
             return Err(BridgeError::Install("the installed bridge doesn't run".into()));
         }
+        sweep_old_copies(&self.root);
         // The bridge stops recording if this is ever 30 days old.
         let _ = std::fs::write(self.root.join("last_seen"), b"");
         Ok(dest)
@@ -415,7 +492,13 @@ impl BridgeManager {
 
     // ---- preflight ----
 
-    fn temp_target(&self, config_home: &Path, settings: &Path, original: Option<serde_json::Value>, id: &str) -> Target {
+    fn temp_target(
+        &self,
+        config_home: &Path,
+        settings: &Path,
+        original: Option<serde_json::Value>,
+        command: &str,
+    ) -> Target {
         Target {
             v: TARGET_VERSION,
             config_home: config_home.to_string_lossy().into(),
@@ -424,7 +507,7 @@ impl BridgeManager {
             original,
             original_value_text: None,
             file_was_created: false,
-            installed_command: self.command_for(id),
+            installed_command: command.to_string(),
             installed_at_ms: now_ms(),
             state: TargetState::Enabled,
             last_run_ms: None,
@@ -433,16 +516,35 @@ impl BridgeManager {
         }
     }
 
-    /// Run the bridge as Claude Code would and report what happened. Nothing
-    /// outside our own folder is written.
-    fn run_preflight(
+    /// Run the bridge as Claude Code would and report what happened, for the
+    /// first command form that works in every shell. Nothing outside our own
+    /// folder is written.
+    fn run_preflight(&self, id: &str, input: &PreflightInput<'_>) -> Result<PreflightReport, BridgeError> {
+        let shells = shells::preflight_shells();
+        let candidates = self.command_candidates(id);
+        first_passing(&candidates, |command| self.try_candidate(command, id, &shells, input), PreflightReport::passed)
+            .unwrap_or_else(|| {
+                Err(BridgeError::Preflight(
+                    "The path to the bridge needs quoting, and no spelling of it is safe in every shell.".into(),
+                ))
+            })
+    }
+
+    /// One command form, tried in every shell (spec §4.5).
+    ///
+    /// The probe runs in each shell: the question is whether the command
+    /// string reaches the bridge there. The user's real original runs once,
+    /// in the shell Claude Code would pick (the first), because the bridge
+    /// runs the original in that shell too, and a status line written for
+    /// bash would fail in PowerShell with or without us.
+    fn try_candidate(
         &self,
-        config_home: &Path,
-        settings: &Path,
         command: &str,
-        original: &OriginalStatusLine,
-        shared_warning: Option<String>,
+        id: &str,
+        shells: &[PreflightShell],
+        input: &PreflightInput<'_>,
     ) -> Result<PreflightReport, BridgeError> {
+        let (config_home, settings, original) = (input.config_home, input.settings, input.original);
         let mut report = PreflightReport {
             command: command.to_string(),
             shells: Vec::new(),
@@ -452,51 +554,76 @@ impl BridgeManager {
             original_command: original.command.clone().filter(|c| !c.trim().is_empty()),
             original_direct: None,
             original_via_bridge: None,
-            shared_warning,
+            shared_warning: input.shared_warning.clone(),
+        };
+        let Some(primary) = shells.first() else {
+            report.shells.push(ShellResult {
+                shell: "a shell".into(),
+                ok: false,
+                detail: "neither Git Bash nor PowerShell was found".into(),
+            });
+            return Ok(report);
         };
 
-        // 1. Probe: a deterministic original, through the bridge.
+        // 1. Probe: a deterministic original, through the bridge, in each shell.
         let nonce = random_id();
         let probe_id = random_id();
         let session = format!("switchboard-preflight-{nonce}");
         let expected = format!("switchboard-preflight-{nonce}");
+        let probe_command = command.replace(id, &probe_id);
         let probe_target = self.temp_target(
             config_home,
             settings,
             Some(serde_json::json!({"type": "command", "command": format!("echo {expected}")})),
-            &probe_id,
+            &probe_command,
         );
         target::save(&self.root, &probe_id, &probe_target)?;
-        let probe = run_sh(&self.command_for(&probe_id), &sample_stdin(&session), PREFLIGHT_TIMEOUT, Some(&self.root));
+        let probes: Vec<_> = shells
+            .iter()
+            .map(|shell| {
+                shells::run_in(shell, &probe_command, &sample_stdin(&session), PREFLIGHT_TIMEOUT, Some(&self.root))
+            })
+            .collect();
         let cleanup = |id: &str, session: &str| {
             let _ = std::fs::remove_file(targets_dir(&self.root).join(format!("{id}.json")));
             let _ = std::fs::remove_file(obs_dir(&self.root).join(format!("{session}.0.json")));
         };
         cleanup(&probe_id, &session);
-        let probe = probe?;
-        let probe_ok = probe.code == Some(0) && clip(&probe.stdout) == expected;
-        if !probe_ok {
-            let stderr = clip(&probe.stderr);
-            let detail = match probe.code {
-                None => "it did not finish within 10 seconds".to_string(),
-                Some(code) if !stderr.is_empty() => format!("exit {code}: {stderr}"),
-                Some(code) => format!("exit {code}, and it printed {:?} instead of the expected line", clip(&probe.stdout)),
-            };
-            report.shells.push(ShellResult { shell: "sh".into(), ok: false, detail });
+        for (index, (shell, probe)) in shells.iter().zip(probes).enumerate() {
+            let probe = probe?;
+            let probe_ok = probe.code == Some(0) && clip(&probe.stdout) == expected;
+            if !probe_ok {
+                let stderr = clip(&probe.stderr);
+                let detail = match probe.code {
+                    None => "it did not finish within 10 seconds".to_string(),
+                    Some(code) if !stderr.is_empty() => format!("exit {code}: {stderr}"),
+                    Some(code) => {
+                        format!("exit {code}, and it printed {:?} instead of the expected line", clip(&probe.stdout))
+                    }
+                };
+                report.shells.push(ShellResult { shell: shell.name.clone(), ok: false, detail });
+                continue;
+            }
+            if index == 0 {
+                report.latency_ms = probe.elapsed.as_millis() as u64;
+            }
+            report.shells.push(ShellResult { shell: shell.name.clone(), ok: true, detail: String::new() });
+        }
+        if !report.passed() {
             return Ok(report);
         }
-        report.latency_ms = probe.elapsed.as_millis() as u64;
-        report.shells.push(ShellResult { shell: "sh".into(), ok: true, detail: String::new() });
 
-        // 2. The user's real original, through the bridge and directly.
+        // 2. The user's real original, through the bridge and directly, in
+        // the shell Claude Code would pick.
         if let Some(original_command) = report.original_command.clone() {
             let real_id = random_id();
             let real_session = format!("switchboard-preflight-{}", random_id());
-            let real_target = self.temp_target(config_home, settings, original.value.clone(), &real_id);
+            let real_command = command.replace(id, &real_id);
+            let real_target = self.temp_target(config_home, settings, original.value.clone(), &real_command);
             target::save(&self.root, &real_id, &real_target)?;
             let stdin = sample_stdin(&real_session);
-            let direct = run_sh(&original_command, &stdin, PREFLIGHT_TIMEOUT, None);
-            let via = run_sh(&self.command_for(&real_id), &stdin, PREFLIGHT_TIMEOUT, Some(&self.root));
+            let direct = shells::run_in(primary, &original_command, &stdin, PREFLIGHT_TIMEOUT, None);
+            let via = shells::run_in(primary, &real_command, &stdin, PREFLIGHT_TIMEOUT, Some(&self.root));
             cleanup(&real_id, &real_session);
             let (direct, via) = (direct?, via?);
             report.original_direct = Some(clip(&direct.stdout));
@@ -516,13 +643,18 @@ impl BridgeManager {
     }
 
     pub fn preflight(&self, config_home: Option<PathBuf>) -> Result<PreflightReport, BridgeError> {
-        self.supported()?;
         let (home, settings) = self.resolve_home(config_home)?;
         self.install_bridge()?;
         let state = settings_edit::read_state(&settings)?;
         let original = settings_edit::read_original(&settings)?;
         let id = target_id(&canonical_settings_path(&settings).map_err(EditRefused::from)?);
-        self.run_preflight(&home, &settings, &self.command_for(&id), &original, state.shared_warning)
+        let input = PreflightInput {
+            config_home: &home,
+            settings: &settings,
+            original: &original,
+            shared_warning: state.shared_warning,
+        };
+        self.run_preflight(&id, &input)
     }
 
     // ---- enable / disable ----
@@ -532,14 +664,12 @@ impl BridgeManager {
         config_home: Option<PathBuf>,
         accepted_shared_file: bool,
     ) -> Result<BridgeTargetStatus, BridgeError> {
-        self.supported()?;
         let _op = self.op_lock.lock().unwrap_or_else(|e| e.into_inner());
         let (home, settings) = self.resolve_home(config_home)?;
 
         // 1. Install and verify.
         let bridge = self.install_bridge()?;
         let id = target_id(&canonical_settings_path(&settings).map_err(EditRefused::from)?);
-        let command = self.command_for(&id);
         let state = settings_edit::read_state(&settings)?;
         if let Some(warning) = &state.shared_warning {
             if !accepted_shared_file {
@@ -554,8 +684,12 @@ impl BridgeManager {
             return self.adopt_existing(&id, &home, &settings, current, &state.real_path);
         }
 
-        // 2. Write the target file before touching settings.
-        let target = Target {
+        // 2. Write the target file before touching settings. It records the
+        // best command form for now; the preflight below may pick a later one.
+        let first_command = self.command_candidates(&id).into_iter().next().ok_or_else(|| {
+            BridgeError::Preflight("The path to the bridge needs quoting, and no spelling of it is safe in every shell.".into())
+        })?;
+        let mut target = Target {
             v: TARGET_VERSION,
             config_home: home.to_string_lossy().into(),
             settings_path: settings.to_string_lossy().into(),
@@ -563,7 +697,7 @@ impl BridgeManager {
             original: original.value.clone(),
             original_value_text: original.value_text.clone(),
             file_was_created: !original.file_exists,
-            installed_command: command.clone(),
+            installed_command: first_command,
             installed_at_ms: now_ms(),
             state: TargetState::Enabled,
             last_run_ms: None,
@@ -587,8 +721,14 @@ impl BridgeManager {
             }
         };
 
-        // 4. Prove it runs before any setting changes.
-        let report = match self.run_preflight(&home, &settings, &command, &original, state.shared_warning.clone()) {
+        // 4. Prove it runs, in every shell, before any setting changes.
+        let input = PreflightInput {
+            config_home: &home,
+            settings: &settings,
+            original: &original,
+            shared_warning: state.shared_warning.clone(),
+        };
+        let report = match self.run_preflight(&id, &input) {
             Ok(r) => r,
             Err(e) => {
                 undo_target(anchor.as_ref());
@@ -598,6 +738,15 @@ impl BridgeManager {
         if !report.passed() {
             undo_target(anchor.as_ref());
             return Err(BridgeError::Preflight(report.first_failure()));
+        }
+        // The form that passed is the one that gets installed.
+        let command = report.command.clone();
+        if target.installed_command != command {
+            target.installed_command = command.clone();
+            if let Err(e) = target::save(&self.root, &id, &target) {
+                undo_target(anchor.as_ref());
+                return Err(e.into());
+            }
         }
 
         // 5. The edit itself.
@@ -630,8 +779,8 @@ impl BridgeManager {
     ) -> Result<BridgeTargetStatus, BridgeError> {
         let mut t = target::load(&self.root, id).map_err(|_| {
             BridgeError::SelfWrapNoTarget(format!(
-                "Run `{} --restore --all` or restore {} from its .switchboard-statusline-anchor backup.",
-                shell_quote(&self.bridge_path()),
+                "Run `{}` or restore {} from its .switchboard-statusline-anchor backup.",
+                self.restore_command(),
                 settings.display()
             ))
         })?;
@@ -663,7 +812,6 @@ impl BridgeManager {
 
     /// Put the user's original status line back.
     pub fn disable(&self, id: &str) -> Result<DisableOutcomeDto, BridgeError> {
-        self.supported()?;
         let _op = self.op_lock.lock().unwrap_or_else(|e| e.into_inner());
         let mut store = self.load_store()?;
         let outcome = match store.targets.get(id) {
@@ -702,7 +850,6 @@ impl BridgeManager {
     /// "Use the bridge again" after the user changed the command: wrap their
     /// new command as the original. Refused when it contains the bridge.
     pub fn rewrap(&self, id: &str) -> Result<BridgeTargetStatus, BridgeError> {
-        self.supported()?;
         let (home, settings) = {
             let store = self.load_store()?;
             let row = store.targets.get(id).ok_or(BridgeError::NotFound)?;
@@ -830,10 +977,8 @@ impl BridgeManager {
     /// Verify and repair our own files; never edits `settings.json`.
     pub fn reconcile_on_startup(&self) -> Result<ReconcileReport, BridgeError> {
         let mut report = ReconcileReport::default();
-        if cfg!(windows) {
-            return Ok(report);
-        }
         let _op = self.op_lock.lock().unwrap_or_else(|e| e.into_inner());
+        sweep_old_copies(&self.root);
         let mut store = self.load_store()?;
         let now = now_ms();
         let mut dirty = false;
@@ -903,36 +1048,64 @@ impl BridgeManager {
         let nonce = random_id();
         let session = format!("switchboard-preflight-{nonce}");
         let expected = format!("switchboard-preflight-{nonce}");
+        // The same command form that was installed, aimed at a probe target:
+        // on Windows the installed form is whichever one passed the preflight.
+        // A command the user has since wrapped (`<ours>; echo extra`) is not
+        // one of our forms, and its extra output would fail the probe, so it
+        // is probed as the first form, as macOS always did.
+        let form = self.command_candidates(id).iter().position(|c| *c == row_target.installed_command).unwrap_or(0);
+        let probe_command =
+            self.command_candidates(&probe_id).into_iter().nth(form).unwrap_or_else(|| self.command_for(&probe_id));
         let t = self.temp_target(
             Path::new(&row_target.config_home),
             Path::new(&row_target.settings_path),
             Some(serde_json::json!({"type": "command", "command": format!("echo {expected}")})),
-            &probe_id,
+            &probe_command,
         );
         if let Err(e) = target::save(&self.root, &probe_id, &t) {
             return Some(format!("couldn't write a probe target: {e}"));
         }
-        let result = run_sh(&self.command_for(&probe_id), &sample_stdin(&session), PREFLIGHT_TIMEOUT, Some(&self.root));
+        let shells = shells::preflight_shells();
+        let results: Vec<_> = shells
+            .iter()
+            .map(|shell| {
+                let run =
+                    shells::run_in(shell, &probe_command, &sample_stdin(&session), PREFLIGHT_TIMEOUT, Some(&self.root));
+                (shell.name.clone(), run)
+            })
+            .collect();
         let _ = std::fs::remove_file(targets_dir(&self.root).join(format!("{probe_id}.json")));
         let _ = std::fs::remove_file(obs_dir(&self.root).join(format!("{session}.0.json")));
-        let _ = id;
-        match result {
-            Ok(out) if out.code == Some(0) && clip(&out.stdout) == expected => None,
-            Ok(out) => {
-                let stderr = clip(&out.stderr);
-                Some(if stderr.is_empty() { format!("exit {:?}", out.code) } else { stderr })
-            }
-            Err(e) => Some(e.to_string()),
+        if results.is_empty() {
+            return Some("neither Git Bash nor PowerShell was found".into());
         }
+        // Which shell failed matters where there can be several.
+        let named = |shell: &str, message: String| if cfg!(windows) { format!("{shell}: {message}") } else { message };
+        for (shell, result) in results {
+            match result {
+                Ok(out) if out.code == Some(0) && clip(&out.stdout) == expected => {}
+                Ok(out) => {
+                    let stderr = clip(&out.stderr);
+                    return Some(named(
+                        &shell,
+                        if stderr.is_empty() { format!("exit {:?}", out.code) } else { stderr },
+                    ));
+                }
+                Err(e) => return Some(named(&shell, e.to_string())),
+            }
+        }
+        None
     }
 }
 
-// The manager is `Unsupported` on Windows (see `supported`), and these tests
-// drive it with `/bin/sh` scripts, so they run on unix only.
+// These tests drive the manager with `/bin/sh` scripts, so they run on unix
+// only. `windows_tests` covers the same ground on Windows with the real bridge
+// and the real shells.
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
     use std::sync::OnceLock;
     use tempfile::{tempdir, TempDir};
 

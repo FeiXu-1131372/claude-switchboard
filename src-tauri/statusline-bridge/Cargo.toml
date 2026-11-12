@@ -17,6 +17,10 @@ path = "src/main.rs"
 # Test-only: makes the observation step panic so the integration tests can
 # prove a panic never reaches stdout or the exit code.
 inject-panic = []
+# Test-only: `SWITCHBOARD_TEST_SHELL=bash|<path>` or `powershell|<path>` makes
+# the Windows bridge run the original in that shell instead of the one
+# Claude Code would pick, so a machine with Git still tests PowerShell.
+force-shell = []
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

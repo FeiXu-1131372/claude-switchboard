@@ -60,7 +60,7 @@ pnpm tauri build --bundles app --config src-tauri/tauri.bundle.conf.json \
 
 Check that `Contents/MacOS/switchboard-statusline` is in the `.app`. A plain `pnpm tauri build` (without the bundle config) produces an app without it, and the switch in Settings will report that the bridge couldn't be installed.
 
-The Windows half of the bridge (`shell_windows.rs`) is pure logic tested everywhere plus a `cfg(windows)` spawn that has not been run on Windows. To type-check it from macOS: `rustup target add x86_64-pc-windows-msvc && cargo clippy -p statusline-bridge --target x86_64-pc-windows-msvc --all-targets -- -D warnings`.
+The Windows half of the bridge (`shell_windows.rs`) is pure logic tested everywhere plus a `cfg(windows)` spawn that `statusline-bridge/tests/bridge_cli_windows.rs` runs against every shell on the machine (Git Bash, PowerShell 7, Windows PowerShell 5.1) when you run `cargo test --workspace --all-features` on Windows. The app side is covered by `src/statusline_setup/windows_tests.rs`. On Windows, use `CARGO_BUILD_JOBS=1 cargo test -j 1` if parallel builds die with error 1455. To type-check the Windows code from macOS: `rustup target add x86_64-pc-windows-msvc && cargo clippy -p statusline-bridge --target x86_64-pc-windows-msvc --all-targets -- -D warnings`.
 
 ## Scope
 
