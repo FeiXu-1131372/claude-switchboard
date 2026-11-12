@@ -457,8 +457,8 @@ fn main() {
         "inspect" => {
             let dir = std::env::var("CLAUDE_CONFIG_DIR").unwrap_or_default();
             let seen = format!(
-                "dir={dir}|cwd={}|token={}|leak={}|empty={}|retries={}|args={}",
-                std::env::current_dir().unwrap().display(),
+                "dir={dir}|same_dir={}|token={}|leak={}|empty={}|retries={}|args={}",
+                std::fs::canonicalize(std::env::current_dir().unwrap()).unwrap() == std::fs::canonicalize(&dir).unwrap(),
                 std::env::var("CLAUDE_CODE_OAUTH_TOKEN").unwrap_or_default(),
                 std::env::var("ANTHROPIC_SWITCHBOARD_TEST_LEAK").is_ok(),
                 std::fs::read_dir(&dir).map(|d| d.count() == 0).unwrap_or(false),
@@ -501,7 +501,7 @@ fn main() {
         assert_eq!(field("leak"), "false", "ANTHROPIC_* must be scrubbed: {seen}");
         assert_eq!(field("empty"), "true", "a fresh, empty config dir: {seen}");
         assert_eq!(field("retries"), "2", "fail fast on a persistent refusal: {seen}");
-        assert_eq!(field("cwd"), field("dir"), "it runs inside its own dir: {seen}");
+        assert_eq!(field("same_dir"), "true", "it runs inside its own dir: {seen}");
         assert!(field("args").starts_with("-p hi --model"), "{seen}");
         let dir = PathBuf::from(field("dir"));
         assert!(dir.starts_with(std::env::temp_dir()), "{}", dir.display());
