@@ -102,6 +102,7 @@ fn drive(mut cmd: Command, stdin: &[u8], timeout: Duration) -> io::Result<RunOut
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
     use std::time::Instant;
 
     #[test]
