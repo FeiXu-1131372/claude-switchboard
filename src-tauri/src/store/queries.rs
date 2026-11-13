@@ -3,6 +3,8 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
+use std::collections::btree_map::Entry;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::app_state::Settings;
 use crate::jsonl_parser::hidden_calls::{self, MainContext, ObservedCall};
@@ -126,53 +128,125 @@ fn insert_events_in_tx(tx: &Transaction<'_>, events: &[StoredSessionEvent]) -> R
     Ok(inserted)
 }
 
-/// Rewrite a session's `adj:` rows from its stored official totals and its
-/// real calls (parent and subagent transcripts). No official totals means
-/// no adjustment rows.
+/// Every transcript whose `cost-state` records belong with `session_file`'s,
+/// `session_file` included.
+///
+/// `claude --resume` starts a new transcript. It opens with a copy of the old
+/// history and closes with a `cost-state` that keeps the old process's
+/// `startTime` and carries on from its totals. Transcripts that share a
+/// `startTime` are therefore one running total, not several. A `startTime` of
+/// 0 means the record had none, which says nothing about who wrote it.
+fn lineage_of(tx: &Transaction<'_>, session_file: &str) -> Result<Vec<String>> {
+    let mut files = BTreeSet::from([session_file.to_string()]);
+    let mut pending = vec![session_file.to_string()];
+    let mut stmt = tx.prepare(
+        "SELECT DISTINCT b.source_file
+         FROM session_official_costs a
+         JOIN session_official_costs b ON b.start_time = a.start_time
+         WHERE a.source_file = ?1 AND a.start_time <> 0",
+    )?;
+    while let Some(file) = pending.pop() {
+        let linked = stmt
+            .query_map(params![file], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for other in linked {
+            if files.insert(other.clone()) {
+                pending.push(other);
+            }
+        }
+    }
+    Ok(files.into_iter().collect())
+}
+
+/// Whether `candidate` is a later reading of the same running total than
+/// `current`: totals only grow, so the bigger one is the later one.
+fn is_later_total(candidate: &OfficialModelUsage, current: &OfficialModelUsage) -> bool {
+    let volume = |u: &OfficialModelUsage| {
+        u.input_tokens + u.output_tokens + u.cache_read_tokens + u.cache_creation_tokens
+    };
+    (volume(candidate), candidate.cost_usd) > (volume(current), current.cost_usd)
+}
+
+/// Rewrite the `adj:` rows of the session `session_file` belongs to, from
+/// Claude Code's official totals and the real calls (parent and subagent
+/// transcripts). No official totals means no adjustment rows. Returns every
+/// transcript that was reconciled together, so a caller walking all sessions
+/// can skip the rest of the lineage.
+///
+/// A resumed session is a lineage of several transcripts that share one
+/// running total. It is reconciled as a whole: the latest total per process,
+/// against every call in every transcript. The result is written once, on the
+/// transcript that holds the most calls, so the same spend is never charged
+/// again to each resumed copy.
 fn reconcile_session_in_tx(
     tx: &Transaction<'_>,
     pricing: &PricingTable,
     session_file: &str,
-) -> Result<()> {
-    tx.execute(
-        "DELETE FROM session_events WHERE source_file = ?1 AND event_id LIKE 'adj:%'",
-        params![session_file],
-    )?;
-    let mut line = 0i64;
-    let official: Vec<(String, OfficialModelUsage)> = {
+) -> Result<Vec<String>> {
+    let files = lineage_of(tx, session_file)?;
+    for file in &files {
+        tx.execute(
+            "DELETE FROM session_events WHERE source_file = ?1 AND event_id LIKE 'adj:%'",
+            params![file],
+        )?;
+    }
+
+    // (process, owning transcript when the process is unknown, model) -> the
+    // latest total seen. Transcripts of one process carry successive readings
+    // of one total, so only the biggest counts; a record with no `startTime`
+    // belongs to its own transcript alone.
+    let mut latest: BTreeMap<(i64, String, String), OfficialModelUsage> = BTreeMap::new();
+    let mut last_line: HashMap<&str, i64> = HashMap::new();
+    {
         let mut stmt = tx.prepare(
-            "SELECT model, input_tokens, output_tokens, cache_read_tokens,
+            "SELECT start_time, model, input_tokens, output_tokens, cache_read_tokens,
                     cache_creation_tokens, web_search_requests, cost_usd, source_line
              FROM session_official_costs WHERE source_file = ?1",
         )?;
-        let rows = stmt.query_map(params![session_file], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                OfficialModelUsage {
-                    input_tokens: r.get::<_, i64>(1)? as u64,
-                    output_tokens: r.get::<_, i64>(2)? as u64,
-                    cache_read_tokens: r.get::<_, i64>(3)? as u64,
-                    cache_creation_tokens: r.get::<_, i64>(4)? as u64,
-                    web_search_requests: r.get::<_, i64>(5)? as u64,
-                    cost_usd: r.get(6)?,
-                },
-                r.get::<_, i64>(7)?,
-            ))
-        })?;
-        let mut out = Vec::new();
-        for row in rows {
-            let (model, usage, l) = row?;
-            line = line.max(l);
-            // One row per (process, model); reconcile() sums them per model.
-            out.push((model, usage));
+        for file in &files {
+            let rows = stmt.query_map(params![file], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    OfficialModelUsage {
+                        input_tokens: r.get::<_, i64>(2)? as u64,
+                        output_tokens: r.get::<_, i64>(3)? as u64,
+                        cache_read_tokens: r.get::<_, i64>(4)? as u64,
+                        cache_creation_tokens: r.get::<_, i64>(5)? as u64,
+                        web_search_requests: r.get::<_, i64>(6)? as u64,
+                        cost_usd: r.get(7)?,
+                    },
+                    r.get::<_, i64>(8)?,
+                ))
+            })?;
+            for row in rows {
+                let (start_time, model, usage, line) = row?;
+                let slot = last_line.entry(file.as_str()).or_insert(0);
+                *slot = (*slot).max(line);
+                let owner = if start_time == 0 { file.clone() } else { String::new() };
+                match latest.entry((start_time, owner, model)) {
+                    Entry::Vacant(v) => {
+                        v.insert(usage);
+                    }
+                    Entry::Occupied(mut o) => {
+                        if is_later_total(&usage, o.get()) {
+                            o.insert(usage);
+                        }
+                    }
+                }
+            }
         }
-        out
-    };
-    if official.is_empty() {
-        return Ok(());
     }
-    let (lo, hi) = hidden_calls::subagent_range_of(session_file);
-    let observed: Vec<ObservedCall> = {
+    if latest.is_empty() {
+        return Ok(files);
+    }
+    // One row per (process, model); reconcile() sums them per model.
+    let official: Vec<(String, OfficialModelUsage)> =
+        latest.into_iter().map(|((_, _, model), usage)| (model, usage)).collect();
+
+    let mut observed: Vec<ObservedCall> = Vec::new();
+    let mut owner: Option<(&str, usize)> = None;
+    {
         let mut stmt = tx.prepare(
             "SELECT ts, project, model, cost_usd, input_tokens, output_tokens,
                     cache_read_tokens, cache_creation_5m_tokens + cache_creation_1h_tokens
@@ -180,22 +254,54 @@ fn reconcile_session_in_tx(
              WHERE (source_file = ?1 OR (source_file >= ?2 AND source_file < ?3))
                AND event_id NOT LIKE 'est:%' AND event_id NOT LIKE 'adj:%'",
         )?;
-        let rows = stmt.query_map(params![session_file, lo, hi], |r| {
-            Ok(ObservedCall {
-                ts: DateTime::from_timestamp(r.get(0)?, 0).unwrap_or_default(),
-                project: r.get(1)?,
-                model: r.get(2)?,
-                cost_usd: r.get(3)?,
-                input_tokens: r.get::<_, i64>(4)? as u64,
-                output_tokens: r.get::<_, i64>(5)? as u64,
-                cache_read_tokens: r.get::<_, i64>(6)? as u64,
-                cache_creation_tokens: r.get::<_, i64>(7)? as u64,
-            })
-        })?;
+        for file in &files {
+            let (lo, hi) = hidden_calls::subagent_range_of(file);
+            let rows = stmt.query_map(params![file, lo, hi], |r| {
+                Ok(ObservedCall {
+                    ts: DateTime::from_timestamp(r.get(0)?, 0).unwrap_or_default(),
+                    project: r.get(1)?,
+                    model: r.get(2)?,
+                    cost_usd: r.get(3)?,
+                    input_tokens: r.get::<_, i64>(4)? as u64,
+                    output_tokens: r.get::<_, i64>(5)? as u64,
+                    cache_read_tokens: r.get::<_, i64>(6)? as u64,
+                    cache_creation_tokens: r.get::<_, i64>(7)? as u64,
+                })
+            })?;
+            let before = observed.len();
+            for row in rows {
+                observed.push(row?);
+            }
+            let calls = observed.len() - before;
+            // `files` is sorted, so a tie goes to the earlier path.
+            if owner.is_none_or(|(_, most)| calls > most) {
+                owner = Some((file.as_str(), calls));
+            }
+        }
+    }
+    let owner = owner.map_or(session_file, |(file, _)| file);
+    let line = last_line.get(owner).copied().unwrap_or(0);
+    let adjustments = hidden_calls::reconcile(pricing, owner, line, &official, &observed);
+    insert_events_in_tx(tx, &adjustments)?;
+    Ok(files)
+}
+
+/// Rewrite the `adj:` rows of every session that has official totals. A
+/// resumed session's transcripts are reconciled together, so each lineage is
+/// visited once.
+fn reconcile_all_in_tx(tx: &Transaction<'_>, pricing: &PricingTable) -> Result<()> {
+    let sessions: Vec<String> = {
+        let mut stmt = tx.prepare("SELECT DISTINCT source_file FROM session_official_costs")?;
+        let rows = stmt.query_map([], |r| r.get(0))?;
         rows.collect::<rusqlite::Result<Vec<_>>>()?
     };
-    let adjustments = hidden_calls::reconcile(pricing, session_file, line, &official, &observed);
-    insert_events_in_tx(tx, &adjustments)?;
+    let mut done: HashSet<String> = HashSet::new();
+    for session_file in sessions {
+        if done.contains(&session_file) {
+            continue;
+        }
+        done.extend(reconcile_session_in_tx(tx, pricing, &session_file)?);
+    }
     Ok(())
 }
 
@@ -285,6 +391,35 @@ impl Db {
         Ok(deleted)
     }
 
+    /// Recompute every session's `adj:` rows once per database.
+    ///
+    /// Until resumed sessions were reconciled as one lineage, each resumed
+    /// transcript got an adjustment for its whole inherited total, which the
+    /// original's rows already held. Those rows are derived data and nothing
+    /// revisits them on its own, so every session is reconciled again here.
+    /// Returns whether it ran.
+    pub fn repair_adjustments_once(&self, pricing: &PricingTable) -> Result<bool> {
+        // Bump when the way adjustments are worked out changes again.
+        const SCHEME: &str = "2-resumed-sessions-as-one-lineage";
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let done: Option<String> = tx
+            .query_row("SELECT value FROM settings WHERE key = 'adjustments_scheme'", [], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        if done.as_deref() == Some(SCHEME) {
+            return Ok(false);
+        }
+        reconcile_all_in_tx(&tx, pricing)?;
+        tx.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('adjustments_scheme', ?1)",
+            params![SCHEME],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
     /// The pricing revision last applied to stored events, or `None` when
     /// historical costs have never been (re)computed under the current table.
     pub fn repriced_version(&self) -> Result<Option<u32>> {
@@ -369,14 +504,7 @@ impl Db {
         // Adjustment rows hold Claude Code's cost minus the app's, so they
         // are recomputed from the repriced rows rather than repriced
         // themselves.
-        let sessions: Vec<String> = {
-            let mut stmt = tx.prepare("SELECT DISTINCT source_file FROM session_official_costs")?;
-            let rows = stmt.query_map([], |r| r.get(0))?;
-            rows.collect::<rusqlite::Result<Vec<_>>>()?
-        };
-        for session_file in &sessions {
-            reconcile_session_in_tx(&tx, pricing, session_file)?;
-        }
+        reconcile_all_in_tx(&tx, pricing)?;
         tx.commit()?;
         Ok(updated)
     }

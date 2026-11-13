@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **A resumed Claude Code session was counted twice.** Resuming a session (`claude --resume`, or Resume in Switchboard) starts a new transcript that copies the old conversation and carries the old session's running total forward. Switchboard measured that total against only the calls it had newly read from the new transcript, decided the rest were unlogged, and added the whole inherited cost again, on the day it was read. On one real database this overstated spend by about $5,875, and a day's total could be many times its real value. Transcripts that continue one session are now treated as one running total and measured against all their calls together. Stored figures are rebuilt once on first launch; nothing is re-read and your transcripts are not touched.
+- **Known limit.** When a resumed session copies earlier history, those calls are credited to whichever transcript Switchboard reads first, so the split between two such sessions can differ from Claude Code's own; totals are unaffected. If both the original and the resumed session keep running separately after the fork, the later calls of one of them can be undercounted.
+
 ## v1.5.1 — 2026-11-12
 
 ### Added

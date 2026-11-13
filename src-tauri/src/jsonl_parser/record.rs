@@ -214,7 +214,16 @@ pub struct OfficialModelUsage {
 /// and survive `--resume` (the resumed process keeps the same `startTime`),
 /// so the last record per `startTime` is that process's total. Two processes
 /// can write to one transcript (seen in 2 of 251 sessions); each counts only
-/// its own calls, so the session total is the sum per `startTime`. It counts calls that are
+/// its own calls, so the session total is the sum per `startTime`.
+///
+/// `--resume` also starts a new transcript: a copy of the old history, ending
+/// in a record with the old `startTime` and the old totals carried forward
+/// (0fdfef68 resumed a992e056 on 2026-11-13). Transcripts that share a
+/// `startTime` are one running total, so the larger record is the later
+/// reading and the others are earlier readings of the same spend; the store
+/// reconciles them together (`store::queries::lineage_of`).
+///
+/// The total counts calls that are
 /// never written to the transcript: auto-compaction, away summaries, prompt
 /// suggestions, memory extraction, session titles, WebSearch/WebFetch on
 /// Haiku. Subagent usage is included.

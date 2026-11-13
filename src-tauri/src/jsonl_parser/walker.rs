@@ -545,6 +545,142 @@ mod tests {
         assert!((fx.sum("%").0 - 65.0).abs() < 1e-9, "process 111 now at $40, 222 still $25");
     }
 
+    /// An opus call of `out` output tokens ($20 per million) at noon UTC on
+    /// `day`. `tool_use` keeps it from earning a turn-end estimate.
+    fn call_on(req: &str, out: u64, day: &str) -> String {
+        format!(
+            r#"{{"type":"assistant","timestamp":"{day}T12:00:00Z","cwd":"/tmp/proj","isSidechain":false,"entrypoint":"cli","requestId":"{req}","message":{{"id":"m-{req}","model":"claude-opus-5-5","stop_reason":"tool_use","usage":{{"input_tokens":0,"output_tokens":{out}}}}}}}"#
+        )
+    }
+
+    /// The `cost-state` of the Claude Code process that started at `start`.
+    fn process_total(start: i64, out_tokens: u64, opus_cost: f64) -> String {
+        format!(
+            r#"{{"type":"cost-state","sessionId":"s","startTime":{start},"modelUsage":{{"claude-opus-5-5":{{"inputTokens":0,"outputTokens":{out_tokens},"cacheReadInputTokens":0,"cacheCreationInputTokens":0,"costUSD":{opus_cost}}}}}}}"#
+        )
+    }
+
+    /// `claude --resume` writes a new transcript. It starts with a copy of the
+    /// old history and ends with a `cost-state` that keeps the old process's
+    /// `startTime` and carries on from its totals (real case on 2026-11-13:
+    /// 0fdfef68 resumed a992e056, $5,884 against $5,875).
+    ///
+    /// Here the original made two calls ($40) and Claude Code says it cost
+    /// $50, so $10 went unlogged. The resumed file repeats those two calls and
+    /// adds one more ($20); its cumulative total is $72: the same $10, plus
+    /// $2 unlogged since. Everything together cost $72, whichever way the two
+    /// files are read.
+    fn resumed_pair(fx: &Fixture) -> (PathBuf, PathBuf) {
+        let parent = fx.main.clone();
+        let child = fx.dir.path().join("proj").join("s2.jsonl");
+        let history = [
+            call_on("r1", 1_000_000, "2026-11-02"),
+            call_on("r2", 1_000_000, "2026-11-02"),
+        ];
+        fx.append(&parent, &[history[0].clone(), history[1].clone(), process_total(111, 2_000_000, 50.0)]);
+        fx.append(&child, &[
+            history[0].clone(),
+            history[1].clone(),
+            call_on("r3", 1_000_000, "2026-11-13"),
+            process_total(111, 3_000_000, 72.0),
+        ]);
+        (parent, child)
+    }
+
+    /// Break caught: reconciling each file against its own `cost-state`. The
+    /// resumed file's total already contains the original's, so counting both
+    /// charges the same spend twice ($122 here, and $11,759 on the real data).
+    #[test]
+    fn a_resumed_session_does_not_count_its_inherited_cost_twice() {
+        let fx = Fixture::new();
+        let (parent, child) = resumed_pair(&fx);
+        fx.ingest(&parent);
+        fx.ingest(&child);
+        let (total, _) = fx.sum("%");
+        assert!((total - 72.0).abs() < 1e-9, "the pair cost $72 in all, got {total}");
+    }
+
+    /// Break caught: a fix that only works for one read order. The resumed
+    /// file's repeated calls are kept by whichever file is read first, so the
+    /// original can arrive holding none of its own calls.
+    #[test]
+    fn the_total_does_not_depend_on_which_transcript_is_read_first() {
+        let fx = Fixture::new();
+        let (parent, child) = resumed_pair(&fx);
+        fx.ingest(&child);
+        fx.ingest(&parent);
+        let (total, _) = fx.sum("%");
+        assert!((total - 72.0).abs() < 1e-9, "the pair cost $72 in all, got {total}");
+    }
+
+    /// Break caught: pricing the gap against the resumed file's one new call.
+    /// The gap is mostly the original's, from 11-02, but it was all placed on
+    /// 11-13, which is how a single resume put $5,881 on "today" in Trends.
+    /// Observed cost splits 40:20 by day, so the $12 gap splits $8:$4.
+    #[test]
+    fn the_unlogged_gap_is_spread_over_the_days_the_whole_session_ran() {
+        let fx = Fixture::new();
+        let (parent, child) = resumed_pair(&fx);
+        fx.ingest(&parent);
+        fx.ingest(&child);
+        let on_or_after = |day: &str| -> f64 {
+            fx.db
+                .conn()
+                .query_row(
+                    "SELECT COALESCE(SUM(cost_usd), 0) FROM session_events
+                     WHERE ts >= CAST(strftime('%s', ?1) AS INTEGER)",
+                    [day],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        let later = on_or_after("2026-11-10");
+        let earlier = on_or_after("2026-11-01") - later;
+        assert!((earlier - 48.0).abs() < 1e-9, "11-02: $40 of calls + $8 of gap, got {earlier}");
+        assert!((later - 24.0).abs() < 1e-9, "11-13: $20 of calls + $4 of gap, got {later}");
+    }
+
+    /// Break caught: fixing only new ingests. A database that has already
+    /// read a resumed session still holds the row the old reconciliation
+    /// wrote, the resumed file's whole cumulative total less its one new call
+    /// ($72 - $20 = $52), and nothing would ever revisit it.
+    #[test]
+    fn rebuilding_repairs_the_phantom_row_an_earlier_version_wrote() {
+        let fx = Fixture::new();
+        let (parent, child) = resumed_pair(&fx);
+        fx.ingest(&parent);
+        fx.ingest(&child);
+        fx.db
+            .conn()
+            .execute(
+                "INSERT INTO session_events
+                 (ts, project, model, input_tokens, output_tokens, cache_read_tokens,
+                  cache_creation_5m_tokens, cache_creation_1h_tokens, cost_usd,
+                  source_file, source_line, event_id)
+                 VALUES (CAST(strftime('%s', '2026-11-13T12:00:00') AS INTEGER), 'proj',
+                         'claude-opus-5-5', 0, 2000000, 0, 0, 0, 52.0,
+                         'proj/s2.jsonl', 1, 'adj:proj/s2.jsonl:claude-opus-5-5:2026-11-13')",
+                [],
+            )
+            .unwrap();
+        assert!((fx.sum("%").0 - 124.0).abs() < 1e-9, "setup: the double count is in place");
+
+        assert!(fx.db.repair_adjustments_once(&fx.pricing).unwrap(), "the first run does the work");
+        let (total, _) = fx.sum("%");
+        assert!((total - 72.0).abs() < 1e-9, "the pair cost $72 in all, got {total}");
+    }
+
+    /// Break caught: redoing every session's reconciliation on each launch.
+    #[test]
+    fn the_repair_runs_once_per_database() {
+        let fx = Fixture::new();
+        let (parent, child) = resumed_pair(&fx);
+        fx.ingest(&parent);
+        fx.ingest(&child);
+        assert!(fx.db.repair_adjustments_once(&fx.pricing).unwrap());
+        assert!(!fx.db.repair_adjustments_once(&fx.pricing).unwrap(), "already done");
+    }
+
     /// Re-reading a transcript from byte 0 (what migration 0010 forces) is
     /// idempotent: same rows, same total.
     #[test]

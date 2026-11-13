@@ -344,6 +344,14 @@ pub fn run() {
         }
     }
 
+    // One-time: drop the adjustment rows that resumed sessions were charged
+    // twice (see `Db::repair_adjustments_once`).
+    match app_state.db.repair_adjustments_once(&pricing) {
+        Ok(true) => tracing::info!("rebuilt session cost adjustments for resumed sessions"),
+        Ok(false) => {}
+        Err(e) => tracing::warn!("adjustment repair failed: {e}"),
+    }
+
     // Rehydrate per-slot usage caches from the most recent persisted API
     // snapshots so the popover and account rows have last-known-good data
     // before the poll loop's first fetch. Without this, a cold start during
