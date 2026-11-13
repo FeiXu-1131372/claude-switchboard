@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **Settings save themselves.** The Save button is gone. Every setting applies as you change it, the way Appearance, live usage and warm-up already did; before, a change made higher up was lost if you left without scrolling down to Save. A slider is written once, when you stop dragging. If a save fails, a bar at the bottom of Settings says why and offers Retry.
+- **New colours for all five themes.** Surfaces are now a near-white with only a hint of the theme's hue, and a near-neutral charcoal in dark mode, where they used to be visibly tinted (beige, brown, sage, mauve). Graphite is true grey with an ink accent, so the only colour in it is the amber and red of a limit. Tide is now an ocean blue; it was a teal close to the one that marks non-Anthropic models. Moss and Plum have cleaner accents.
+- **Settings wording.** The notification levels are named "Warning at" and "Critical at" and say that they also colour the usage bars. Background warm-up is a switch. Controls that are off because their feature is off are dimmed.
+
+### Fixed
+
+- **The scrollbar was close to invisible.** It was a 5 px thumb in the border colour on the window's edge, where Windows draws its border and rounds the corners over it. It is now wider, darker and inset from the edge, and a scrolling Settings page fades out at the edge that has more behind it.
+- **The Switch button of the switch-account dialog could be cut off at a Windows text size above 100%.** The dialog scrolled as one block when the window was short. Its title and buttons now stay in place and only the details scroll.
+- **Settings in the expanded window could be taller than the window.** The dialog had a fixed 480 px body; it now stops at the window.
+- **An empty card under Polling** when there was no Claude Code setup to offer live usage for.
+
 ## v1.5.1 — 2026-11-12
 
 ### Added
