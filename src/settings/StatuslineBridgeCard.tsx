@@ -539,6 +539,9 @@ export function StatuslineBridgeCard({ now = Date.now }: StatuslineBridgeCardPro
     [load],
   );
 
+  // No Claude Code setup to offer it for: an empty card read as a broken one.
+  if (targets?.length === 0 && loadError === null) return null;
+
   return (
     <Card className="p-[var(--space-md)] flex flex-col gap-[var(--space-md)]">
       {targets === null && loadError === null && (

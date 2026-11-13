@@ -555,6 +555,12 @@ body {
   /* Glance view: hero numbers + details disclosure + footer. */
   --popover-height-minimal: 208px;
 
+  /* Scrolling: the scrollbar's gutter, how far the thumb sits inside it, and
+   * how far the content fades out at an edge with more behind it. */
+  --scrollbar-size: 10px;
+  --scrollbar-inset: 2px;
+  --scroll-fade: 28px;
+
   /* Report (expanded mode) dimensions — the window resizes dynamically so
    * width is 100%. Min-height prevents a squished layout if the user shrinks. */
   --report-width: 100%;
