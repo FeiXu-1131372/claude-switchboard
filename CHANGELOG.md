@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## v1.5.2 — 2026-11-13
+
 ### Changed
 
 - **Settings save themselves.** The Save button is gone. Every setting applies as you change it, the way Appearance, live usage and warm-up already did; before, a change made higher up was lost if you left without scrolling down to Save. A slider is written once, when you stop dragging. If a save fails, a bar at the bottom of Settings says why and offers Retry.
@@ -245,7 +247,8 @@ First public release. See the [GitHub release notes](https://github.com/FeiXu-11
 - Settings persistence via SQLite; CSP set; corrupted-DB recovery.
 - Anthropic-warm token system with native vibrancy (macOS) / Mica (Windows 11) / translucent solid (Windows 10).
 
-[Unreleased]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.5.1...HEAD
+[Unreleased]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.5.2...HEAD
+[1.5.2]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.5.1...v1.5.2
 [1.5.1]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/FeiXu-1131372/claude-switchboard/compare/v1.3.1...v1.4.0
