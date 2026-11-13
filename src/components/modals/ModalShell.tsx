@@ -119,8 +119,15 @@ export function ModalShell({
         ref={cardRef}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
+        // A column, so a body that brings its own footer can pin it. The
+        // window can hand the webview far fewer CSS pixels than the app asks
+        // for (WebView2 applies the system text-size setting as page zoom),
+        // and when the whole card scrolled as one block the swap dialog's
+        // Switch button sat below the fold. A child that may shrink
+        // (`min-h-0`) scrolls its own body; any other child keeps its
+        // height and the card scrolls as before.
         className={`
-          w-full ${SIZE_CLASSES[size]} max-h-full overflow-y-auto
+          flex w-full ${SIZE_CLASSES[size]} max-h-full flex-col overflow-y-auto
           rounded-[var(--radius-lg)]
           border
           shadow-[0_12px_36px_oklch(0%_0_0_/_0.4)]
@@ -132,7 +139,7 @@ export function ModalShell({
         }}
       >
         {title && (
-          <div className="flex items-center justify-between px-[var(--space-md)] py-[var(--space-sm)] border-b border-[var(--color-rule)]">
+          <div className="flex shrink-0 items-center justify-between px-[var(--space-md)] py-[var(--space-sm)] border-b border-[var(--color-rule)]">
             <span
               id={titleId}
               className="text-[length:var(--text-label)] font-[var(--weight-semibold)] uppercase tracking-[var(--tracking-label)] text-[color:var(--color-text-secondary)]"

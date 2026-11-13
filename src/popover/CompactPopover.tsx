@@ -108,9 +108,7 @@ export function CompactPopover() {
     return (
       <Shell>
         <Header title="Settings" onBack={() => setView('home')} />
-        <div className="flex-1 overflow-y-auto px-[var(--popover-pad)] pb-[var(--space-md)] pt-[var(--space-xs)]">
-          <SettingsPanel />
-        </div>
+        <SettingsPanel bodyClassName="px-[var(--popover-pad)] pb-[var(--space-md)] pt-[var(--space-xs)]" />
       </Shell>
     );
   }

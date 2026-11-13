@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ipc } from '../lib/ipc';
 import type { AccountListEntry, WarmupAccountState } from '../lib/generated/bindings';
 import { Button } from '../components/ui/Button';
+import { Toggle } from '../components/ui/Toggle';
 
 interface Props {
   consentGranted: boolean;
@@ -57,14 +58,17 @@ export function WarmupSettings({ consentGranted, osSchedulerRegistered, accounts
         <span>Global consent: {consentGranted ? 'granted' : 'not granted'}</span>
         {consentGranted && <Button variant="ghost" disabled={busy} onClick={() => void operate(onRevoke)}>Revoke</Button>}
       </div>
-      <div className="flex items-center justify-between gap-[var(--space-sm)]">
-        <span>Background warm-up: {osSchedulerRegistered ? 'enabled' : 'not enabled'}</span>
-        <Button variant="ghost" disabled={busy} onClick={() => void operate(osSchedulerRegistered ? onUnregisterOs : onRegisterOs)}>
-          {osSchedulerRegistered ? 'Disable background' : 'Enable in background'}
-        </Button>
-      </div>
+      {/* A switch, like every other on/off setting here; it was a status line
+          and a button whose label flipped with the state. */}
+      <Toggle
+        label="Run in background"
+        description="Keeps warming up while Switchboard is closed"
+        checked={osSchedulerRegistered}
+        disabled={busy}
+        onChange={(e) => void operate(e.target.checked ? onRegisterOs : onUnregisterOs)}
+      />
       <p className="text-[length:var(--text-micro)] text-[color:var(--color-text-muted)]">
-        Background checks run every minute with Switchboard closed while your computer is awake and you are signed in.
+        Background checks run every minute while your computer is awake and you are signed in.
         Missed schedules are checked when it resumes. Active five-hour windows are skipped.
       </p>
       {error && <p role="alert" className="text-[color:var(--color-danger)]">{error}</p>}

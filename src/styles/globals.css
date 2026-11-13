@@ -190,25 +190,68 @@ body[data-theme="dark"] .glass::before {
 
 /* ─── Scrollbar ─── */
 
+/* The bar runs along the window's own edge, where Windows draws its border and
+ * rounds the corners over whatever the webview painted. A 5px thumb in the
+ * border colour (12% ink) all but vanished there. The gutter is now wider than
+ * the thumb, so the thumb sits inset from the edge, the track stops short of
+ * the corners, and the thumb is drawn in muted text, not hairline grey. */
 ::-webkit-scrollbar {
-  width: 5px;
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
 }
 
 ::-webkit-scrollbar-track {
   background: transparent;
+  margin-block: var(--space-sm);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border);
+  background: color-mix(in oklch, var(--color-text-muted) 45%, transparent);
+  background-clip: padding-box;
+  border: var(--scrollbar-inset) solid transparent;
   border-radius: var(--radius-pill);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-border-hover);
+  background: color-mix(in oklch, var(--color-text-muted) 75%, transparent);
+  background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-corner {
   background: transparent;
+}
+
+/* ScrollArea: the edge that has more behind it fades out. A mask, not an
+ * overlay gradient, so it works over any surface (the dark popover's radial
+ * wash included). The second layer keeps the scrollbar strip solid, or the
+ * thumb would fade along with the content as it reaches either end. */
+.scroll-area {
+  --fade-above: 0px;
+  --fade-below: 0px;
+}
+
+.scroll-area[data-more-above] {
+  --fade-above: var(--scroll-fade);
+}
+
+.scroll-area[data-more-below] {
+  --fade-below: var(--scroll-fade);
+}
+
+.scroll-area[data-more-above],
+.scroll-area[data-more-below] {
+  -webkit-mask-image:
+    linear-gradient(to bottom, transparent, black var(--fade-above), black calc(100% - var(--fade-below)), transparent),
+    linear-gradient(black, black);
+  mask-image:
+    linear-gradient(to bottom, transparent, black var(--fade-above), black calc(100% - var(--fade-below)), transparent),
+    linear-gradient(black, black);
+  -webkit-mask-size: calc(100% - var(--scrollbar-size)) 100%, var(--scrollbar-size) 100%;
+  mask-size: calc(100% - var(--scrollbar-size)) 100%, var(--scrollbar-size) 100%;
+  -webkit-mask-position: left top, right top;
+  mask-position: left top, right top;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
 }
 
 /* ─── Selection ─── */

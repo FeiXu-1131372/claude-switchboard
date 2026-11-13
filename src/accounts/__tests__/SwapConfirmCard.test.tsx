@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
 import { SwapConfirmCard } from '../SwapConfirmCard';
+import { ModalShell } from '../../components/modals/ModalShell';
 
 const TARGET = {
   slot: 1, account_uuid: 'uu', email: 'bob@y.com', subscription_type: 'pro',
@@ -75,5 +76,37 @@ describe('SwapConfirmCard', () => {
       />,
     );
     expect(screen.getAllByRole('button', { name: /cancel/i }).length).toBe(1);
+  });
+
+  /**
+   * With Windows text size above 100%, WebView2 zooms the page and the
+   * window holds fewer CSS pixels than the 380 the popover asks for. The
+   * modal card then hit its max height and scrolled as one block, pushing
+   * the Switch button below the fold. Only the details may scroll.
+   */
+  it('keeps the Switch button in view when the modal is short', () => {
+    render(
+      <ModalShell id="swap-confirm" onDismiss={() => {}} title="Confirm switch">
+        <SwapConfirmCard
+          current={null}
+          target={TARGET}
+          running={RUNNING}
+          busy={false}
+          errorMessage={null}
+          onConfirm={() => {}}
+          onCancel={() => {}}
+        />
+      </ModalShell>,
+    );
+    const switchButton = screen.getByRole('button', { name: /switch account/i });
+    const details = screen.getByText('What happens').closest<HTMLElement>('.overflow-y-auto')!;
+    const swapCard = details.parentElement!;
+    const modalCard = swapCard.parentElement!;
+
+    expect(details).not.toContainElement(switchButton);
+    // The card shrinks to the modal so its details scroll, not the modal...
+    expect(swapCard).toHaveClass('min-h-0', 'flex-col');
+    // ...which has to be a column for that shrink to happen.
+    expect(modalCard).toHaveClass('flex', 'flex-col', 'max-h-full');
   });
 });

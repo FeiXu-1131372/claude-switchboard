@@ -65,7 +65,7 @@ export function AccountRotationSettings({ value, accounts, onChange }: Props) {
           disabled={!settings.enabled}
           onChange={(e) => onChange({ ...settings, preferred_account_id: e.target.value || null })}
           options={[
-            { value: '', label: 'Automatic — most remaining headroom' },
+            { value: '', label: 'Automatic (most headroom)' },
             ...(preferredMissing ? [{ value: settings.preferred_account_id!, label: 'Removed account — using automatic selection' }] : []),
             ...accounts.map((a) => ({ value: a.account_uuid, label: `${a.email}${a.is_active ? ' (active)' : ''}` })),
           ]} />
@@ -73,7 +73,7 @@ export function AccountRotationSettings({ value, accounts, onChange }: Props) {
           Your preferred account is used when available; otherwise the account with the most headroom is chosen.
           The weekly threshold also applies to the Fable weekly limit. Accounts need fresh usage below their thresholds. If none qualify, Switchboard waits and checks again.
           Rotation runs while Switchboard is open, with at least 60 seconds between switches.
-          Running Claude Code sessions usually adopt the account within about 30 seconds. Click Save to apply.
+          Running Claude Code sessions usually adopt the account within about 30 seconds.
         </p>
         {accounts.length < 2 && <p className="text-[length:var(--text-micro)] text-[color:var(--color-warn-text)]">
           Add at least two accounts to use automatic rotation.

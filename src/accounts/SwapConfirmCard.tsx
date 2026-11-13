@@ -72,7 +72,9 @@ export function SwapConfirmCard({
   const hasRunning = cli > 0 || code > 0;
 
   return (
-    <div className="flex h-full w-full flex-col">
+    // `min-h-0` lets the card shrink to the modal's height, so the details
+    // scroll and the Switch button below them stays in view.
+    <div className="flex h-full min-h-0 w-full flex-col">
       {presentation === 'fullpane' && (
         <div className="flex items-center justify-between gap-[var(--space-sm)] px-[var(--popover-pad)] pt-[var(--space-md)] pb-[var(--space-sm)]">
           <button
@@ -160,7 +162,7 @@ export function SwapConfirmCard({
         </div>
       </div>
 
-      <div className="flex items-center justify-end gap-[var(--space-sm)] border-t border-[var(--color-rule)] px-[var(--popover-pad)] py-[var(--space-sm)]">
+      <div className="flex shrink-0 items-center justify-end gap-[var(--space-sm)] border-t border-[var(--color-rule)] px-[var(--popover-pad)] py-[var(--space-sm)]">
         <button
           type="button"
           onClick={onCancel}

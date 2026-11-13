@@ -32,7 +32,9 @@ export const Slider = forwardRef<HTMLInputElement, SliderProps>(
     const pct = ((value - min) / (max - min)) * 100;
 
     return (
-      <div className={['flex flex-col gap-[var(--space-xs)]', className].join(' ')}>
+      // Dimmed when off, as Button is: a disabled slider in full accent read
+      // as live (rotation's thresholds while rotation was off).
+      <div className={['flex flex-col gap-[var(--space-xs)] has-[:disabled]:opacity-40', className].join(' ')}>
         <div className="flex items-center justify-between">
           <label
             htmlFor={id}
@@ -60,7 +62,7 @@ export const Slider = forwardRef<HTMLInputElement, SliderProps>(
             className={[
               'w-full h-[5px] appearance-none rounded-[var(--radius-pill)]',
               'bg-[var(--color-track)] outline-none',
-              'cursor-pointer',
+              'cursor-pointer disabled:cursor-not-allowed',
               'focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] focus-visible:ring-offset-1',
               '[&::-webkit-slider-thumb]:appearance-none',
               '[&::-webkit-slider-thumb]:w-[16px] [&::-webkit-slider-thumb]:h-[16px]',

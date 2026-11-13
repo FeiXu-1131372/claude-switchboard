@@ -14,6 +14,7 @@ export const Toggle = forwardRef<HTMLInputElement, ToggleProps>(
         htmlFor={id}
         className={[
           'flex items-center justify-between gap-[var(--space-md)] cursor-pointer',
+          'has-[:disabled]:opacity-40 has-[:disabled]:cursor-not-allowed',
           'py-[var(--space-xs)]',
           className,
         ].join(' ')}

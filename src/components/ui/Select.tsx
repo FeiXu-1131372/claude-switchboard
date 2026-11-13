@@ -15,7 +15,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
     const id = useId();
 
     return (
-      <div className={['flex flex-col gap-[var(--space-2xs)]', className].join(' ')}>
+      <div className={['flex flex-col gap-[var(--space-2xs)] has-[:disabled]:opacity-40', className].join(' ')}>
         <label
           htmlFor={id}
           className="text-[length:var(--text-label)] font-[var(--weight-medium)] text-[color:var(--color-text-secondary)]"
@@ -30,8 +30,10 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
               'w-full appearance-none',
               'bg-[var(--color-field)] border border-[var(--color-border)]',
               'rounded-[var(--radius-sm)]',
-              'px-[var(--space-sm)] py-[var(--space-xs)]',
+              // Room on the right for the chevron, or a long option runs under it.
+              'py-[var(--space-xs)] pl-[var(--space-sm)] pr-[var(--space-xl)]',
               'text-[length:var(--text-body)] text-[color:var(--color-text)]',
+              'disabled:cursor-not-allowed',
               'outline-none',
               'transition-[border-color] duration-[var(--duration-fast)]',
               'hover:border-[var(--color-border-hover)]',

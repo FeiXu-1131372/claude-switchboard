@@ -8,9 +8,8 @@ interface Props {
 export function SettingsModal({ onDismiss }: Props) {
   return (
     <ModalShell id="settings-modal" onDismiss={onDismiss} size="lg" title="Settings">
-      <div className="px-[var(--space-md)] py-[var(--space-md)] max-h-[480px] overflow-y-auto">
-        <SettingsPanel />
-      </div>
+      {/* The panel scrolls itself and fills the modal, which stops at the window. */}
+      <SettingsPanel bodyClassName="p-[var(--space-md)]" />
     </ModalShell>
   );
 }

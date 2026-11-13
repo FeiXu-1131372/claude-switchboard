@@ -17,7 +17,7 @@ describe("WarmupSettings", () => {
       />,
     );
     expect(screen.getByText(/global consent: granted/i)).toBeInTheDocument();
-    expect(screen.getByText(/background warm-up: enabled/i)).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: /run in background/i })).toBeChecked();
   });
 
   it("calls onRevoke when the revoke button is clicked", async () => {
@@ -52,7 +52,7 @@ describe("WarmupSettings", () => {
   it('shows background registration failures instead of rejecting silently', async () => {
     const register = vi.fn().mockRejectedValue(new Error('Windows task registration failed'));
     render(<WarmupSettings consentGranted osSchedulerRegistered={false} onRegisterOs={register} onUnregisterOs={() => {}} onRevoke={() => {}} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Enable in background' }));
+    fireEvent.click(screen.getByRole('switch', { name: /run in background/i }));
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Windows task registration failed'));
   });
 
